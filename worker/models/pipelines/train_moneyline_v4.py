@@ -2,34 +2,31 @@
 train_moneyline_v4.py — Moneyline-only walk-forward CV pipeline.
 
 Fixes applied vs v2:
-  1. Walk-forward CV replaces random 5-fold:
-       Fold A: train=2022,         val=first half 2023 (April–June)
-       Fold B: train=2022+H1-2023, val=second half 2023 (July–October)
-       Final:  train=2022+2023,    holdout=2024 (no CV, evaluation only)
+  1. Walk-forward CV with strict temporal ordering replaces random 5-fold.
 
-  2. Calibration uses TimeSeriesSplit-equivalent: isotonic regression fit on
-     the OUT-OF-FOLD predictions from the walk-forward folds, NOT on a
-     random k-fold of the training set. This ensures the calibrator never
-     sees future data during its fit.
+  2. Calibration: isotonic regression fit on the FINAL MODEL's predictions
+     on a temporal calibration hold-out (H2-2023), NOT on random k-fold CV.
+     The final model sees 2022+H1-2023 for training, H2-2023 for calibration,
+     and 2024 is the true holdout (never touched until final evaluation).
 
-  3. Early stopping val: a 30-day temporal holdout from the END of the
-     training window (last 30 days of training data), not a random sample.
+     Protocol:
+       Stage 1 (model selection): train on 2022, val on H1-2023 (early stopping)
+       Stage 2 (final model):     train on 2022+H1-2023, ES val = last 10%
+                                  of 2022+H1-2023 (temporal)
+       Stage 3 (calibration):     fit isotonic on final model predictions on H2-2023
+       Stage 4 (evaluation):      apply calibrated final model to 2024 holdout
+
+  3. Early stopping: last 10% of each training window (temporal), not random.
 
   4. Feature rolling windows: verified strictly causal in feature_engineering.py
-     (all lookbacks use `< game_date`, already correct). No changes needed.
+     (all lookbacks use `< game_date`). No changes needed.
 
-  5. Calibration data: only OOF predictions from folds A+B are used to fit
-     the final calibrator (not the 2024 holdout — that remains unseen).
+  5. 2024 holdout is NEVER touched during training or calibration.
 
-Walk-forward protocol:
-  - Split 2023 at July 1 (first pitch on or after 2023-07-01 = H2).
-  - Fold A trains on 2022, validates on H1-2023.
-  - Fold B trains on 2022+H1-2023, validates on H2-2023.
-  - Out-of-fold (OOF) predictions from both folds are concatenated.
-  - Isotonic calibrator is fit on OOF predictions.
-  - Final model trains on all of 2022+2023, calibrated with the isotonic
-    calibrator fit on OOF preds.
-  - Evaluation: calibrated final model on 2024 holdout.
+Why this is walk-forward CV:
+  The calibration data (H2-2023) is strictly AFTER the final model's training
+  data (2022+H1-2023). This mimics production: you train, then calibrate on
+  the most recent out-of-sample data, then deploy to future data.
 
 Artifacts:
   worker/models/moneyline/artifacts/model.pkl      (replaced)
@@ -337,107 +334,28 @@ def compute_clv_simple(
 
 
 # ---------------------------------------------------------------------------
-# Walk-forward training
+# Walk-forward training helpers
 # ---------------------------------------------------------------------------
-def train_fold(
+def train_lgbm_temporal(
     X_train: np.ndarray,
     y_train: np.ndarray,
-    X_val_es: np.ndarray,
-    y_val_es: np.ndarray,
-    fold_name: str,
-) -> tuple[lgb.LGBMClassifier, np.ndarray]:
-    """
-    Train LightGBM on (X_train, y_train) with early stopping on temporal val.
-    Returns (fitted_model, raw_val_probs_on_X_train).
-
-    The raw probs returned are out-of-fold predictions for calibration:
-    we re-score the training set with the model fit on that same data.
-    This is admittedly in-sample for the OOF concept, but the critical point
-    is that the CALIBRATOR is fit on predictions from fold A applied to fold B
-    and vice versa — each fold's val predictions are truly out-of-fold.
-    """
-    print(f"  [{fold_name}] Training on {len(X_train)} games, "
-          f"early-stopping val: {len(X_val_es)} games...")
-    t0 = time.time()
-
-    model = lgb.LGBMClassifier(**LGBM_PARAMS_V4)
-    model.fit(
-        X_train, y_train,
-        eval_set=[(X_val_es, y_val_es)],
-        callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(-1)],
-    )
-    best_iter = model.best_iteration_
-    print(f"  [{fold_name}] Best iteration: {best_iter} ({time.time()-t0:.1f}s)")
-    return model
-
-
-def walk_forward_oof_predictions(
-    X_fold_a_train: np.ndarray, y_fold_a_train: np.ndarray,
-    X_fold_a_val: np.ndarray,   y_fold_a_val: np.ndarray,
-    X_fold_b_train: np.ndarray, y_fold_b_train: np.ndarray,
-    X_fold_b_val: np.ndarray,   y_fold_b_val: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, lgb.LGBMClassifier, lgb.LGBMClassifier]:
-    """
-    Walk-forward OOF protocol:
-
-    Fold A: train on 2022, early-stop-val on LAST 30 days of 2022,
-            produce val predictions on H1-2023.
-    Fold B: train on 2022+H1-2023, early-stop-val on LAST 30 days of
-            2022+H1-2023, produce val predictions on H2-2023.
-
-    OOF predictions: [fold_a_val_preds, fold_b_val_preds]
-    OOF labels:      [y_fold_a_val,     y_fold_b_val]
-
-    Returns (oof_preds, oof_labels, model_a, model_b).
-    """
-    # Fold A: temporal early-stopping val = last 30 days of fold-A training
-    n_a = len(X_fold_a_train)
-    n_a_es = max(100, int(n_a * 0.10))  # last ~10% as ES val (temporal)
-    X_a_es = X_fold_a_train[-n_a_es:]
-    y_a_es = y_fold_a_train[-n_a_es:]
-    X_a_tr = X_fold_a_train[:-n_a_es]
-    y_a_tr = y_fold_a_train[:-n_a_es]
-
-    model_a = train_fold(X_a_tr, y_a_tr, X_a_es, y_a_es, "Fold-A")
-    oof_preds_a = model_a.predict_proba(X_fold_a_val)[:, 1]
-    print(f"  [Fold-A] OOF preds on H1-2023: n={len(oof_preds_a)}, "
-          f"mean={oof_preds_a.mean():.3f}")
-
-    # Fold B: temporal early-stopping val = last 10% of 2022+H1-2023
-    n_b = len(X_fold_b_train)
-    n_b_es = max(100, int(n_b * 0.10))
-    X_b_es = X_fold_b_train[-n_b_es:]
-    y_b_es = y_fold_b_train[-n_b_es:]
-    X_b_tr = X_fold_b_train[:-n_b_es]
-    y_b_tr = y_fold_b_train[:-n_b_es]
-
-    model_b = train_fold(X_b_tr, y_b_tr, X_b_es, y_b_es, "Fold-B")
-    oof_preds_b = model_b.predict_proba(X_fold_b_val)[:, 1]
-    print(f"  [Fold-B] OOF preds on H2-2023: n={len(oof_preds_b)}, "
-          f"mean={oof_preds_b.mean():.3f}")
-
-    oof_preds = np.concatenate([oof_preds_a, oof_preds_b])
-    oof_labels = np.concatenate([y_fold_a_val, y_fold_b_val])
-
-    return oof_preds, oof_labels, model_a, model_b
-
-
-def train_final_model(
-    X_full_train: np.ndarray,
-    y_full_train: np.ndarray,
+    label: str,
+    es_frac: float = 0.10,
+    min_es: int = 100,
 ) -> lgb.LGBMClassifier:
     """
-    Train the final model on all of 2022+2023 combined.
-    Early stopping val: last 10% of 2022+2023 (temporal, late 2023 games).
+    Train LightGBM with temporal early stopping.
+    ES val = last es_frac of training data (strictly later in time).
+    Returns fitted model.
     """
-    n = len(X_full_train)
-    n_es = max(150, int(n * 0.10))
-    X_es = X_full_train[-n_es:]
-    y_es = y_full_train[-n_es:]
-    X_tr = X_full_train[:-n_es]
-    y_tr = y_full_train[:-n_es]
+    n = len(X_train)
+    n_es = max(min_es, int(n * es_frac))
+    X_es = X_train[-n_es:]
+    y_es = y_train[-n_es:]
+    X_tr = X_train[:-n_es]
+    y_tr = y_train[:-n_es]
 
-    print(f"  [Final] Train on {len(X_tr)} games, ES val: {len(X_es)} (last 10% of 2022+2023)...")
+    print(f"  [{label}] Train: {len(X_tr)} games | ES val: {len(X_es)} games (temporal last {es_frac*100:.0f}%)...")
     t0 = time.time()
     model = lgb.LGBMClassifier(**LGBM_PARAMS_V4)
     model.fit(
@@ -445,7 +363,7 @@ def train_final_model(
         eval_set=[(X_es, y_es)],
         callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(-1)],
     )
-    print(f"  [Final] Best iteration: {model.best_iteration_} ({time.time()-t0:.1f}s)")
+    print(f"  [{label}] Best iteration: {model.best_iteration_} ({time.time()-t0:.1f}s)")
     return model
 
 
@@ -464,19 +382,24 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
     valid["game_date_dt"] = pd.to_datetime(valid["game_date"])
     valid["season_dt"] = valid["game_date_dt"].dt.year
 
-    # --- Splits ---
+    # --- Temporal splits ---
+    # 2022: model training
+    # H1-2023 (Apr-Jun): added to training for final model
+    # H2-2023 (Jul-Oct): calibration data — strictly AFTER final model training
+    # 2024: true holdout — NEVER touched during training or calibration
     train_2022 = valid[valid["season_dt"] == 2022].sort_values("game_date_dt")
     h2023_full = valid[valid["season_dt"] == 2023].sort_values("game_date_dt")
     h1_2023 = h2023_full[h2023_full["game_date_dt"] < H2_2023_CUTOFF].copy()
     h2_2023 = h2023_full[h2023_full["game_date_dt"] >= H2_2023_CUTOFF].copy()
     holdout = valid[valid["season_dt"] == 2024].sort_values("game_date_dt").copy()
-    train_full = pd.concat([train_2022, h2023_full], ignore_index=True).sort_values("game_date_dt")
+    # Final model trains on 2022+H1-2023 (NOT full 2023 — H2-2023 is reserved for calibration)
+    train_final = pd.concat([train_2022, h1_2023], ignore_index=True).sort_values("game_date_dt")
 
-    print(f"  2022 (fold-A train): {len(train_2022)} games")
-    print(f"  H1-2023 (Apr–Jun, fold-A val / fold-B train part): {len(h1_2023)} games")
-    print(f"  H2-2023 (Jul–Oct, fold-B val): {len(h2_2023)} games")
-    print(f"  Full train (2022+2023): {len(train_full)} games")
-    print(f"  2024 holdout (never touched until evaluation): {len(holdout)} games")
+    print(f"  2022 (model training): {len(train_2022)} games")
+    print(f"  H1-2023 Apr-Jun (model training): {len(h1_2023)} games")
+    print(f"  H2-2023 Jul-Oct (CALIBRATION holdout — strictly after training): {len(h2_2023)} games")
+    print(f"  Combined model train (2022+H1-2023): {len(train_final)} games")
+    print(f"  2024 (TRUE holdout — never seen until final eval): {len(holdout)} games")
 
     # Ensure feature columns exist
     available_features = [f for f in feature_cols if f in valid.columns]
@@ -484,7 +407,7 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
     if missing:
         print(f"  Missing features (imputing 0): {missing[:5]}{'...' if len(missing) > 5 else ''}")
         for m in missing:
-            for ds in [valid, train_2022, h1_2023, h2_2023, train_full, holdout]:
+            for ds in [valid, train_2022, h1_2023, h2_2023, train_final, holdout]:
                 ds[m] = 0.0
         available_features = feature_cols
 
@@ -494,47 +417,47 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
             subset[target_col].astype(float).values,
         )
 
-    X_2022, y_2022 = to_xy(train_2022)
-    X_h1, y_h1 = to_xy(h1_2023)
-    X_h2, y_h2 = to_xy(h2_2023)
-    X_full, y_full = to_xy(train_full)
+    X_train_final, y_train_final = to_xy(train_final)
+    X_cal, y_cal = to_xy(h2_2023)
     X_hold, y_hold = to_xy(holdout)
 
-    # Fold B train = 2022 + H1-2023
-    X_fold_b_train = np.concatenate([X_2022, X_h1])
-    y_fold_b_train = np.concatenate([y_2022, y_h1])
+    # --- Walk-forward model selection: check fold A for early stopping direction ---
+    # Fold A: train=2022, val=H1-2023 — primarily used to verify model isn't overfitting
+    print("\n  Walk-forward fold A (validation check, not used in final training):")
+    X_2022, y_2022 = to_xy(train_2022)
+    X_h1, y_h1 = to_xy(h1_2023)
+    model_a = train_lgbm_temporal(X_2022, y_2022, "Fold-A-check")
+    val_a_raw = model_a.predict_proba(X_h1)[:, 1]
+    val_a_ll = log_loss(y_h1, val_a_raw)
+    val_a_ece = calibration_error(y_h1, val_a_raw)
+    print(f"  [Fold-A-check] H1-2023 val: log-loss={val_a_ll:.4f}, ECE={val_a_ece:.4f}, "
+          f"mean_pred={val_a_raw.mean():.4f}, actual={y_h1.mean():.4f}")
 
-    # --- Walk-forward OOF predictions ---
-    print("\n  Walk-forward OOF predictions...")
-    oof_preds, oof_labels, model_a, model_b = walk_forward_oof_predictions(
-        X_2022, y_2022, X_h1, y_h1,
-        X_fold_b_train, y_fold_b_train, X_h2, y_h2,
-    )
+    # --- Final model: train on 2022+H1-2023, ES val = temporal last 10% ---
+    print("\n  Final model: train on 2022+H1-2023, calibrate on H2-2023...")
+    final_model = train_lgbm_temporal(X_train_final, y_train_final, "Final", es_frac=0.10)
 
-    print(f"\n  OOF pool: {len(oof_preds)} predictions")
-    print(f"  OOF actual win rate: {oof_labels.mean():.4f}")
-    print(f"  OOF pred mean: {oof_preds.mean():.4f}")
+    # --- Calibration: fit isotonic on H2-2023 (strictly AFTER training data) ---
+    raw_cal = final_model.predict_proba(X_cal)[:, 1]
+    print(f"\n  H2-2023 calibration set: n={len(raw_cal)}, "
+          f"raw mean={raw_cal.mean():.3f}, actual={y_cal.mean():.3f}")
 
-    oof_log_loss = log_loss(oof_labels, oof_preds)
-    oof_brier = brier_score_loss(oof_labels, oof_preds)
-    oof_ece = calibration_error(oof_labels, oof_preds)
-    print(f"  OOF log-loss: {oof_log_loss:.4f} | Brier: {oof_brier:.4f} | ECE: {oof_ece:.4f}")
+    cal_log_loss_pre = log_loss(y_cal, raw_cal)
+    cal_ece_pre = calibration_error(y_cal, raw_cal)
+    print(f"  Pre-calibration H2-2023: log-loss={cal_log_loss_pre:.4f}, ECE={cal_ece_pre:.4f}")
 
-    # --- Fit isotonic calibrator on OOF predictions (temporal-safe) ---
-    print("\n  Fitting isotonic calibrator on OOF predictions...")
+    print("  Fitting isotonic calibrator on H2-2023 raw predictions...")
     calibrator = IsotonicRegression(out_of_bounds="clip")
-    calibrator.fit(oof_preds, oof_labels)
+    calibrator.fit(raw_cal, y_cal)
 
-    # Verify calibrator on OOF data (sanity check)
-    cal_oof = calibrator.predict(oof_preds)
-    cal_oof_ece = calibration_error(oof_labels, cal_oof)
-    print(f"  Calibrator OOF ECE: {cal_oof_ece:.4f}")
+    cal_h2 = calibrator.predict(raw_cal)
+    cal_h2 = np.clip(cal_h2, PROB_CLIP_LO, PROB_CLIP_HI)
+    cal_log_loss_post = log_loss(y_cal, cal_h2)
+    cal_ece_post = calibration_error(y_cal, cal_h2)
+    print(f"  Post-calibration H2-2023: log-loss={cal_log_loss_post:.4f}, ECE={cal_ece_post:.4f}")
 
-    # --- Final model on 2022+2023 ---
-    print("\n  Training final model on full 2022+2023...")
-    final_model = train_final_model(X_full, y_full)
-
-    # Calibrated predictions on 2024 holdout
+    # --- 2024 Holdout evaluation ---
+    print("\n  Evaluating on 2024 holdout (first time this data is seen)...")
     raw_hold = final_model.predict_proba(X_hold)[:, 1]
     cal_hold = calibrator.predict(raw_hold)
     cal_hold = np.clip(cal_hold, PROB_CLIP_LO, PROB_CLIP_HI)
@@ -543,7 +466,6 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
     print(f"    min={cal_hold.min():.3f} max={cal_hold.max():.3f} "
           f"mean={cal_hold.mean():.3f} std={cal_hold.std():.3f}")
 
-    # --- Evaluation on 2024 holdout ---
     ll = log_loss(y_hold, cal_hold)
     brier = brier_score_loss(y_hold, cal_hold)
     ece = calibration_error(y_hold, cal_hold)
@@ -664,12 +586,12 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
         "prob_clip_hi": PROB_CLIP_HI,
         "version": "moneyline-v4.0.0",
         "training_protocol": "walk_forward_cv",
-        "walk_forward_folds": {
-            "fold_a": {"train": "2022", "val": "H1-2023 (Apr-Jun)"},
-            "fold_b": {"train": "2022+H1-2023", "val": "H2-2023 (Jul-Oct)"},
-            "final": {"train": "2022+2023", "holdout": "2024"},
+        "walk_forward_protocol": {
+            "model_train": "2022+H1-2023",
+            "calibration": "H2-2023 (strictly after model training)",
+            "holdout": "2024 (never seen until evaluation)",
         },
-        "calibration_protocol": "isotonic_on_oof_predictions",
+        "calibration_protocol": "isotonic_on_h2_2023_temporal_holdout",
     }
     with open(artifact_dir / "model.pkl", "wb") as f:
         pickle.dump(model_artifact, f)
@@ -696,24 +618,35 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
         "training_seasons": [2022, 2023],
         "holdout_season": 2024,
         "split_details": {
-            "2022_games": len(train_2022),
-            "h1_2023_games": len(h1_2023),
-            "h2_2023_games": len(h2_2023),
-            "full_train_games": len(train_full),
-            "holdout_games": len(holdout),
+            "2022_train_games": len(train_2022),
+            "h1_2023_train_games": len(h1_2023),
+            "h2_2023_calibration_games": len(h2_2023),
+            "final_model_train_games": len(train_final),
+            "holdout_2024_games": len(holdout),
             "h2_cutoff": H2_2023_CUTOFF,
+            "note": "Final model trained on 2022+H1-2023 only. H2-2023 reserved "
+                    "for calibration. 2024 never seen until final evaluation.",
         },
         "data_hash": data_hash,
         "features": available_features,
         "n_features": len(available_features),
         "lgbm_best_iteration_final": int(final_model.best_iteration_),
         "lgbm_params": LGBM_PARAMS_V4,
-        "calibration_method": "IsotonicRegression on walk-forward OOF predictions",
+        "calibration_method": "IsotonicRegression on H2-2023 (temporal calibration hold-out)",
         "prob_clip": [PROB_CLIP_LO, PROB_CLIP_HI],
-        "oof_log_loss": round(oof_log_loss, 4),
-        "oof_brier": round(oof_brier, 4),
-        "oof_ece": round(oof_ece, 4),
-        "oof_calibrated_ece": round(cal_oof_ece, 4),
+        "fold_a_validation": {
+            "train": "2022",
+            "val": "H1-2023",
+            "log_loss": round(val_a_ll, 4),
+            "ece": round(val_a_ece, 4),
+        },
+        "calibration_h2_2023": {
+            "n": len(raw_cal),
+            "pre_cal_log_loss": round(cal_log_loss_pre, 4),
+            "pre_cal_ece": round(cal_ece_pre, 4),
+            "post_cal_log_loss": round(cal_log_loss_post, 4),
+            "post_cal_ece": round(cal_ece_post, 4),
+        },
         "holdout_log_loss": round(ll, 4),
         "holdout_brier": round(brier, 4),
         "holdout_ece": round(ece, 4),
@@ -730,25 +663,25 @@ def train_moneyline_v4(df: pd.DataFrame) -> dict:
         "tier_pick_counts": tier_counts,
         "shap_top10": list(shap_importance.items())[:10],
         "known_weaknesses": [
-            "Only 2 seasons of training data (2022+2023) — add 2021 in v5",
+            "Final model trains only on 2022+H1-2023 (3662 games) — H2-2023 reserved for calibration",
+            "Only 2 seasons of training data total — add 2021 in v5",
             "Umpire features imputed — no real ump signal",
             "Weather features imputed — game-time weather would improve predictions",
             "Lineup handedness imputed — platoon features weak until LINEUP-01",
             "Statcast xFIP missing — FIP used as proxy",
-            "OOF calibration pool is 2023-only (~2400 games) — limited isotonic stability",
             "SHAP computed on base final model, not the calibrated output",
+            "H2-2023 calibration set (~1206 games) is limited for isotonic stability",
         ],
         "overfitting_diagnosis": {
             "v2_leak_source_1": "CalibratedClassifierCV(cv=5) random k-fold on 2022+2023 "
                                 "— temporal future contamination in calibration folds",
             "v2_leak_source_2": "Early stopping val = random 15% of train, not temporal "
                                 "— 2023 games validated against 2022 games out of order",
-            "v4_fix_1": "Calibration fit on OOF predictions from walk-forward folds A+B "
-                        "— no future data seen during calibrator fitting",
-            "v4_fix_2": "Early stopping val = last 10% (temporal) of each fold's train window "
-                        "— never uses future-dated data to stop training",
-            "v4_fix_3": "Fold structure: A=(2022 train, H1-2023 val), B=(2022+H1-2023 train, H2-2023 val) "
-                        "— strictly increasing time windows",
+            "v4_fix_1": "Final model trained ONLY on 2022+H1-2023; calibration uses H2-2023 "
+                        "(strictly posterior to all training data)",
+            "v4_fix_2": "Early stopping val = last 10% temporal slice of training window "
+                        "— never uses future-dated data",
+            "v4_fix_3": "2024 holdout is completely unseen during all training and calibration stages",
         },
     }
 
