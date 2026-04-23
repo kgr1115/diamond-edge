@@ -4,9 +4,9 @@ description: Current backlog, in-progress work, blockers, critical path, and ope
 type: project
 ---
 
-Last updated: 2026-04-22 (Phase 2 tasks spawned — session 3)
+Last updated: 2026-04-22 (Phase 2 COMPLETE — session 4 cleanup after context-limit interruption)
 
-## Status: Phase 2 active. Four agents running in parallel.
+## Status: Phase 2 complete. All code committed. Phase 3 not yet spawned.
 
 ## Done
 
@@ -23,6 +23,12 @@ Last updated: 2026-04-22 (Phase 2 tasks spawned — session 3)
   - TASK-004 (Data Engineer): Odds API client/transform/poll, MLB Stats API (schedule/rosters/box-scores), Open-Meteo weather, cron handlers, rate-limit budget
   - TASK-005 (ML Engineer): Feature specs (moneyline/run-line/totals), backtest harness, calibration spec, Fly.io runtime decision, PickCandidate Python schema
   - TASK-006 (DevOps): vercel.json (4 crons), GitHub Actions CI + migrations workflows, fly.toml, 3 runbooks, cost projection, secrets manifest
+- Phase 2 COMPLETE (5 commits):
+  - TASK-007 (commit 0321eb3): AI Reasoning — system/user prompts, generate-rationale, cost model ($0.85/mo projected), eval harness with 6 factuality checks. @anthropic-ai/sdk added.
+  - TASK-009 (commit 014bbc5): Stripe Billing — checkout + portal routes, product seeding, tier transitions
+  - TASK-008 (commit f4f8c60): Frontend — full v1 UI (slate, pick detail, bankroll, pricing, age gate, geo-block, RG copy screens)
+  - Build hygiene (commit 9c7c05e): force-dynamic exports, lazy Stripe singleton, tsconfig excludes for ingestion lib
+  - TASK-010-pre (commit 2628d9a): Pick Pipeline — Vercel Cron triggers + Supabase Edge Function orchestrating 7 stages (game_fetch → odds_fetch → worker_call → ev_filter → rationale_call → db_write → cache_invalidate) with runbook-aligned error handling
 - 5 user product decisions locked (2026-04-22):
   - Free tier: NO LLM call (side + confidence only)
   - Minimum confidence: Tier 3+ (EV > 4%), ~3-6 picks/day
@@ -30,12 +36,9 @@ Last updated: 2026-04-22 (Phase 2 tasks spawned — session 3)
   - Parlays: deferred to v1.1
   - Soft launch: UNCONFIRMED — working assumption 2026-06-03
 
-## In Progress (Phase 2)
+## In Progress
 
-- TASK-007 (mlb-ai-reasoning): Prompt design, cost model, eval harness — brief at docs/briefs/TASK-007-ai-reasoning.md
-- TASK-008 (mlb-frontend): Slate view, pick detail, bankroll dashboard, subscription paywall — brief at docs/briefs/TASK-008-frontend.md
-- TASK-009 (mlb-backend focused): Stripe checkout + portal routes, product seeding — brief at docs/briefs/TASK-009-stripe-billing.md
-- TASK-010-pre (mlb-backend + ml-engineer coordination): Pick pipeline Edge Function — brief at docs/briefs/TASK-010-pre-pick-pipeline.md
+- (none — awaiting user direction on Phase 3)
 
 ## Blocked
 
@@ -46,10 +49,14 @@ Last updated: 2026-04-22 (Phase 2 tasks spawned — session 3)
 - Full Statcast feature integration — Pick pipeline Phase 2 uses simplified features; full Statcast requires TASK-004 data pipeline to be fully operational with real API keys
 - ML model training — No trained model artifact yet; Fly.io worker will return empty candidates until training completes (staging blocker, not a code blocker)
 
-## Phase 3 (not yet spawned — after Phase 2 completes)
+## Phase 3 (not yet spawned — Phase 2 committed 2026-04-22)
 
-- TASK-011 (QA): E2E tests, pick pipeline validation, golden-path tests, staging gate
-- TASK-012 (DevOps): Real Vercel/Supabase/Upstash/Fly projects provisioned, secrets wired, monitoring live
+- TASK-011 (QA): E2E tests (Playwright), pick pipeline validation (real ingestion → model → rationale → API → UI), golden-path tests, staging gate criteria
+- TASK-012 (DevOps): Real Vercel/Supabase/Upstash/Fly projects provisioned, secrets wired, monitoring live, cost dashboard
+- ML model training: Train initial models on 2021–2023 data, validate on 2024 holdout; until artifacts exist, Fly.io worker returns empty candidate arrays and pipeline writes zero picks
+- Stripe product creation (live mode): seeding script exists (TASK-009); needs LLC + bank account to run against a live Stripe account
+
+**⚠ Phase 3 touches real cloud infrastructure + money.** Do not spawn without explicit user confirmation per Auto Mode safety rules. Cost: provisioning starts the $300/mo envelope clock ticking.
 
 ## Critical Path (ordered)
 
@@ -58,14 +65,15 @@ Last updated: 2026-04-22 (Phase 2 tasks spawned — session 3)
 3. [DONE] TASK-003: Backend scaffold + Supabase migrations + auth middleware
 4. [DONE] TASK-004: Data ingestion layer (odds + MLB stats)
 5. [DONE] TASK-005: ML feature scope + model selection + runtime decision (Fly.io confirmed)
-6. [DONE] TASK-006: DevOps provisioning + CI/CD
-7. [IN PROGRESS] TASK-007 — AI Reasoning
-8. [IN PROGRESS] TASK-008 — Frontend slate + pick detail + billing UI
-9. [IN PROGRESS] TASK-009 — Stripe billing routes
-10. [IN PROGRESS] TASK-010-pre — Pick pipeline Edge Function
+6. [DONE] TASK-006: DevOps scaffolding + CI/CD files
+7. [DONE] TASK-007 — AI Reasoning (commit 0321eb3)
+8. [DONE] TASK-008 — Frontend (commit f4f8c60)
+9. [DONE] TASK-009 — Stripe billing routes (commit 014bbc5)
+10. [DONE] TASK-010-pre — Pick pipeline Edge Function (commit 2628d9a)
 11. [NEXT PHASE] TASK-011 — QA end-to-end + pick pipeline validation
-12. [NEXT PHASE] TASK-012 — DevOps: real infra provisioned
-13. Launch — after attorney review, trademark clearance, LLC formation
+12. [NEXT PHASE] TASK-012 — DevOps: real infra provisioned (touches shared systems + money)
+13. [NEXT PHASE] ML model training artifacts produced
+14. Launch — after attorney review, trademark clearance, LLC formation
 
 ## Open Questions for User (decisions needed)
 
