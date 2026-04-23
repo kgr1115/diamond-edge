@@ -82,7 +82,15 @@ Commits `9327d7f`, `d51ee1c`, `7298f3b`, `e212372`, `dd8d3b1`:
 
 ### Data corruption flagged
 
-`worker/models/pipelines/load_historical_odds.py` has ~8% row corruption (run-line prices appearing in h2h field). Data engineer dispatched 2026-04-23 to fix. Critical because moneyline's +8.4% ROI may be artifact of corruption — or may survive and be real alpha. Cannot tell until rerun.
+`worker/models/pipelines/load_historical_odds.py` has ~9.1% row corruption (run-line prices appearing in h2h field). Data engineer dispatched 2026-04-23 to fix. Critical because moneyline's +8.4% ROI may be artifact of corruption — or may survive and be real alpha. Cannot tell until rerun.
+
+### Data engineer resolution (commit `49756e2`)
+
+Root cause was NOT market-ordering (market keys were always correct). It was **in-game prices leaking through** — the 03:00 UTC snapshot catches games that started late (after 7 PM ET) and the Odds API returns live in-game h2h-only entries with extreme odds (-10000, +4000). 9.1% of dk_ml_home rows contained these. Fix rejects in-game sentinels by detecting extreme American odds + missing spread/total prices as a heuristic.
+
+### Post-corruption-fix backtest
+
+Moneyline @ 8% EV went from +131.8% (phantom) → **+17.9%** (still too high). Run line + totals unchanged (their fields were clean). Data engineer's diagnosis: residual moneyline inflation is overfitting via non-walk-forward CV. ML engineer v4 dispatched to audit training protocol + rebuild with walk-forward CV + causal rolling windows. Focus is moneyline only — run line and totals need separate architectural rewrite (deviation-from-base-rate).
 
 ---
 
