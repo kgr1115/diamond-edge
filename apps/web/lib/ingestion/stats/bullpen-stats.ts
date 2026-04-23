@@ -194,13 +194,20 @@ export async function syncBullpenStats(
   //    Use JS-side aggregation to avoid requiring a DB function.
   // ------------------------------------------------------------------
 
-  const { data: relievers, error: relErr } = await supabase
-    .from('pitcher_season_stats')
+  // pitcher_season_stats is in migration 0012 but not yet in generated Supabase types.
+  // Cast through any to keep runtime behavior while types catch up.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: relieversRaw, error: relErr } = await (supabase.from as any)('pitcher_season_stats')
     .select(`
       player_id, season, era, fip, whip, k_rate, bb_rate, hr_rate,
       players!inner(team_id, position)
     `)
     .eq('season', season);
+  const relievers = relieversRaw as Array<{
+    player_id: string; season: number; era: number | null; fip: number | null; whip: number | null;
+    k_rate: number | null; bb_rate: number | null; hr_rate: number | null;
+    players: { team_id: string; position: string } | null;
+  }> | null;
 
   if (relErr) {
     console.warn(JSON.stringify({
@@ -339,8 +346,8 @@ export async function syncBullpenStats(
       updated_at: new Date().toISOString(),
     };
 
-    const { error: upsertErr } = await supabase
-      .from('bullpen_team_stats')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: upsertErr } = await (supabase.from as any)('bullpen_team_stats')
       .upsert(row, { onConflict: 'team_id,season' });
 
     if (upsertErr) {

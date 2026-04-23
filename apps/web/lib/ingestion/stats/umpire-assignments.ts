@@ -205,8 +205,8 @@ export async function syncUmpireAssignments(
       updated_at: new Date().toISOString(),
     };
 
-    const { error: upsertErr } = await supabase
-      .from('umpire_assignments')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: upsertErr } = await (supabase.from as any)('umpire_assignments')
       .upsert(row, { onConflict: 'game_id' });
 
     if (upsertErr) {

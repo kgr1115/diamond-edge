@@ -89,7 +89,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // -------------------------------------------------------------------------
   // Stage 1: Resolve today's probable starters
   // -------------------------------------------------------------------------
-  const { data: todayGames } = await supabase
+  // Cast result to a concrete type that includes the joined pitcher objects.
+  // Supabase's generated types don't narrow foreign-key joins to named aliases.
+  type TodayGameRow = {
+    home_team_id: string;
+    away_team_id: string;
+    home_sp: { id: string; mlb_player_id: number } | null;
+    away_sp: { id: string; mlb_player_id: number } | null;
+  };
+
+  const { data: todayGamesRaw } = await supabase
     .from('games')
     .select(`
       home_team_id, away_team_id,
@@ -99,15 +108,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .eq('game_date', todayUTC)
     .in('status', ['scheduled', 'live']);
 
+  const todayGames = (todayGamesRaw ?? []) as unknown as TodayGameRow[];
+
   // Collect unique (player_uuid, mlb_player_id) pairs for pitchers
   const pitcherSet = new Map<string, { id: string; mlb_player_id: number }>();
-  for (const game of todayGames ?? []) {
+  for (const game of todayGames) {
     for (const sp of [game.home_sp, game.away_sp]) {
-      if (sp && typeof sp === 'object' && !Array.isArray(sp)) {
-        const pitcher = sp as { id: string; mlb_player_id: number };
-        if (pitcher.id && pitcher.mlb_player_id) {
-          pitcherSet.set(pitcher.id, pitcher);
-        }
+      if (sp && sp.id && sp.mlb_player_id) {
+        pitcherSet.set(sp.id, sp);
       }
     }
   }

@@ -120,13 +120,10 @@ export async function syncLineupEntries(
   const errors: string[] = [];
   const supabase = createServiceRoleClient();
 
-  const { data: games, error: gamesErr } = await supabase
+  // Supabase can't disambiguate the two teams FKs via alias — fetch plain + resolve.
+  const { data: gamesRaw, error: gamesErr } = await supabase
     .from('games')
-    .select(`
-      id, mlb_game_id, status,
-      home_team:home_team_id(id, mlb_team_id),
-      away_team:away_team_id(id, mlb_team_id)
-    `)
+    .select('id, mlb_game_id, status, home_team_id, away_team_id')
     .eq('game_date', gameDate)
     .in('status', ['scheduled', 'live']);
 
@@ -135,17 +132,32 @@ export async function syncLineupEntries(
     return { gamesProcessed: 0, confirmedLineups: 0, placeholderLineups: 0, errors };
   }
 
-  if (!games?.length) {
+  if (!gamesRaw?.length) {
     return { gamesProcessed: 0, confirmedLineups: 0, placeholderLineups: 0, errors };
   }
 
-  // Preload player uuid cache by mlb_player_id to minimize DB round-trips
+  // Resolve team mlb_team_id via a single teams query keyed by uuid.
+  const { data: teamsData } = await supabase
+    .from('teams')
+    .select('id, mlb_team_id');
+  const teamByUuid = new Map((teamsData ?? []).map(t => [t.id, t.mlb_team_id]));
+
+  // Build a synthetic games array with inlined team objects
+  const games = gamesRaw.map(g => ({
+    id: g.id,
+    mlb_game_id: g.mlb_game_id,
+    status: g.status,
+    home_team: teamByUuid.has(g.home_team_id) ? { id: g.home_team_id, mlb_team_id: teamByUuid.get(g.home_team_id)! } : null,
+    away_team: teamByUuid.has(g.away_team_id) ? { id: g.away_team_id, mlb_team_id: teamByUuid.get(g.away_team_id)! } : null,
+  }));
+
+  // Preload player uuid cache by mlb_player_id. Players table has `bats`, not `bat_side`.
   const { data: allPlayers } = await supabase
     .from('players')
-    .select('id, mlb_player_id, bat_side');
+    .select('id, mlb_player_id, bats');
 
   const playerByMlbId = new Map(
-    (allPlayers ?? []).map(p => [p.mlb_player_id, { uuid: p.id, batSide: p.bat_side as 'L' | 'R' | 'S' | null }])
+    (allPlayers ?? []).map(p => [p.mlb_player_id, { uuid: p.id, batSide: (p.bats as 'L' | 'R' | 'S' | null) }])
   );
 
   let gamesProcessed = 0;
@@ -153,8 +165,8 @@ export async function syncLineupEntries(
   let placeholderLineups = 0;
 
   for (const game of games) {
-    const homeTeam = game.home_team as { id: string; mlb_team_id: number } | null;
-    const awayTeam = game.away_team as { id: string; mlb_team_id: number } | null;
+    const homeTeam = game.home_team;
+    const awayTeam = game.away_team;
 
     if (!homeTeam || !awayTeam) continue;
 
@@ -207,8 +219,8 @@ export async function syncLineupEntries(
         confirmedLineups++;
       } else {
         // Pre-game placeholder: pull most-used lineup from recent entries for this team
-        const { data: recent } = await supabase
-          .from('lineup_entries')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: recent } = await (supabase.from as any)('lineup_entries')
           .select('batting_order, player_id, bat_side')
           .eq('team_id', teamId)
           .eq('confirmed', true)
@@ -233,8 +245,8 @@ export async function syncLineupEntries(
     }
 
     if (rows.length > 0) {
-      const { error: upsertErr } = await supabase
-        .from('lineup_entries')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: upsertErr } = await (supabase.from as any)('lineup_entries')
         .upsert(
           rows.map(r => ({ ...r, updated_at: new Date().toISOString() })),
           { onConflict: 'game_id,team_id,batting_order' }

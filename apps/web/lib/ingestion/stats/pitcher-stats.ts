@@ -305,8 +305,9 @@ export async function syncPitcherStats(
       updated_at: new Date().toISOString(),
     };
 
-    const { error: upsertErr } = await supabase
-      .from('pitcher_season_stats')
+    // `pitcher_season_stats` added in migration 0012 — not yet in Supabase generated types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: upsertErr } = await (supabase.from as any)('pitcher_season_stats')
       .upsert(row, { onConflict: 'player_id,season' });
 
     if (upsertErr) {

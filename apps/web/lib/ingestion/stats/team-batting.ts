@@ -369,8 +369,8 @@ export async function syncTeamBattingStats(
       updated_at:    new Date().toISOString(),
     };
 
-    const { error: upsertErr } = await supabase
-      .from('team_batting_stats')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: upsertErr } = await (supabase.from as any)('team_batting_stats')
       .upsert(row, { onConflict: 'team_id,season' });
 
     if (upsertErr) {
