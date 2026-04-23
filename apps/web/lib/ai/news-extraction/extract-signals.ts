@@ -348,7 +348,7 @@ function normalizeSignal(
       return null;
   }
 
-  const confidence = safeNumber((payload as Record<string, unknown>).confidence) ?? 0.5;
+  const confidence = safeNumber((payload as unknown as Record<string, unknown>).confidence) ?? 0.5;
 
   return {
     news_event_id,

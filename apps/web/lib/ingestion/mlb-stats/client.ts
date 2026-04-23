@@ -158,18 +158,29 @@ export interface ScheduleFetchOptions {
   hydrate?: string;
 }
 
-/** Fetch the MLB schedule for one or more dates (YYYY-MM-DD). */
+/**
+ * Fetch the MLB schedule for one or more dates (YYYY-MM-DD).
+ *
+ * MLB Stats API semantics:
+ *   - Single date  → ?date=YYYY-MM-DD
+ *   - Date range   → ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ *   - Comma-separated dates in one `date=` param are REJECTED with 400.
+ */
 export async function fetchSchedule(
   dates: string[],
   options: ScheduleFetchOptions = {}
 ): Promise<MlbScheduleResponse> {
-  const params = new URLSearchParams({
-    sportId: '1',
-    date: dates.join(','),
-  });
-
   const hydrate = options.hydrate ?? 'team,venue,probablePitcher(note),weather,linescore';
-  params.set('hydrate', hydrate);
+  const params = new URLSearchParams({ sportId: '1', hydrate });
+
+  if (dates.length === 1) {
+    params.set('date', dates[0]);
+  } else {
+    // Multi-date: use inclusive range (sorted ascending).
+    const sorted = [...dates].sort();
+    params.set('startDate', sorted[0]);
+    params.set('endDate', sorted[sorted.length - 1]);
+  }
 
   const url = `${MLB_STATS_API_BASE}/schedule?${params}`;
   const response = await mlbFetch(url);

@@ -232,7 +232,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { error: insertError } = await supabase.from('pick_clv').insert(inserts);
+  // `pick_clv` was added in migration 0011 but Supabase generated types haven't
+  // been regenerated yet, so the table isn't in the Database type. Cast to any
+  // until `supabase gen types` runs; then this cast can be removed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: insertError } = await (supabase.from as any)('pick_clv').insert(inserts);
 
   if (insertError) {
     console.error(JSON.stringify({ event: 'clv_compute_insert_error', error: insertError.message }));
