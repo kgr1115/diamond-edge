@@ -1,0 +1,21 @@
+{
+  "name": "diamond-edge-root",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Diamond Edge monorepo root — test tooling only. App code lives in apps/web/.",
+  "scripts": {
+    "test:integration": "vitest run --config tests/vitest.config.ts",
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
+    "seed": "tsx tests/fixtures/seed.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@supabase/supabase-js": "^2.104.0",
+    "@types/node": "^22.19.17",
+    "msw": "^2.13.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.5"
+  }
+}

@@ -1,0 +1,250 @@
+##############################################################################
+# test.yml — Diamond Edge QA gating pipeline
+#
+# Merge gates (BLOCKING — PR cannot merge if these fail):
+#   - lint           (from ci.yml, already blocks)
+#   - type-check     (from ci.yml, already blocks)
+#   - integration    — Vitest integration tests (pipeline, ingestion, rationale)
+#                      against a real local Supabase instance
+#
+# Informational (non-blocking on PR — must pass before staging deploy):
+#   - e2e            — Playwright golden-path suite (requires running Next.js + Supabase)
+#                      Runs on schedule (daily) + on push to main; NOT on every PR
+#                      (too slow and requires a full stack). Staging gate blocks on this.
+#
+# See docs/qa/staging-gate.md for the full staging sign-off checklist.
+#
+# CI gating policy:
+#   - lint + type-check + integration tests BLOCK merge to main
+#   - E2E suite BLOCKS staging deploy (via staging-gate checklist), not individual PRs
+#   - Pipeline validation runs daily on main (cron schedule) — failure pages on-call
+##############################################################################
+
+name: QA Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Daily pipeline validation — catches ingestion drift and model drift
+  schedule:
+    - cron: '0 8 * * *'   # 8:00 AM UTC daily (3 AM ET in summer)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  SUPABASE_VERSION: "1.x"
+
+jobs:
+
+  ##############################################################################
+  # BLOCKING: Integration tests (pipeline, ingestion, rationale)
+  # Runs on every PR and push to main.
+  ##############################################################################
+  integration:
+    name: Integration Tests (BLOCKING)
+    runs-on: ubuntu-latest
+
+    services:
+      # Supabase local via Docker — real DB for integration tests
+      # In CI we use the Supabase CLI to start a local instance
+      postgres:
+        image: supabase/postgres:15.1.0.117
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install root dependencies (tests/)
+        run: npm install
+        working-directory: .
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase
+        run: supabase start --ignore-health-check
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run DB migrations on test instance
+        run: supabase db push --local
+
+      - name: Seed test DB
+        run: npx tsx tests/fixtures/seed.ts
+        env:
+          TEST_SUPABASE_URL: http://localhost:54321
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+
+      - name: Start Next.js dev server (background)
+        run: npm run dev &
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY_LOCAL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_stub
+          STRIPE_SECRET_KEY: sk_test_stub
+          ANTHROPIC_API_KEY: sk-ant-stub
+          ODDS_API_KEY: stub
+          UPSTASH_REDIS_REST_URL: http://localhost:6379
+          UPSTASH_REDIS_REST_TOKEN: stub
+          CRON_SECRET: test-cron-secret
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+      - name: Wait for Next.js to be ready
+        run: npx wait-on http://localhost:3000 --timeout 60000
+
+      - name: Run Vitest integration tests
+        run: npx vitest run --config tests/vitest.config.ts --reporter=github-actions
+        env:
+          TEST_SUPABASE_URL: http://localhost:54321
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_APP_URL: http://localhost:3000
+          CRON_SECRET: test-cron-secret
+          FLY_WORKER_URL: https://diamond-edge-worker.fly.dev
+
+      - name: Upload Vitest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-results
+          path: test-results/
+
+  ##############################################################################
+  # INFORMATIONAL on PR, BLOCKING for staging deploy:
+  # E2E Playwright golden-path suite.
+  # Runs on push to main and on daily schedule.
+  # Individual PRs are NOT blocked by E2E failures (too slow, requires full stack).
+  # The staging gate checklist (docs/qa/staging-gate.md) blocks staging deploy on E2E.
+  ##############################################################################
+  e2e:
+    name: E2E Playwright (Informational on PR / Blocking on Staging)
+    runs-on: ubuntu-latest
+    # Run on push to main and on the daily schedule; skip on PRs to keep CI fast
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: tests/e2e
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase
+        run: supabase start --ignore-health-check
+
+      - name: Run DB migrations
+        run: supabase db push --local
+
+      - name: Seed test DB
+        run: npx tsx tests/fixtures/seed.ts
+        env:
+          TEST_SUPABASE_URL: http://localhost:54321
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+
+      - name: Run Playwright E2E tests
+        run: npx playwright test --config tests/e2e/playwright.config.ts
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          TEST_SUPABASE_URL: http://localhost:54321
+          TEST_SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY_LOCAL }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          CI: true
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  ##############################################################################
+  # DAILY: Pick pipeline validation (scheduled only)
+  # Catches slow-moving failures: ingestion drift, model drift, API contract changes.
+  # Failure sends a Slack alert (DevOps wires the webhook; QA defines the job).
+  ##############################################################################
+  pipeline-validation:
+    name: Daily Pipeline Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase + seed
+        run: |
+          supabase start --ignore-health-check
+          supabase db push --local
+          npx tsx tests/fixtures/seed.ts
+        env:
+          TEST_SUPABASE_URL: http://localhost:54321
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+
+      - name: Run pipeline integration tests only
+        run: npx vitest run tests/integration/pipeline.spec.ts --config tests/vitest.config.ts
+        env:
+          TEST_SUPABASE_URL: http://localhost:54321
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+
+      - name: Alert on failure
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_MESSAGE: "PIPELINE VALIDATION FAILED — pick pipeline integration test failed on main. Check Actions run."
+          SLACK_COLOR: danger
+          SLACK_TITLE: "Diamond Edge Pipeline Alert"
