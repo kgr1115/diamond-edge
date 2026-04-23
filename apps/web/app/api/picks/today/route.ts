@@ -19,6 +19,7 @@ const QUERY_SCHEMA = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  visibility: z.enum(['live', 'shadow', 'all']).optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ interface PickRow {
   confidence_tier: number;
   required_tier: SubscriptionTier;
   result: string;
+  visibility: 'live' | 'shadow';
   best_line_price: number | null;
   best_line_book_id: string | null;
   model_probability: number | null;
@@ -80,6 +82,7 @@ interface PickResponse {
   pick_side: string;
   confidence_tier: number;
   required_tier: string;
+  visibility: 'live' | 'shadow';
   result: string;
   best_line_price?: number;
   best_line_book?: string;
@@ -148,6 +151,7 @@ function maskPick(
     pick_side: row.pick_side,
     confidence_tier: row.confidence_tier,
     required_tier: row.required_tier,
+    visibility: row.visibility,
     result: row.result,
   };
 
@@ -192,6 +196,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     market: searchParams.get('market') ?? undefined,
     min_confidence: searchParams.get('min_confidence') ?? undefined,
     date: searchParams.get('date') ?? undefined,
+    visibility: searchParams.get('visibility') ?? undefined,
   });
 
   if (!parsed.success) {
@@ -201,7 +206,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { market, min_confidence, date: requestedDate } = parsed.data;
+  const { market, min_confidence, date: requestedDate, visibility: visibilityParam } = parsed.data;
   const pickDate = requestedDate ?? todayInET();
 
   // 2. Resolve caller tier
@@ -237,11 +242,32 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // 3. Check Redis cache (skip cache if filter params are present — cache stores full slate)
+  // 2b. Resolve effective visibility filter.
+  // shadow/all visibility requires authentication — anon callers always see live only.
+  // Any paying user (pro or elite) may view shadow picks. The UI mirrors this gate.
+  const requestedVisibility = visibilityParam ?? 'live';
+  const wantsNonLive = requestedVisibility === 'shadow' || requestedVisibility === 'all';
+
+  if (wantsNonLive && (!user || userTier === 'free')) {
+    // Free + anon users get a 401 rather than a silent downgrade so the client
+    // can show a proper upgrade prompt instead of an empty state.
+    return NextResponse.json(
+      { error: { code: 'UNAUTHORIZED', message: 'Shadow picks require a Pro or Elite subscription.' } },
+      { status: 401 }
+    );
+  }
+
+  // When visibility=all/shadow we bypass RLS using service role (see migration 0010).
+  // effectiveVisibility drives the DB .eq() / no-op below.
+  const effectiveVisibility: 'live' | 'shadow' | 'all' = wantsNonLive ? requestedVisibility : 'live';
+
+  // 3. Check Redis cache (skip cache if filter params are present — cache stores full slate).
+  // Also skip cache for non-live visibility requests since shadow picks change more frequently
+  // and are per-tier, making key construction complex for minimal benefit.
   const hasFilters = !!market || !!min_confidence;
   let cacheKey: string | null = null;
 
-  if (!hasFilters) {
+  if (!hasFilters && effectiveVisibility === 'live') {
     cacheKey = CacheKeys.picksToday(pickDate, userTier);
     const cached = await cacheGet<{ date: string; picks: PickResponse[]; total: number; user_tier: UserTier; meta: PicksMeta }>(cacheKey);
     if (cached) {
@@ -250,8 +276,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // 4. Query DB (service role for clean read; RLS already filters on the anon/authenticated session,
-  //    but we apply tier masking in code so we need all columns)
+  // 4. Query DB — always use service role so we can select all columns for tier masking.
+  // RLS would block shadow rows for authenticated users; service role bypasses that intentionally.
+  // Auth gate above ensures only Pro+ callers can reach this path with wantsNonLive=true.
   const serviceClient = createServiceRoleClient();
 
   let query = serviceClient
@@ -264,6 +291,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       confidence_tier,
       required_tier,
       result,
+      visibility,
       best_line_price,
       best_line_book_id,
       model_probability,
@@ -281,8 +309,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       rationale_cache:rationale_id ( rationale_text )
     `)
     .eq('pick_date', pickDate)
-    .eq('visibility', 'live')
     .order('confidence_tier', { ascending: false });
+
+  // Apply visibility filter — 'all' means no filter (return both live and shadow).
+  if (effectiveVisibility !== 'all') {
+    query = query.eq('visibility', effectiveVisibility);
+  }
 
   // For anon/free users, only show free-tier picks
   if (userTier === 'anon' || userTier === 'free') {
