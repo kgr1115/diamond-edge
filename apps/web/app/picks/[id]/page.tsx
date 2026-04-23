@@ -10,6 +10,11 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+interface BookLine {
+  price: number | null;
+  book: string;
+}
+
 interface PickDetailResponse {
   pick: {
     id: string;
@@ -31,6 +36,8 @@ interface PickDetailResponse {
     generated_at: string;
     best_line_price?: number;
     best_line_book?: string;
+    dk_line?: BookLine;
+    fd_line?: BookLine;
     model_probability?: number;
     expected_value?: number;
     rationale?: string;
@@ -129,6 +136,29 @@ export default async function PickDetailPage({ params }: PageProps) {
                 <span className="text-sm text-gray-500">@ {pick.best_line_book}</span>
               )}
             </div>
+
+            {/* DK + FD line shopping — required on every pick */}
+            {(pick.dk_line || pick.fd_line) && (
+              <div className="flex gap-4 pt-1">
+                {pick.dk_line && (
+                  <div className="flex items-center gap-1.5 bg-gray-800 rounded px-3 py-1.5">
+                    <span className="text-xs font-semibold text-gray-400">DK</span>
+                    <span className="text-sm font-mono text-white">
+                      {pick.dk_line.price != null ? formatOdds(pick.dk_line.price) : 'N/A'}
+                    </span>
+                  </div>
+                )}
+                {pick.fd_line && (
+                  <div className="flex items-center gap-1.5 bg-gray-800 rounded px-3 py-1.5">
+                    <span className="text-xs font-semibold text-gray-400">FD</span>
+                    <span className="text-sm font-mono text-white">
+                      {pick.fd_line.price != null ? formatOdds(pick.fd_line.price) : 'N/A'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex items-center gap-4">
               <ConfidenceBadge tier={pick.confidence_tier} showLabel />
               {pick.model_probability !== undefined && (
