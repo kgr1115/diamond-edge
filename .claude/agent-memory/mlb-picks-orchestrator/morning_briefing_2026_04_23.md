@@ -121,6 +121,21 @@ Architect ADR-002 committed (`d85c1a0`): delta model as regression (`y = outcome
 - AI Reasoning: Claude Haiku news extraction prompt + player/game resolvers + eval harness. Populates `news_signals` from `news_events`.
 - ML Engineer: B2 delta model training with 3-snapshot odds data. Extends `load_historical_odds.py` to read morning/afternoon/evening dirs, computes novig per slot, trains delta regression `y = outcome - morning_novig_prior`. Beats-market evaluation.
 
+**Phase 3 + 4 COMPLETE (2026-04-23, late evening):**
+
+- AI Reasoning (commits `0f5e8b9` → `b617663`): Haiku news-extraction pipeline, 12/12 evals pass, $0.45/mo projected. `/rationale-news` endpoint ready on worker.
+- ML Engineer B2 (commits `09d277f`, `75d90e9`): 3-snapshot odds loader, B2 delta models trained for all 3 markets. **VERDICT: NO ALPHA.** All CLV < +0.5% bar (ML -1.05%, RL -0.22%, Totals +0.03%). Moneyline model fully degenerate (best_iteration=1). Architecture is sound; the problem is that traditional features don't contain info the market doesn't already have. Agent recommends: wait for B3 news features + forward-looking CLV observation.
+
+**Phase 5 decision (Kyle, 2026-04-23):**
+
+"Build out Phase 5 and still deploy picks. Make sure the model continues to get data and improve itself as time goes on."
+
+Translation: ship via shadow-mode + continuous retrain. Forward-looking CLV validation over ~100 picks will tell us if B3 news signals inject real alpha.
+
+**Phase 5 in flight (2026-04-23, late evening):**
+- Backend: pg_cron setup (Bluesky 5-min poll, news extraction 15-min, outcome grader daily), news_signals aggregation in feature-builder, shadow+live two-gate picks (shadow 4%/Tier3 DB-only, live 8%/Tier5 UI-visible), outcome grader real implementation, two new migrations (0009 pg_cron, 0010 visibility column).
+- ML Engineer (parallel, continuous-improvement track): monthly retrain pipeline, CLV tracking table (migration 0011), CLV computation endpoint, auto-promote logic post-retrain, retrain ops runbook.
+
 ---
 
 ## Decisions awaiting you — RE-PRIORITIZED AFTER BIAS-FIX FINDINGS
