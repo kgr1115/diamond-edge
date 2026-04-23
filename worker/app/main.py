@@ -57,21 +57,46 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Confidence tier assignment
 # ---------------------------------------------------------------------------
+# Tiers have two properties the UI depends on:
+#   - T5 must be genuinely rare (the "strong" label)
+#   - Obviously-artifact-driven EV must never map to T5
+#
+# Thresholds below are more sensitive than v1 (which mapped everything > 9% EV
+# to T5). Realistic MLB edges from a well-calibrated model fall in 2–8%. EVs
+# above 15% are rare-but-possible. EVs above 20% are almost certainly a
+# pipeline/model artifact (missing features, uncalibrated odds, etc.) — we
+# DEMOTE those to T3 so the UI doesn't label noise as "strong".
+#
+# TODO (auto-calibration): a nightly job should fit tier boundaries against
+# actual win rate deciles from pick_outcomes. See docs/ml/tier-calibration.md.
+# ---------------------------------------------------------------------------
 def assign_confidence_tier(ev: float, uncertainty: float = 0.0) -> int:
     if ev <= 0:
         return 0
-    elif ev <= 0.02:
-        base = 1
-    elif ev <= 0.04:
-        base = 2
-    elif ev <= 0.06:
+
+    # Realism cap: EVs above 20% are treated as suspect, not strong.
+    # This prevents degenerate model outputs from showing up as T5 "strong" picks.
+    if ev > 0.20:
         base = 3
-    elif ev <= 0.09:
-        base = 4
-    else:
+    elif ev > 0.15:
         base = 5
-    penalty = 1 if uncertainty >= 0.06 else 0
-    return max(1, base - penalty)
+    elif ev > 0.10:
+        base = 4
+    elif ev > 0.06:
+        base = 3
+    elif ev > 0.03:
+        base = 2
+    else:
+        base = 1
+
+    # Uncertainty penalties (was: single -1 at >=0.06)
+    # Now: graduated penalty so confidence reflects the model's conviction.
+    if uncertainty >= 0.08:
+        return max(1, base - 2)
+    if uncertainty >= 0.05:
+        return max(1, base - 1)
+
+    return base
 
 
 # ---------------------------------------------------------------------------
