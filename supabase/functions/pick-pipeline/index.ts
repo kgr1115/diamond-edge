@@ -7,11 +7,18 @@
  * Pipeline stages (per docs/runbooks/pick-pipeline-failure.md log event names):
  *   1. game_fetch       — Load today's scheduled games
  *   2. odds_fetch       — Load latest odds for each game
- *   3. worker_call      — POST /predict to Fly.io worker
- *   4. ev_filter        — Drop candidates with EV < 4%
- *   5. rationale_call   — Get or generate rationale for Pro/Elite picks
- *   6. db_write         — Batch insert picks to Supabase
- *   7. cache_invalidate — Invalidate Redis picks:today keys
+ *   3. news_fetch       — Load recent news_signals per game (T-6h window)
+ *   4. worker_call      — POST /predict to Fly.io worker
+ *   5. ev_filter        — Two-gate shadow/live visibility assignment
+ *   6. rationale_call   — Get or generate rationale for Pro/Elite picks
+ *   7. db_write         — Batch insert picks to Supabase
+ *   8. cache_invalidate — Invalidate Redis picks:today keys
+ *
+ * Two-gate visibility (ADR-002 Phase 5):
+ *   SHADOW: EV >= 0.04 AND confidence_tier >= 3
+ *     → stored to DB for CLV/feedback-loop accumulation, NOT user-visible
+ *   LIVE:   EV >= 0.08 AND confidence_tier >= 5
+ *     → user-visible; RLS policy picks_select_live_* enforces this
  *
  * Error handling rules (per TASK-010-pre spec):
  *   - Single game /predict failure: log + skip that game, continue
@@ -28,22 +35,50 @@ import { invalidatePicksCache } from './redis.ts';
 import type { GameRow, OddsRow, PickCandidate, PreparedPick } from './types.ts';
 
 // ---------------------------------------------------------------------------
+// Thresholds (ADR-002 Phase 5)
+// ---------------------------------------------------------------------------
+
+/** Minimum to store at all — shadow picks for CLV data accumulation. */
+const SHADOW_EV_MIN = 0.04;
+const SHADOW_TIER_MIN = 3;
+
+/** Minimum for user-visible live picks. */
+const LIVE_EV_MIN = 0.08;
+const LIVE_TIER_MIN = 5;
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Today's date in Eastern Time (YYYY-MM-DD). */
 function todayInET(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-/** Structured log line. All stage logs use this format for runbook alignment. */
 function log(event: string, payload: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...payload }));
 }
 
-/** Map confidence tier to required subscription tier. */
 function requiredTierFor(confidenceTier: number): 'pro' | 'elite' {
   return confidenceTier >= 5 ? 'elite' : 'pro';
+}
+
+function assignVisibility(ev: number, tier: number): 'shadow' | 'live' {
+  if (ev >= LIVE_EV_MIN && tier >= LIVE_TIER_MIN) return 'live';
+  return 'shadow';
+}
+
+// ---------------------------------------------------------------------------
+// news_signals row (minimal shape needed for feature aggregation)
+// ---------------------------------------------------------------------------
+
+interface NewsSignalRow {
+  signal_type: string;
+  confidence: number;
+  payload: {
+    war_proxy?: number | null;
+    severity?: string | null;
+    [key: string]: unknown;
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,13 +154,42 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   log('odds_fetch', { ok: !oddsError, game_count: Object.keys(oddsByGame).length });
 
   // ---------------------------------------------------------------------------
-  // Stage 3: Assemble feature vectors + call /predict for each game
+  // Stage 3: Fetch recent news_signals per game (T-6h window)
+  // Non-fatal — if news pipeline hasn't run, features default to 0.
+  // ---------------------------------------------------------------------------
+  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+  const { data: signalsData, error: signalsError } = await supabase
+    .from('news_signals')
+    .select('game_id, signal_type, confidence, payload')
+    .in('game_id', gameIds)
+    .gte('created_at', sixHoursAgo);
+
+  if (signalsError) {
+    log('news_fetch', { ok: false, error: signalsError.message, note: 'news features will default to 0' });
+  }
+
+  const signalsByGame: Record<string, NewsSignalRow[]> = {};
+  for (const row of (signalsData ?? []) as (NewsSignalRow & { game_id: string })[]) {
+    if (!signalsByGame[row.game_id]) signalsByGame[row.game_id] = [];
+    signalsByGame[row.game_id].push(row);
+  }
+
+  const signalGameCount = Object.keys(signalsByGame).length;
+  log('news_fetch', {
+    ok: !signalsError,
+    games_with_signals: signalGameCount,
+    total_signals: (signalsData ?? []).length,
+  });
+
+  // ---------------------------------------------------------------------------
+  // Stage 4: Assemble feature vectors + call /predict for each game
   // ---------------------------------------------------------------------------
   const allCandidates: PickCandidate[] = [];
 
   for (const game of games) {
     const gameOdds = oddsByGame[game.id] ?? [];
-    const features = buildFeatureVector(game, gameOdds);
+    const gameSignals = signalsByGame[game.id] ?? [];
+    const features = buildFeatureVector(game, gameOdds, gameSignals);
 
     try {
       const candidates = await callPredict({
@@ -135,9 +199,13 @@ Deno.serve(async (_req: Request): Promise<Response> => {
       });
 
       allCandidates.push(...candidates);
-      log('worker_call', { ok: true, game_id: game.id, candidates: candidates.length });
+      log('worker_call', {
+        ok: true,
+        game_id: game.id,
+        candidates: candidates.length,
+        news_signal_count: gameSignals.length,
+      });
     } catch (err) {
-      // Single game failure: log and skip — do not abort entire pipeline
       log('worker_call', {
         ok: false,
         game_id: game.id,
@@ -148,39 +216,47 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 4: EV filter
+  // Stage 5: Two-gate EV/tier filter → shadow or live visibility
   //
-  // TEMP (v3 gate): 8% EV minimum + Tier 5 confidence until vig-removed
-  // backtest (run_backtest_v3.py) validates honest ROI and we confirm real
-  // alpha. Previous 4% threshold was set before vig removal was applied to
-  // the simulator — the v2 ROI numbers (40%+) included phantom edge from
-  // book overround. Revert to 4% once v3 report shows ROI 2-5% at 4% EV.
+  // SHADOW: EV >= 4% AND tier >= 3 → stored for CLV accumulation, not shown to users
+  // LIVE:   EV >= 8% AND tier >= 5 → user-visible; meets the previously temp gate
+  //
+  // The TEMP comment from the prior implementation is now formalized:
+  // 8%/tier-5 is the live gate; 4%/tier-3 is the shadow gate.
+  // Shadow picks are model feedback data — they cost nothing extra to store.
   // ---------------------------------------------------------------------------
-  const EV_MIN = 0.08;   // temp: was 0.04
-  const TIER_MIN = 5;     // temp: was 3
-
-  const qualified = allCandidates.filter(
-    (c) => c.expected_value >= EV_MIN && c.confidence_tier >= TIER_MIN
+  const shadowCandidates = allCandidates.filter(
+    (c) => c.expected_value >= SHADOW_EV_MIN && c.confidence_tier >= SHADOW_TIER_MIN
   );
+
+  const liveCandidates = new Set(
+    shadowCandidates
+      .filter((c) => c.expected_value >= LIVE_EV_MIN && c.confidence_tier >= LIVE_TIER_MIN)
+      .map((c) => `${c.game_id}:${c.market}:${c.pick_side}`)
+  );
+
   log('ev_filter', {
     ok: true,
     total: allCandidates.length,
-    qualified: qualified.length,
-    dropped: allCandidates.length - qualified.length,
-    ev_min: EV_MIN,
-    tier_min: TIER_MIN,
+    shadow: shadowCandidates.length,
+    live: liveCandidates.size,
+    dropped: allCandidates.length - shadowCandidates.length,
+    shadow_ev_min: SHADOW_EV_MIN,
+    shadow_tier_min: SHADOW_TIER_MIN,
+    live_ev_min: LIVE_EV_MIN,
+    live_tier_min: LIVE_TIER_MIN,
   });
 
-  if (qualified.length === 0) {
+  if (shadowCandidates.length === 0) {
     log('pipeline_complete', { picks_written: 0, reason: 'no_qualified_picks' });
     return new Response(JSON.stringify({ picks_written: 0 }), { status: 200 });
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 5: Rationale generation for each qualified pick
+  // Stage 6: Rationale generation for LIVE picks only
+  // Shadow picks skip rationale to save LLM cost.
   // ---------------------------------------------------------------------------
 
-  // Build a game_context lookup (we need team names for the rationale prompt)
   // deno-lint-ignore no-explicit-any
   const gameContextByGameId: Record<string, any> = {};
   for (const game of gamesData ?? []) {
@@ -223,56 +299,63 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     };
   }
 
-  const preparedPicks: PreparedPick[] = [];
+  interface PreparedPickWithVisibility extends PreparedPick {
+    visibility: 'shadow' | 'live';
+  }
 
-  for (const candidate of qualified) {
+  const preparedPicks: PreparedPickWithVisibility[] = [];
+
+  for (const candidate of shadowCandidates) {
+    const candidateKey = `${candidate.game_id}:${candidate.market}:${candidate.pick_side}`;
+    const visibility = liveCandidates.has(candidateKey) ? 'live' : 'shadow';
     const requiredTier = requiredTierFor(candidate.confidence_tier);
     let rationaleResult = { rationale_cache_id: null as string | null, cache_hit: false };
 
-    try {
-      const gameContext = gameContextByGameId[candidate.game_id];
-      if (gameContext) {
-        rationaleResult = await getOrGenerateRationale(
-          candidate,
-          gameContext,
-          requiredTier,
-          supabase
-        );
+    // Only call LLM for live picks — shadow picks accumulate for free.
+    if (visibility === 'live') {
+      try {
+        const gameContext = gameContextByGameId[candidate.game_id];
+        if (gameContext) {
+          rationaleResult = await getOrGenerateRationale(
+            candidate,
+            gameContext,
+            requiredTier,
+            supabase
+          );
+        }
+        log('rationale_call', {
+          ok: true,
+          game_id: candidate.game_id,
+          tier: requiredTier,
+          cache_hit: rationaleResult.cache_hit,
+        });
+      } catch (err) {
+        log('rationale_call', {
+          ok: false,
+          game_id: candidate.game_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-      log('rationale_call', {
-        ok: true,
-        game_id: candidate.game_id,
-        tier: requiredTier,
-        cache_hit: rationaleResult.cache_hit,
-      });
-    } catch (err) {
-      // Rationale failure: write pick with rationale_id = null, do not drop the pick
-      log('rationale_call', {
-        ok: false,
-        game_id: candidate.game_id,
-        error: err instanceof Error ? err.message : String(err),
-      });
     }
 
     preparedPicks.push({
       candidate,
       required_tier: requiredTier,
       rationale_cache_id: rationaleResult.rationale_cache_id,
+      visibility,
     });
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 6: Batch insert picks to DB
+  // Stage 7: Batch insert picks to DB
   // ---------------------------------------------------------------------------
-
-  // Resolve sportsbook ID from key (needed for best_line_book_id FK)
   const { data: sbData } = await supabase.from('sportsbooks').select('id, key');
   const sbByKey: Record<string, string> = {};
   for (const sb of sbData ?? []) {
     sbByKey[sb.key] = sb.id;
   }
 
-  const insertRows = preparedPicks.map(({ candidate, required_tier, rationale_cache_id }) => ({
+  const insertRows = preparedPicks.map(({ candidate, required_tier, rationale_cache_id, visibility }) => ({
     game_id: candidate.game_id,
     pick_date: today,
     market: candidate.market,
@@ -287,6 +370,11 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     required_tier,
     result: 'pending',
     generated_at: candidate.generated_at,
+    visibility,
+    // ADR-002 columns — null until v5 delta model is live (v2 artifacts don't produce these)
+    market_novig_prior: null,
+    model_delta: null,
+    news_signals_applied: false,
   }));
 
   const { error: insertError } = await supabase.from('picks').insert(insertRows);
@@ -296,27 +384,38 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     return new Response(JSON.stringify({ error: 'db_write_failed' }), { status: 500 });
   }
 
-  log('db_write', { ok: true, count: insertRows.length, date: today });
+  const liveCount = preparedPicks.filter((p) => p.visibility === 'live').length;
+  const shadowCount = preparedPicks.filter((p) => p.visibility === 'shadow').length;
+  log('db_write', { ok: true, count: insertRows.length, live: liveCount, shadow: shadowCount, date: today });
 
   // ---------------------------------------------------------------------------
-  // Stage 7: Invalidate Redis cache
+  // Stage 8: Invalidate Redis cache (only needed when live picks were written)
   // ---------------------------------------------------------------------------
-  try {
-    await invalidatePicksCache(today);
-    log('cache_invalidate', { ok: true, date: today });
-  } catch (err) {
-    // Non-fatal: stale cache is acceptable for up to the TTL
-    log('cache_invalidate', {
-      ok: false,
-      date: today,
-      error: err instanceof Error ? err.message : String(err),
-      warning: 'picks cache may be stale until TTL expires',
-    });
+  if (liveCount > 0) {
+    try {
+      await invalidatePicksCache(today);
+      log('cache_invalidate', { ok: true, date: today });
+    } catch (err) {
+      log('cache_invalidate', {
+        ok: false,
+        date: today,
+        error: err instanceof Error ? err.message : String(err),
+        warning: 'picks cache may be stale until TTL expires',
+      });
+    }
+  } else {
+    log('cache_invalidate', { ok: true, skipped: true, reason: 'no live picks written' });
   }
 
-  log('pipeline_complete', { picks_written: preparedPicks.length, date: today });
+  log('pipeline_complete', {
+    picks_written: preparedPicks.length,
+    live: liveCount,
+    shadow: shadowCount,
+    date: today,
+  });
+
   return new Response(
-    JSON.stringify({ picks_written: preparedPicks.length }),
+    JSON.stringify({ picks_written: preparedPicks.length, live: liveCount, shadow: shadowCount }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
 });

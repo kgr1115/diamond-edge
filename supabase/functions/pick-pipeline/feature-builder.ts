@@ -11,9 +11,51 @@
  * orchestrator when staging validation begins.
  *
  * Full Statcast integration: TASK-004 + ML model training (post-Phase 2).
+ *
+ * Phase 5 (ADR-002): news_signals rows are aggregated into numeric features
+ * and appended to the feature vector. The worker's _build_feature_vector()
+ * fills missing keys with 0.0, so adding these features is backward-compatible
+ * — v2 model artifacts simply ignore them; the next retrain learns them.
  */
 
 import type { GameRow, OddsRow } from './types.ts';
+
+// ---------------------------------------------------------------------------
+// news_signals row shape (subset we use for feature aggregation)
+// ---------------------------------------------------------------------------
+
+interface NewsSignalRow {
+  signal_type: string;
+  confidence: number;
+  payload: {
+    war_proxy?: number | null;
+    severity?: string | null;
+    [key: string]: unknown;
+  } | null;
+}
+
+// Numeric encoding for injury severity — higher = more severe impact on win prob.
+// Sourced from ADR-002 §News-derived features.
+const SEVERITY_WEIGHT: Record<string, number> = {
+  day_to_day:   1,
+  questionable: 2,
+  il_10:        3,
+  il_15:        4,
+  il_60:        5,
+};
+
+// ---------------------------------------------------------------------------
+// Feature vector types
+// ---------------------------------------------------------------------------
+
+export interface NewsFeatures {
+  late_scratch_count: number;
+  late_scratch_war_impact_sum: number;
+  lineup_change_count: number;
+  injury_update_severity_max: number;
+  opener_announced: number;   // 0 | 1
+  weather_note_flag: number;  // 0 | 1
+}
 
 export interface FeatureVector {
   // Team identity
@@ -45,17 +87,32 @@ export interface FeatureVector {
 
   // Venue
   venue_state: string | null;
+
+  // News signals (Phase 5 / ADR-002)
+  // All default to 0 when news pipeline hasn't run yet.
+  late_scratch_count: number;
+  late_scratch_war_impact_sum: number;
+  lineup_change_count: number;
+  injury_update_severity_max: number;
+  opener_announced: number;
+  weather_note_flag: number;
 }
 
-/**
- * Assemble a Phase 2 simplified feature vector from DB data for a single game.
- * Selects the best available line price across all sportsbooks for each market.
- */
-export function buildFeatureVector(game: GameRow, odds: OddsRow[]): FeatureVector {
-  // For each market + side, take the most favorable line across DK and FD.
-  // "Most favorable" for picking purposes = highest absolute price (most juice to pick side).
-  // The ML worker uses these to compute implied probability.
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
+/**
+ * Assemble a feature vector from DB data for a single game.
+ * Selects the best available line price across all sportsbooks for each market.
+ * news_signals rows are optional — pass [] if the late-news pipeline hasn't run yet.
+ */
+export function buildFeatureVector(
+  game: GameRow,
+  odds: OddsRow[],
+  newsSignals: NewsSignalRow[] = [],
+): FeatureVector {
+  // Odds aggregation — pick the best available price per market/side.
   let home_ml_price: number | null = null;
   let away_ml_price: number | null = null;
   let home_rl_price: number | null = null;
@@ -67,7 +124,6 @@ export function buildFeatureVector(game: GameRow, odds: OddsRow[]): FeatureVecto
 
   for (const row of odds) {
     if (row.market === 'moneyline') {
-      // Pick the best (highest) home/away ML price across books
       if (row.home_price !== null) {
         home_ml_price = home_ml_price === null
           ? row.home_price
@@ -109,6 +165,8 @@ export function buildFeatureVector(game: GameRow, odds: OddsRow[]): FeatureVecto
     }
   }
 
+  const news = aggregateNewsFeatures(newsSignals);
+
   return {
     home_team_id: game.home_team_id,
     away_team_id: game.away_team_id,
@@ -126,8 +184,79 @@ export function buildFeatureVector(game: GameRow, odds: OddsRow[]): FeatureVecto
     home_pitcher_id: game.probable_home_pitcher_id,
     away_pitcher_id: game.probable_away_pitcher_id,
     venue_state: game.venue_state,
+    ...news,
   };
 }
+
+// ---------------------------------------------------------------------------
+// News signal aggregation (ADR-002 §News-derived features)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate news_signals rows for a single game into numeric features.
+ * All signals from the T-6h window are considered; caller is responsible
+ * for pre-filtering by game_id and published_at.
+ *
+ * Worker-side _build_feature_vector() fills absent keys with 0.0, so
+ * returning 0 for any absent signal type is the correct safe default.
+ */
+function aggregateNewsFeatures(signals: NewsSignalRow[]): NewsFeatures {
+  let late_scratch_count = 0;
+  let late_scratch_war_impact_sum = 0;
+  let lineup_change_count = 0;
+  let injury_update_severity_max = 0;
+  let opener_announced = 0;
+  let weather_note_flag = 0;
+
+  for (const sig of signals) {
+    switch (sig.signal_type) {
+      case 'late_scratch': {
+        late_scratch_count += 1;
+        const war = sig.payload?.war_proxy ?? null;
+        if (typeof war === 'number' && isFinite(war)) {
+          late_scratch_war_impact_sum += war;
+        }
+        break;
+      }
+      case 'lineup_change': {
+        lineup_change_count += 1;
+        break;
+      }
+      case 'injury_update': {
+        const severity = sig.payload?.severity ?? null;
+        const weight = typeof severity === 'string'
+          ? (SEVERITY_WEIGHT[severity] ?? 1)
+          : 1;
+        if (weight > injury_update_severity_max) {
+          injury_update_severity_max = weight;
+        }
+        break;
+      }
+      case 'opener_announcement': {
+        opener_announced = 1;
+        break;
+      }
+      case 'weather_note': {
+        weather_note_flag = 1;
+        break;
+      }
+      // 'other' and unrecognized types contribute no numeric features
+    }
+  }
+
+  return {
+    late_scratch_count,
+    late_scratch_war_impact_sum,
+    lineup_change_count,
+    injury_update_severity_max,
+    opener_announced,
+    weather_note_flag,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /**
  * Return the "better" of two American odds prices for line-shopping purposes.
