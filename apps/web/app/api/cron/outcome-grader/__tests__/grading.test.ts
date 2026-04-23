@@ -9,7 +9,7 @@ import {
   gradeRunLine,
   gradeTotal,
   computePnL,
-} from '../route';
+} from '@/lib/outcome-grader/lib';
 
 // ---------------------------------------------------------------------------
 // Helper: placeholder UUIDs for team IDs
