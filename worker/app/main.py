@@ -462,9 +462,12 @@ def _verify_auth(request: Request) -> None:
 
 
 @app.get("/health")
-async def health(request: Request) -> dict:
-    """Liveness + readiness probe."""
-    _verify_auth(request)
+async def health() -> dict:
+    """
+    Liveness + readiness probe. UNAUTHENTICATED — Fly.io's health checker hits
+    this endpoint from the internal network without credentials. Returning 401
+    would prevent the machine from ever passing health checks and starting.
+    """
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _STARTUP_TIME, 1),

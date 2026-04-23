@@ -7,12 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Build context: worker/ (fly.toml lives here). Paths are relative to worker/.
 # Copy requirements first for layer caching
-COPY worker/requirements.txt /app/requirements.txt
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY worker/ /app/worker/
+COPY . /app/worker/
 
 # Model artifacts — mounted at runtime via Fly.io volume, not baked into image.
 # Directory structure expected at startup:
