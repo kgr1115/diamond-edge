@@ -7,7 +7,9 @@
   "scripts": {
     "test": "tsx run.ts --test-only",
     "backfill": "tsx run.ts --skip-test",
-    "backfill:full": "tsx run.ts"
+    "backfill:full": "tsx run.ts",
+    "backfill:morning-afternoon": "tsx run-morning-afternoon.ts",
+    "backfill:morning-afternoon:now": "tsx run-morning-afternoon.ts --skip-precheck"
   },
   "dependencies": {},
   "devDependencies": {
