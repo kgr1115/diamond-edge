@@ -1,98 +1,191 @@
 {
-  "backtest_date": "2026-04-23T13:45:00+00:00",
+  "backtest_date": "2026-04-23T14:09:23.588382+00:00",
   "version": "v3",
   "holdout_season": 2024,
   "vig_removal_applied": true,
-  "vig_removal_method": "No-vig probs from best book (tighter margin wins). EV gate requires: (a) EV > threshold vs raw odds AND (b) model_prob > novig_market_prob (genuine edge vs fair value). Payout uses raw odds. v2 used raw-odds EV only, inflating edge by ~4-5%.",
-  "clv_method": "First vs last snapshot per game day as pick-time/closing line proxies. CLV = novig_close - novig_open in model favor. 1 snapshot/day available \u2014 CLV shows line disagreement, not movement. Inconclusive until 2+ snapshots/day in production.",
-  "data_quality_finding": {
-    "issue": "|dk_ml_home| > 500 in ~8% of 2024 holdout rows (202/2432)",
-    "evidence": "Games at e.g. HOU +2500 vs TEX show 50% home win rate vs 10% market-implied. Raw DK file shows HOU -122. Run-line prices (dk_rl_home_price) assigned to h2h fields.",
-    "impact": "Phantom EV of 20-40% on big-dog bets drives unrealistic ROI. These rows excluded by odds sanity filter (|odds|<=500) for honest measurement.",
-    "fix_required": "Data engineer: audit load_historical_odds.py join and rebuild games_v1_processed.parquet",
-    "n_affected_rows_2024": 202,
-    "n_total_2024_holdout": 2432
-  },
-  "honest_roi": {
-    "filter": "sane odds (|odds|<=500), vig-removed edge gate, 2024 holdout",
+  "vig_removal_method": "No-vig probs computed per-game from best book (tighter margin wins). EV threshold gate requires BOTH: (a) EV > threshold vs raw odds AND (b) model_prob > novig_market_prob (genuine edge over fair value). Payout uses raw odds. v2 used raw-odds EV only, inflating apparent edge.",
+  "clv_method": "First vs last snapshot per game day as pick-time / closing line proxies. CLV = novig_close_prob - novig_open_prob in model's favor. Positive mean CLV = real edge independent of outcome variance.",
+  "run_line_v3_note": "Deviation-from-base-rate model NOT trained in this run (time budget). See design spec at bottom of backtest report. v2 model retained. Current v2 run_line mean_prob=0.3586 vs actual 0.3532 \u2014 near base rate, confirming the model is near-neutral. Deploy if v3 ROI >2%; else gate it out.",
+  "markets": {
     "moneyline": {
-      "ev_4pct": {
-        "n": 920,
-        "roi": 8.4,
-        "win_rate": 0.472
+      "market": "moneyline",
+      "holdout_n": 2432,
+      "avg_market_margin_pct": 3.31,
+      "roi_novig": {
+        "ev_thr_2pct": {
+          "n": 1738,
+          "wagered": 173800.0,
+          "profit": 22928.22,
+          "roi": 13.19,
+          "win_rate": 0.4919,
+          "max_drawdown": 2231.68
+        },
+        "ev_thr_4pct": {
+          "n": 1526,
+          "wagered": 152600.0,
+          "profit": 24158.21,
+          "roi": 15.83,
+          "win_rate": 0.4928,
+          "max_drawdown": 1399.24
+        },
+        "ev_thr_6pct": {
+          "n": 1325,
+          "wagered": 132500.0,
+          "profit": 23614.55,
+          "roi": 17.82,
+          "win_rate": 0.4883,
+          "max_drawdown": 1327.7
+        },
+        "ev_thr_8pct": {
+          "n": 1177,
+          "wagered": 117700.0,
+          "profit": 21065.74,
+          "roi": 17.9,
+          "win_rate": 0.4775,
+          "max_drawdown": 1778.84
+        },
+        "ev_thr_10pct": {
+          "n": 1023,
+          "wagered": 102300.0,
+          "profit": 18955.18,
+          "roi": 18.53,
+          "win_rate": 0.4643,
+          "max_drawdown": 1853.84
+        }
       },
-      "ev_8pct": {
-        "n": 713,
-        "roi": 10.4,
-        "win_rate": 0.461
-      },
-      "assessment": "POTENTIALLY REAL but at upper end of plausible. Needs clean odds data to confirm."
+      "clv": {
+        "n": 1668,
+        "mean_clv": 0.00057,
+        "median_clv": 0.0,
+        "mean_clv_pct": 0.057,
+        "clv_positive_rate": 0.132,
+        "line_moved_toward_us": 219,
+        "line_moved_away": 172,
+        "no_movement": 1277,
+        "interpretation": "NEAR-ZERO or NEGATIVE CLV \u2014 no evidence of edge vs closing line"
+      }
     },
     "run_line": {
-      "ev_4pct": {
-        "n": 1144,
-        "roi": 41.0,
-        "win_rate": 0.637
+      "market": "run_line",
+      "holdout_n": 2432,
+      "avg_market_margin_pct": 3.8,
+      "roi_novig": {
+        "ev_thr_2pct": {
+          "n": 2213,
+          "wagered": 221300.0,
+          "profit": 88406.38,
+          "roi": 39.95,
+          "win_rate": 0.6403,
+          "max_drawdown": 809.09
+        },
+        "ev_thr_4pct": {
+          "n": 2124,
+          "wagered": 212400.0,
+          "profit": 87993.84,
+          "roi": 41.43,
+          "win_rate": 0.6441,
+          "max_drawdown": 718.18
+        },
+        "ev_thr_6pct": {
+          "n": 2040,
+          "wagered": 204000.0,
+          "profit": 87800.3,
+          "roi": 43.04,
+          "win_rate": 0.648,
+          "max_drawdown": 718.18
+        },
+        "ev_thr_8pct": {
+          "n": 1965,
+          "wagered": 196500.0,
+          "profit": 86361.52,
+          "roi": 43.95,
+          "win_rate": 0.6494,
+          "max_drawdown": 724.35
+        },
+        "ev_thr_10pct": {
+          "n": 1883,
+          "wagered": 188300.0,
+          "profit": 85517.25,
+          "roi": 45.42,
+          "win_rate": 0.6516,
+          "max_drawdown": 724.35
+        }
       },
-      "ev_8pct": {
-        "n": 1023,
-        "roi": 45.7,
-        "win_rate": 0.645
-      },
-      "assessment": "BASE-RATE ECHO. Model outputs ~36% home cover (league avg). Market novig averages ~50%. Model bets away 96% of games collecting the 64% away base rate as if it were edge. NOT real alpha."
+      "clv": {
+        "n": 1454,
+        "mean_clv": -0.00194,
+        "median_clv": 0.0,
+        "mean_clv_pct": -0.194,
+        "clv_positive_rate": 0.165,
+        "line_moved_toward_us": 238,
+        "line_moved_away": 231,
+        "no_movement": 985,
+        "interpretation": "NEAR-ZERO or NEGATIVE CLV \u2014 no evidence of edge vs closing line"
+      }
     },
     "totals": {
-      "ev_4pct": {
-        "n": 419,
-        "roi": 36.9,
-        "win_rate": 0.68
+      "market": "totals",
+      "holdout_n": 2432,
+      "avg_market_margin_pct": 4.02,
+      "roi_novig": {
+        "ev_thr_2pct": {
+          "n": 892,
+          "wagered": 89200.0,
+          "profit": 24263.15,
+          "roi": 27.2,
+          "win_rate": 0.5998,
+          "max_drawdown": 888.88
+        },
+        "ev_thr_4pct": {
+          "n": 667,
+          "wagered": 66700.0,
+          "profit": 24402.74,
+          "roi": 36.59,
+          "win_rate": 0.6297,
+          "max_drawdown": 578.49
+        },
+        "ev_thr_6pct": {
+          "n": 520,
+          "wagered": 52000.0,
+          "profit": 21344.5,
+          "roi": 41.05,
+          "win_rate": 0.6346,
+          "max_drawdown": 651.22
+        },
+        "ev_thr_8pct": {
+          "n": 420,
+          "wagered": 42000.0,
+          "profit": 20813.36,
+          "roi": 49.56,
+          "win_rate": 0.6571,
+          "max_drawdown": 683.57
+        },
+        "ev_thr_10pct": {
+          "n": 323,
+          "wagered": 32300.0,
+          "profit": 20161.21,
+          "roi": 62.42,
+          "win_rate": 0.6904,
+          "max_drawdown": 488.48
+        }
       },
-      "ev_8pct": {
-        "n": 282,
-        "roi": 46.5,
-        "win_rate": 0.72
-      },
-      "assessment": "HIGH WIN RATE SUSPICIOUS. 72% WR at 8% EV on 282 picks would be extraordinary alpha. Likely artifact of totals model concentrating bets on high base-rate outcomes (over/under lines near historical average)."
+      "clv": {
+        "n": 1655,
+        "mean_clv": 0.00088,
+        "median_clv": 0.0,
+        "mean_clv_pct": 0.088,
+        "clv_positive_rate": 0.15,
+        "line_moved_toward_us": 238,
+        "line_moved_away": 237,
+        "no_movement": 1180,
+        "interpretation": "NEAR-ZERO or NEGATIVE CLV \u2014 no evidence of edge vs closing line"
+      }
     }
   },
-  "clv_results": {
-    "caveat": "Single snapshot per day \u2014 not true pick-time vs close. Results measure disagreement vs morning line, not line movement.",
-    "moneyline": {
-      "mean_clv_pct": 2.19,
-      "n": 1712,
-      "interpretation": "Model disagrees with morning line by avg 2.19% in favored direction. Not confirmed edge \u2014 needs intra-day snapshots."
-    },
-    "run_line": {
-      "mean_clv_pct": -0.27,
-      "n": 1454,
-      "interpretation": "No edge signal. Negative CLV consistent with base-rate echo."
-    },
-    "totals": {
-      "mean_clv_pct": 0.09,
-      "n": 1655,
-      "interpretation": "Noise level. No edge signal."
-    }
+  "success_criteria": {
+    "target_roi_range": "2-5% at 8% EV threshold if real alpha exists",
+    "target_clv": ">1% mean CLV = sharp signal",
+    "deploy_gate": "Do not deploy if ROI > 10% (residual phantom edge) or ROI < -5%"
   },
-  "run_line_v3_design_spec": {
-    "current_problem": "v2 model predicts P(home_cover) = 0.36 for nearly all games = league average. Market prices each game correctly at 30-70% home cover depending on matchup. Model has no game-specific information beyond base rate.",
-    "proposed_target": "y = home_cover_indicator - expected_base_rate_for_this_game",
-    "expected_base_rate": "Regress on: pitcher FIP gap (home vs away), park_run_factor, bullpen_load_diff, posted_total_line. Gives game-specific expected cover rate.",
-    "model_output": "Delta from neutral. Add to global_base_rate (0.353) for final P(home_cover).",
-    "success_condition": "Mean CLV > +1% on 2+ snapshots/day AND ROI 2-8% at 4% EV threshold.",
-    "status": "DESIGN ONLY \u2014 not trained in v3 (time budget). Keep v2 model but gate out run_line picks in pipeline until v3 trains successfully."
-  },
-  "deploy_decision": {
-    "status": "CONDITIONAL \u2014 deploy worker (pipeline gate handles pick quality)",
-    "rationale": "Moneyline ROI 8.4% at 4% EV is within realistic range (not phantom). Run-line and totals excluded by 8%/Tier5 gate (base-rate echo). Moneyline at 8% EV threshold (10.4% ROI, 713 picks) is borderline \u2014 reconfirm after data engineer fixes odds corruption and re-runs backtest.",
-    "gate_active": "8% EV / Tier 5 in pick-pipeline/index.ts until honest ROI reconfirmed on clean data",
-    "next_step": "data engineer fix odds corruption \u2192 re-run backtest \u2192 if moneyline ROI 2-8% at 4% EV \u2192 loosen gate to 4%/Tier3"
-  },
-  "known_weaknesses": [
-    "Odds corruption (~8% of rows): dk_ml_home has run-line prices \u2014 inflates phantom EV",
-    "Single snapshot/day: CLV harness cannot detect intra-day line movement until production",
-    "Run-line: v2 model is base-rate echo \u2014 no game-specific edge \u2014 must use deviation-from-base-rate architecture",
-    "Totals: 72% win rate at 8% EV threshold is implausible alpha \u2014 likely another base-rate concentration artifact",
-    "Moneyline: market_implied_prob_home is a feature \u2014 model may be over-relying on it rather than finding independent signal",
-    "All markets: 2-season training (2022+2023) \u2014 thin data; v3 should add 2021"
-  ]
+  "deploy_decision": "BLOCKED \u2014 ROI still unrealistic after vig removal. Investigate further."
 }
