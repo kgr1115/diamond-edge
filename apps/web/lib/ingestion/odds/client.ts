@@ -20,7 +20,7 @@ import { ODDS_API_BASE, RETRY } from '@/lib/ingestion/config';
 // ---------------------------------------------------------------------------
 
 export interface OddsApiOutcome {
-  name: string;   // team name (h2h/spreads) or 'Over'/'Under' (totals)
+  name?: string;  // team name (h2h/spreads) or 'Over'/'Under' (totals); absent on withdrawn lines
   price: number;  // American odds, e.g. -110
   point?: number; // spread or total line, e.g. -1.5 or 8.5
 }
@@ -39,12 +39,12 @@ export interface OddsApiBookmaker {
 }
 
 export interface OddsApiGame {
-  id: string;            // The Odds API internal game ID (not MLB gamePk)
-  sport_key: string;     // 'baseball_mlb'
+  id: string;             // The Odds API internal game ID (not MLB gamePk)
+  sport_key: string;      // 'baseball_mlb'
   sport_title: string;
-  commence_time: string; // ISO 8601 UTC — matches our game_time_utc
-  home_team: string;     // full team name, e.g. 'New York Yankees'
-  away_team: string;
+  commence_time?: string; // ISO 8601 UTC — absent on malformed entries
+  home_team?: string;     // full team name, e.g. 'New York Yankees'; absent on TBD entries
+  away_team?: string;
   bookmakers: OddsApiBookmaker[];
 }
 

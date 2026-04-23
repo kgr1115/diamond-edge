@@ -148,6 +148,12 @@ export async function syncSchedule(dates: string[]): Promise<ScheduleSyncResult>
       continue;
     }
 
+    // MLB API omits gameDate on TBD doubleheader slots — skip rather than crash
+    if (!game.gameDate) {
+      errors.push(`Skipping game ${game.gamePk}: missing gameDate`);
+      continue;
+    }
+
     const gameDate = game.gameDate.slice(0, 10); // 'YYYY-MM-DD' from UTC ISO string
     const venueName = game.venue.name;
     const venueState = VENUE_STATES[venueName] ?? null;
@@ -254,22 +260,25 @@ function parseWeather(game: MlbScheduleGame): ParsedWeather | null {
 // ---------------------------------------------------------------------------
 
 async function resolveTeam(
-  teamRef: { id: number; name: string; abbreviation?: string },
+  teamRef: { id: number; name?: string; abbreviation?: string },
   supabase: ReturnType<typeof createServiceRoleClient>,
   errors: string[]
 ): Promise<string | null> {
+  // MLB API occasionally omits name for TBD/unknown team slots
+  const safeName = teamRef.name ?? '';
+
   // Parse city from name (e.g., "New York" from "New York Yankees")
-  const parts = teamRef.name.split(' ');
-  const city = parts.length > 1 ? parts.slice(0, -1).join(' ') : teamRef.name;
+  const parts = safeName.split(' ');
+  const city = parts.length > 1 ? parts.slice(0, -1).join(' ') : safeName;
 
   const { data, error } = await supabase
     .from('teams')
     .upsert(
       {
         mlb_team_id: teamRef.id,
-        name: teamRef.name,
+        name: safeName,
         // Use 3-char abbreviation if available; fall back to first 3 of team name
-        abbreviation: (teamRef.abbreviation ?? teamRef.name.slice(0, 3)).toUpperCase(),
+        abbreviation: (teamRef.abbreviation ?? safeName.slice(0, 3) ?? 'UNK').toUpperCase(),
         city,
         division: 'Unknown',   // Roster sync will correct this
         league: 'AL' as const, // Roster sync will correct this

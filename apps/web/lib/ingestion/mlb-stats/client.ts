@@ -22,7 +22,7 @@ export interface MlbGameStatus {
 
 export interface MlbTeamRef {
   id: number;
-  name: string;
+  name?: string;        // MLB API omits name for TBD/placeholder team slots
   abbreviation?: string;
 }
 
@@ -44,9 +44,10 @@ export interface MlbVenue {
 }
 
 export interface MlbWeather {
-  condition: string;  // 'Clear', 'Cloudy', 'Overcast', 'Drizzle', 'Rain', etc.
-  temp: string;       // numeric string, Fahrenheit, e.g. '72'
-  wind: string;       // e.g. '10 mph, Out To CF' or '0 mph, Calm'
+  // All fields optional: MLB API omits them for dome games or when data is not yet populated
+  condition?: string;  // 'Clear', 'Cloudy', 'Overcast', 'Drizzle', 'Rain', etc.
+  temp?: string;       // numeric string, Fahrenheit, e.g. '72'
+  wind?: string;       // e.g. '10 mph, Out To CF' or '0 mph, Calm'
 }
 
 export interface MlbLinescore {

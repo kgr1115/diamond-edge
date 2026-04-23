@@ -109,16 +109,20 @@ function buildGameLookup(games: GameRecord[]): Map<string, string> {
 }
 
 function lookupGame(apiGame: OddsApiGame, lookup: Map<string, string>): string | null {
+  // Guard against malformed Odds API entries missing commence_time
+  if (!apiGame.commence_time) return null;
   const date = apiGame.commence_time.slice(0, 10); // 'YYYY-MM-DD' from UTC ISO string
   const key = makeGameKey(apiGame.home_team, apiGame.away_team, date);
   return lookup.get(key) ?? null;
 }
 
-function makeGameKey(home: string, away: string, date: string): string {
+function makeGameKey(home: string | undefined | null, away: string | undefined | null, date: string): string {
   return `${normalizeTeam(home)}|${normalizeTeam(away)}|${date}`;
 }
 
-function normalizeTeam(name: string): string {
+function normalizeTeam(name: string | undefined | null): string {
+  // The Odds API occasionally omits team names on suspended/cancelled entries
+  if (!name) return '';
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
