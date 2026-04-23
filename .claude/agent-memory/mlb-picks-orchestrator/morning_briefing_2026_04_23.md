@@ -33,32 +33,65 @@ The app is deployed, you're logged in as Elite. Overnight, three background agen
 
 (ROI bias fix commit pending — late-night agent still running when this file was written.)
 
-## Backtest headline (2024 holdout, pre-bias-fix)
+## Backtest headline (2024 holdout) — IMPORTANT: NUMBERS ARE NOT TRUSTWORTHY
 
-| Market | Log-loss | Brier | ECE | Calibration | ROI (flat staking) |
-|---|---|---|---|---|---|
-| Moneyline | 0.689 | 0.248 | 0.019 | ✅ PASS | INFLATED (bias bug) |
-| Run line | 0.655 | 0.225 | 0.016 | ✅ PASS | **~18%** (credible) |
-| Totals | 0.679 | 0.243 | 0.035 | ❌ FAIL (max dev 0.065) | not applicable |
+Bias-fix agent (`41faa99`) found TWO bugs in the simulator:
+1. `simulate_roi` only evaluated home side (away picks invisible)
+2. Away RL / under prices were missing from the data pipeline — all opposing-side odds fell back to default -110
 
-The bias-fix agent should have corrected moneyline numbers by the time you check in.
+### Corrected numbers
 
-## Decisions awaiting you
+| Market | Before (bugged) | After (corrected) | Picks | Calibration |
+|--------|----------------|-------------------|-------|---|
+| Moneyline | 118.1% | **112.7%** | 1,475 | ✅ ECE 0.019 |
+| Run line | 18.1% (was credible?) | **41.0%** | 2,178 | ✅ ECE 0.016 |
+| Totals | 23.8% | **26.0%** | 924 | ❌ FAIL |
 
-1. **Totals gating.** ML engineer recommends: gate to Tier 4+ only until calibration is fixed in v1.1 (needs more training data — Retrosheet umpire features from Research v2 will help).
-2. **Kelly sizing approach.** Research v2: ramp 0.10 → 0.15 → 0.25 over first 500 picks, not flat 0.25. Plus a ~50-LOC simultaneous-Kelly solver for multi-pick slates (cuts variance 30–40%). Approve?
-3. **Fly.io worker deploy.** Required before real picks land. ~$3-5/mo on scale-to-zero. Your explicit OK needed before I run `flyctl deploy`.
-4. **/rationale endpoint.** Currently a stub. Full Claude Haiku integration is ~1 hour of focused ML engineer work. Ship in v1 or defer to v1.1?
-5. **LINEUP-01 late-news LLM pipeline.** Research v1 + v2 both call this the highest-ROI post-v1 addition. Requires ~$30/mo RotoWire/FantasyLabs aggregator for X/beat-writer lineup news. Approve for v1.1?
-6. **Odds API tier jump.** Currently $59/100K. Adding F5 markets + 30-min polling would need $119/5M. Cross that bridge after F5 backtest results come in?
-7. **AAA Statcast integration.** Now public via Baseball Savant minors. v1 or v1.1?
+### ⚠️ HONEST READ from the fix agent
+
+> "Do NOT use these ROI numbers for Kelly sizing. The simulation is fixed; the underlying model is not generating real alpha."
+
+**Why**: fixing the simulator made the pick volume explode (run line 237 → 2,178). That means the model thinks it has edge on nearly every game, which is a sign of **miscalibration** rather than real alpha. Specific issues:
+- **Moneyline** pushes probabilities to 0.90 extremes — overconfident
+- **Run line** mean P(home cover) = 0.349 vs true ~0.43 on 2024 → mean-probability drift between training and holdout
+- At a 4% EV threshold, the drift creates phantom edge on the away side of almost every RL line
+
+**Realistic expectation for a working model**: 2–5% ROI with ~100–200 picks per season, not 41%.
+
+The 4% EV threshold and calibration both need re-work before any real picks ship. This is **not a bug fix — it's model v2** work.
+
+## Decisions awaiting you — RE-PRIORITIZED AFTER BIAS-FIX FINDINGS
+
+**The #1 decision has shifted.** Before the fix: "gate totals, ship MLine + RL." After the fix: **the model itself needs v2 work before publishing any picks is honest**.
+
+### Primary fork
+
+1. **Model v2 before shipping ANY picks** — spend ~1 day fixing calibration and drift:
+   - Re-calibrate with isotonic on a broader validation window
+   - Investigate why run line mean-prob drifted 2023→2024 (schedule changes? rule changes? data leak?)
+   - Add monotonicity constraints / stronger regularization to prevent 0.90 extremes
+   - Narrow pick volume via tighter EV thresholds (6–8% instead of 4%)
+   - **Expected outcome:** honest 2–5% ROI on 100–200 picks/year, not fake 41% on 2,178
+2. **Ship v1 with heavy gating** — publish only picks above 8% EV AND Tier 5 confidence AND run line only (not ML or totals). Volume drops to ~30 picks/year. Risk: still miscalibrated; the 8% threshold is a band-aid.
+3. **Ship v1 as "training wheels" mode** — publish picks but mark as "unvalidated model" with prominent disclaimer. Track real-world CLV. Adjust thresholds live. Not ideal for trust.
+
+**Recommendation**: Option 1. The honest read from the bias-fix agent is clear — the numbers are not ROI signals, they're calibration artifacts. Better to spend a day fixing the model than ship unreliable picks.
+
+### Secondary decisions (less urgent, apply post model v2)
+
+4. **Kelly sizing.** Research v2: ramp 0.10 → 0.15 → 0.25 over first 500 picks. Approve for when the model is ready?
+5. **Fly.io worker deploy.** Still required before real picks land. Can be deployed NOW even though picks won't publish — pipeline would just write zero picks through conservative thresholds until model v2 lands. ~$3-5/mo scale-to-zero. Your explicit OK needed.
+6. **/rationale endpoint.** Currently a stub. Moot until model produces trustworthy picks. Defer to v1.1 unless you want it ready in parallel.
+7. **LINEUP-01 ($30/mo RotoWire).** Still the highest-ROI post-v1 addition per both research docs.
+8. **Odds API tier.** Hold at $59 until F5 is proven useful.
+9. **AAA Statcast.** Useful feature for v1.1 model robustness.
 
 ## What I can do while waiting for your answers
 
-- **Deploy Fly.io worker** — only on explicit "yes, deploy it" from you
-- **Trigger a test run of the full pipeline end-to-end** — only if the worker is deployed
-- **Implement the simultaneous-Kelly solver in a future ML task** — zero cost, waiting on your Kelly approval
-- **Gate totals in the Edge Function pipeline** — code change, no cost, follows your decision on gating strategy
+- **Spawn ML engineer v3 focused on calibration repair** — zero cost, best use of time if you pick Option 1. Scope: isotonic recalibration, drift investigation, tighter EV threshold sensitivity analysis.
+- **Deploy Fly.io worker** — only on explicit "yes, deploy it" from you. Works even before model v2 lands; pipeline would write zero picks under conservative thresholds.
+- **Gate totals / all picks in the Edge Function pipeline** — small code change, no cost.
+- **Implement simultaneous-Kelly solver** — waiting on your Kelly approval.
 
 ## Recently Completed Reference
 
