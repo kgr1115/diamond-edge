@@ -33,49 +33,79 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     JSON.stringify({ level: 'info', event: 'cron_odds_refresh_start', time: new Date().toISOString() })
   );
 
-  // Run the poll cycle
-  const result = await runOddsPoll();
+  // ---------------------------------------------------------------------------
+  // Stage 1: Odds poll
+  // ---------------------------------------------------------------------------
+  let pollResult: { ok: boolean; rowsInserted: number; errors: string[]; [key: string]: unknown };
+  const pollStageStart = Date.now();
+  try {
+    const result = await runOddsPoll();
+    pollResult = { ok: result.errors.length === 0, ...result };
+    console.info(JSON.stringify({
+      level: 'info',
+      event: 'cron_odds_poll_stage',
+      ok: pollResult.ok,
+      rowsInserted: result.rowsInserted,
+      ms: Date.now() - pollStageStart,
+    }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ level: 'error', event: 'cron_odds_poll_stage', ok: false, error: msg, ms: Date.now() - pollStageStart }));
+    const durationMs = Date.now() - startMs;
+    return NextResponse.json(
+      { odds: { ok: false, errors: [msg] }, durationMs },
+      { status: 207 },
+    );
+  }
 
-  // Invalidate Redis odds cache for all games updated this run
-  // We invalidate all today's games by pattern since we don't track which game IDs changed
-  if (result.rowsInserted > 0) {
+  // ---------------------------------------------------------------------------
+  // Stage 2: Redis cache invalidation (non-fatal)
+  // ---------------------------------------------------------------------------
+  if (pollResult.rowsInserted > 0) {
     const today = new Date().toISOString().slice(0, 10);
-    // Invalidate the today's picks cache (odds feed into pick display)
-    for (const tier of ['anon', 'free', 'pro', 'elite']) {
-      await cacheInvalidate(CacheKeys.picksToday(today, tier));
-    }
+    try {
+      for (const tier of ['anon', 'free', 'pro', 'elite']) {
+        await cacheInvalidate(CacheKeys.picksToday(today, tier));
+      }
 
-    // Invalidate per-game odds cache
-    // We need the game IDs — fetch today's games to get UUIDs for cache invalidation
-    const supabase = createServiceRoleClient();
-    const { data: games } = await supabase
-      .from('games')
-      .select('id')
-      .eq('game_date', today)
-      .in('status', ['scheduled', 'live']);
+      const supabase = createServiceRoleClient();
+      const { data: games } = await supabase
+        .from('games')
+        .select('id')
+        .eq('game_date', today)
+        .in('status', ['scheduled', 'live']);
 
-    if (games?.length) {
-      const oddsKeys = games.map(g => CacheKeys.oddsGame(g.id));
-      await cacheInvalidate(...oddsKeys);
-      console.info(
-        JSON.stringify({ level: 'info', event: 'cron_odds_cache_invalidated', count: oddsKeys.length })
-      );
+      if (games?.length) {
+        const oddsKeys = games.map(g => CacheKeys.oddsGame(g.id));
+        await cacheInvalidate(...oddsKeys);
+        console.info(
+          JSON.stringify({ level: 'info', event: 'cron_odds_cache_invalidated', count: oddsKeys.length })
+        );
+      }
+    } catch (err) {
+      // Cache invalidation failures are non-fatal — stale cache expires on TTL.
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'cron_odds_cache_invalidate_failed',
+        error: err instanceof Error ? err.message : String(err),
+      }));
     }
   }
 
   const durationMs = Date.now() - startMs;
 
-  const logPayload = {
-    level: result.errors.length > 0 ? 'warn' : 'info',
+  console.info(JSON.stringify({
+    level: pollResult.ok ? 'info' : 'warn',
     event: 'cron_odds_refresh_complete',
     durationMs,
-    ...result,
-  };
-  console.info(JSON.stringify(logPayload));
+    ...pollResult,
+  }));
 
-  return NextResponse.json({
-    ok: result.errors.length === 0,
-    ...result,
-    durationMs,
-  });
+  return NextResponse.json(
+    {
+      odds: { ok: pollResult.ok, errors: pollResult.errors },
+      durationMs,
+    },
+    { status: pollResult.ok ? 200 : 207 },
+  );
 }

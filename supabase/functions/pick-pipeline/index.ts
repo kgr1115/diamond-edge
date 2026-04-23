@@ -86,6 +86,21 @@ interface NewsSignalRow {
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (_req: Request): Promise<Response> => {
+  try {
+    return await runPipeline();
+  } catch (err) {
+    // Top-level catch: should never fire (all stages have inner guards), but
+    // ensures Deno.serve always returns a structured response instead of crashing.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ event: 'pipeline_unhandled_error', error: msg }));
+    return new Response(JSON.stringify({ error: 'pipeline_unhandled_error', message: msg }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+});
+
+async function runPipeline(): Promise<Response> {
   const today = todayInET();
   log('pipeline_start', { date: today });
 
@@ -97,6 +112,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   // ---------------------------------------------------------------------------
   // Stage 1: Fetch today's scheduled games
   // ---------------------------------------------------------------------------
+  const gameFetchStart = Date.now();
   const { data: gamesData, error: gamesError } = await supabase
     .from('games')
     .select(`
@@ -112,12 +128,12 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     .in('status', ['scheduled', 'live']);
 
   if (gamesError) {
-    log('game_fetch', { ok: false, error: gamesError.message });
+    log('game_fetch', { ok: false, error: gamesError.message, ms: Date.now() - gameFetchStart });
     return new Response(JSON.stringify({ error: 'game_fetch_failed' }), { status: 500 });
   }
 
   const games = (gamesData ?? []) as GameRow[];
-  log('game_fetch', { ok: true, count: games.length, date: today });
+  log('game_fetch', { ok: true, count: games.length, date: today, ms: Date.now() - gameFetchStart });
 
   if (games.length === 0) {
     log('pipeline_complete', { picks_written: 0, reason: 'no_games_today' });
@@ -128,6 +144,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   // Stage 2: Fetch latest odds for each game
   // ---------------------------------------------------------------------------
   const gameIds = games.map((g) => g.id);
+  const oddsFetchStart = Date.now();
   const { data: oddsData, error: oddsError } = await supabase
     .from('odds')
     .select(`
@@ -140,7 +157,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     .order('snapshotted_at', { ascending: false });
 
   if (oddsError) {
-    log('odds_fetch', { ok: false, error: oddsError.message });
+    log('odds_fetch', { ok: false, error: oddsError.message, ms: Date.now() - oddsFetchStart });
     // Non-fatal: proceed with empty odds (worker will return no candidates)
   }
 
@@ -151,12 +168,24 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     oddsByGame[row.game_id].push(row);
   }
 
-  log('odds_fetch', { ok: !oddsError, game_count: Object.keys(oddsByGame).length });
+  const gamesWithOdds = Object.keys(oddsByGame).length;
+  const gamesWithoutOdds = games.filter((g) => !oddsByGame[g.id]?.length).map((g) => g.id);
+  if (gamesWithoutOdds.length > 0) {
+    log('odds_fetch_missing', {
+      ok: true,
+      games_without_odds: gamesWithoutOdds.length,
+      game_ids: gamesWithoutOdds,
+      note: 'odds-refresh cron may not have run yet for these games; EV computation will fail at ev_filter',
+    });
+  }
+
+  log('odds_fetch', { ok: !oddsError, game_count: gamesWithOdds, games_without_odds: gamesWithoutOdds.length, ms: Date.now() - oddsFetchStart });
 
   // ---------------------------------------------------------------------------
   // Stage 3: Fetch recent news_signals per game (T-6h window)
   // Non-fatal — if news pipeline hasn't run, features default to 0.
   // ---------------------------------------------------------------------------
+  const newsFetchStart = Date.now();
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   const { data: signalsData, error: signalsError } = await supabase
     .from('news_signals')
@@ -165,7 +194,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     .gte('created_at', sixHoursAgo);
 
   if (signalsError) {
-    log('news_fetch', { ok: false, error: signalsError.message, note: 'news features will default to 0' });
+    log('news_fetch', { ok: false, error: signalsError.message, note: 'news features will default to 0', ms: Date.now() - newsFetchStart });
   }
 
   const signalsByGame: Record<string, NewsSignalRow[]> = {};
@@ -179,6 +208,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     ok: !signalsError,
     games_with_signals: signalGameCount,
     total_signals: (signalsData ?? []).length,
+    ms: Date.now() - newsFetchStart,
   });
 
   // ---------------------------------------------------------------------------
@@ -190,6 +220,18 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     const gameOdds = oddsByGame[game.id] ?? [];
     const gameSignals = signalsByGame[game.id] ?? [];
     const features = buildFeatureVector(game, gameOdds, gameSignals);
+    const workerCallStart = Date.now();
+
+    // Log when a game has no odds — this is a diagnostic signal for why
+    // the worker returns 0 candidates (it can't compute EV without prices).
+    if (gameOdds.length === 0) {
+      log('worker_call_no_odds', {
+        ok: false,
+        game_id: game.id,
+        note: 'skipping /predict — no odds rows for this game; ev_filter will see 0 candidates',
+      });
+      continue;
+    }
 
     try {
       const candidates = await callPredict({
@@ -204,6 +246,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
         game_id: game.id,
         candidates: candidates.length,
         news_signal_count: gameSignals.length,
+        ms: Date.now() - workerCallStart,
       });
     } catch (err) {
       log('worker_call', {
@@ -211,6 +254,7 @@ Deno.serve(async (_req: Request): Promise<Response> => {
         game_id: game.id,
         error: err instanceof Error ? err.message : String(err),
         stage: 'predict',
+        ms: Date.now() - workerCallStart,
       });
     }
   }
@@ -224,8 +268,28 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   // The TEMP comment from the prior implementation is now formalized:
   // 8%/tier-5 is the live gate; 4%/tier-3 is the shadow gate.
   // Shadow picks are model feedback data — they cost nothing extra to store.
+  //
+  // Guard: candidates with missing/non-numeric expected_value or confidence_tier
+  // (e.g., from malformed worker response when odds rows were absent) are logged
+  // explicitly rather than silently dropped by the numeric comparison.
   // ---------------------------------------------------------------------------
-  const shadowCandidates = allCandidates.filter(
+  const malformedCandidates = allCandidates.filter(
+    (c) => typeof c.expected_value !== 'number' || typeof c.confidence_tier !== 'number'
+  );
+  if (malformedCandidates.length > 0) {
+    log('ev_filter_malformed', {
+      ok: false,
+      count: malformedCandidates.length,
+      game_ids: malformedCandidates.map((c) => c.game_id),
+      note: 'candidates missing expected_value or confidence_tier — likely missing odds rows for these games',
+    });
+  }
+
+  const validCandidates = allCandidates.filter(
+    (c) => typeof c.expected_value === 'number' && typeof c.confidence_tier === 'number'
+  );
+
+  const shadowCandidates = validCandidates.filter(
     (c) => c.expected_value >= SHADOW_EV_MIN && c.confidence_tier >= SHADOW_TIER_MIN
   );
 
@@ -238,9 +302,11 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   log('ev_filter', {
     ok: true,
     total: allCandidates.length,
+    valid: validCandidates.length,
+    malformed: malformedCandidates.length,
     shadow: shadowCandidates.length,
     live: liveCandidates.size,
-    dropped: allCandidates.length - shadowCandidates.length,
+    dropped_below_shadow_gate: validCandidates.length - shadowCandidates.length,
     shadow_ev_min: SHADOW_EV_MIN,
     shadow_tier_min: SHADOW_TIER_MIN,
     live_ev_min: LIVE_EV_MIN,
@@ -349,12 +415,20 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   // ---------------------------------------------------------------------------
   // Stage 7: Batch insert picks to DB
   // ---------------------------------------------------------------------------
-  const { data: sbData } = await supabase.from('sportsbooks').select('id, key');
+  const sbFetchStart = Date.now();
+  const { data: sbData, error: sbError } = await supabase.from('sportsbooks').select('id, key');
+  if (sbError) {
+    log('db_write_sportsbooks_fetch', { ok: false, error: sbError.message, ms: Date.now() - sbFetchStart });
+    // Non-fatal: best_line_book_id will be null for all picks — acceptable degradation.
+  } else {
+    log('db_write_sportsbooks_fetch', { ok: true, count: sbData?.length ?? 0, ms: Date.now() - sbFetchStart });
+  }
   const sbByKey: Record<string, string> = {};
   for (const sb of sbData ?? []) {
     sbByKey[sb.key] = sb.id;
   }
 
+  const dbWriteStart = Date.now();
   const insertRows = preparedPicks.map(({ candidate, required_tier, rationale_cache_id, visibility }) => ({
     game_id: candidate.game_id,
     pick_date: today,
@@ -380,13 +454,13 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   const { error: insertError } = await supabase.from('picks').insert(insertRows);
 
   if (insertError) {
-    log('db_write', { ok: false, error: insertError.message, count: insertRows.length });
+    log('db_write', { ok: false, error: insertError.message, count: insertRows.length, ms: Date.now() - dbWriteStart });
     return new Response(JSON.stringify({ error: 'db_write_failed' }), { status: 500 });
   }
 
   const liveCount = preparedPicks.filter((p) => p.visibility === 'live').length;
   const shadowCount = preparedPicks.filter((p) => p.visibility === 'shadow').length;
-  log('db_write', { ok: true, count: insertRows.length, live: liveCount, shadow: shadowCount, date: today });
+  log('db_write', { ok: true, count: insertRows.length, live: liveCount, shadow: shadowCount, date: today, ms: Date.now() - dbWriteStart });
 
   // ---------------------------------------------------------------------------
   // Stage 8: Invalidate Redis cache (only needed when live picks were written)
@@ -418,4 +492,4 @@ Deno.serve(async (_req: Request): Promise<Response> => {
     JSON.stringify({ picks_written: preparedPicks.length, live: liveCount, shadow: shadowCount }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
-});
+}

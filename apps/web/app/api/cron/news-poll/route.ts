@@ -32,5 +32,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  return runNewsPoll();
+  const startMs = Date.now();
+  try {
+    const response = await runNewsPoll();
+    // runNewsPoll already returns 207 on partial errors — pass it through.
+    return response;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'cron_news_poll_unhandled',
+      error: msg,
+      ms: Date.now() - startMs,
+    }));
+    return NextResponse.json(
+      { news: { ok: false, errors: [msg] }, durationMs: Date.now() - startMs },
+      { status: 207 },
+    );
+  }
 }

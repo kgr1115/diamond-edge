@@ -24,5 +24,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  return runOutcomeGrader();
+  const startMs = Date.now();
+  try {
+    const response = await runOutcomeGrader();
+    // runOutcomeGrader already returns 207 on partial errors — pass it through.
+    return response;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'cron_outcome_grader_unhandled',
+      error: msg,
+      ms: Date.now() - startMs,
+    }));
+    return NextResponse.json(
+      { graded: 0, wins: 0, losses: 0, pushes: 0, voids: 0, errors: [msg], durationMs: Date.now() - startMs },
+      { status: 207 },
+    );
+  }
 }

@@ -112,10 +112,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   const startMs = Date.now();
-  const supabase = createServiceRoleClient();
+  console.info(JSON.stringify({ level: 'info', event: 'clv_compute_start', time: new Date().toISOString() }));
+
+  let supabase;
+  try {
+    supabase = createServiceRoleClient();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ level: 'error', event: 'clv_compute_client_init_failed', error: msg }));
+    return NextResponse.json({ error: { code: 'CONFIG_ERROR', message: msg } }, { status: 500 });
+  }
 
   // Find picks missing CLV where game is final
   // Left-join semantics via !inner: picks without pick_clv rows are returned
+  const pickFetchStart = Date.now();
   const { data: rawPicks, error: pickError } = await supabase
     .from('picks')
     .select(
@@ -127,9 +137,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .limit(200);
 
   if (pickError) {
-    console.error(JSON.stringify({ event: 'clv_compute_pick_fetch_error', error: pickError.message }));
+    console.error(JSON.stringify({ level: 'error', event: 'clv_compute_pick_fetch_error', error: pickError.message, ms: Date.now() - pickFetchStart }));
     return NextResponse.json({ error: { code: 'DB_ERROR', message: pickError.message } }, { status: 500 });
   }
+  console.info(JSON.stringify({ level: 'info', event: 'clv_compute_pick_fetch', count: rawPicks?.length ?? 0, ms: Date.now() - pickFetchStart }));
 
   const picks = (rawPicks as unknown as PickRow[]) ?? [];
 
@@ -162,6 +173,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ).values(),
   ];
 
+  const priorsFetchStart = Date.now();
   const { data: allPriors, error: priorsError } = await supabase
     .from('market_priors')
     .select('id, game_id, market, snapshot_time, book, novig_home_prob, novig_total_over_prob, raw_margin')
@@ -171,9 +183,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
 
   if (priorsError) {
-    console.error(JSON.stringify({ event: 'clv_compute_priors_fetch_error', error: priorsError.message }));
+    console.error(JSON.stringify({ level: 'error', event: 'clv_compute_priors_fetch_error', error: priorsError.message, ms: Date.now() - priorsFetchStart }));
     return NextResponse.json({ error: { code: 'DB_ERROR', message: priorsError.message } }, { status: 500 });
   }
+  console.info(JSON.stringify({ level: 'info', event: 'clv_compute_priors_fetch', count: allPriors?.length ?? 0, ms: Date.now() - priorsFetchStart }));
 
   const priorsData = (allPriors ?? []) as MarketPriorRow[];
 
@@ -202,33 +215,53 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }> = [];
 
   let skipped = 0;
+  const perPickErrors: string[] = [];
 
   for (const pick of unprocessedPicks) {
-    const pickTimeNovig = pick.market_novig_prior;
-    if (pickTimeNovig === null) {
-      skipped++;
-      continue;
+    try {
+      const pickTimeNovig = pick.market_novig_prior;
+      if (pickTimeNovig === null) {
+        skipped++;
+        continue;
+      }
+
+      const lookupKey = `${pick.game_id}:${pick.market}`;
+      const closingPriors = priorsLookup.get(lookupKey) ?? [];
+
+      // Guard: if closingPriors is empty (missing odds rows), log explicitly.
+      if (closingPriors.length === 0) {
+        console.info(JSON.stringify({
+          level: 'info',
+          event: 'clv_compute_no_closing_priors',
+          pick_id: pick.id,
+          game_id: pick.game_id,
+          market: pick.market,
+        }));
+      }
+
+      const closingNovig = computeClosingNovigProb(pick.market, pick.pick_side, closingPriors);
+
+      const clvEdge = closingNovig !== null ? closingNovig - pickTimeNovig : null;
+
+      inserts.push({
+        pick_id: pick.id,
+        pick_time_novig_prob: pickTimeNovig,
+        closing_novig_prob: closingNovig,
+        clv_edge: clvEdge,
+      });
+    } catch (err) {
+      const msg = `CLV compute error for pick ${pick.id}: ${err instanceof Error ? err.message : String(err)}`;
+      perPickErrors.push(msg);
+      console.error(JSON.stringify({ level: 'error', event: 'clv_compute_per_pick_error', pick_id: pick.id, error: msg }));
     }
-
-    const lookupKey = `${pick.game_id}:${pick.market}`;
-    const closingPriors = priorsLookup.get(lookupKey) ?? [];
-
-    const closingNovig = computeClosingNovigProb(pick.market, pick.pick_side, closingPriors);
-
-    const clvEdge = closingNovig !== null ? closingNovig - pickTimeNovig : null;
-
-    inserts.push({
-      pick_id: pick.id,
-      pick_time_novig_prob: pickTimeNovig,
-      closing_novig_prob: closingNovig,
-      clv_edge: clvEdge,
-    });
   }
 
   if (inserts.length === 0) {
+    const hadErrors = perPickErrors.length > 0;
+    console.info(JSON.stringify({ level: hadErrors ? 'warn' : 'info', event: 'clv_compute_no_inserts', skipped: unprocessedPicks.length, per_pick_errors: perPickErrors.length }));
     return NextResponse.json(
-      { computed: 0, skipped: unprocessedPicks.length, note: 'no closing priors found' },
-      { status: 200 },
+      { computed: 0, skipped: unprocessedPicks.length, errors: perPickErrors, note: 'no closing priors found' },
+      { status: hadErrors ? 207 : 200 },
     );
   }
 
@@ -236,12 +269,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // been regenerated yet, so the table isn't in the Database type. Cast to any
   // until `supabase gen types` runs; then this cast can be removed.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const insertStart = Date.now();
   const { error: insertError } = await (supabase.from as any)('pick_clv').insert(inserts);
 
   if (insertError) {
-    console.error(JSON.stringify({ event: 'clv_compute_insert_error', error: insertError.message }));
+    console.error(JSON.stringify({ level: 'error', event: 'clv_compute_insert_error', error: insertError.message, ms: Date.now() - insertStart }));
     return NextResponse.json({ error: { code: 'DB_ERROR', message: insertError.message } }, { status: 500 });
   }
+  console.info(JSON.stringify({ level: 'info', event: 'clv_compute_insert', count: inserts.length, ms: Date.now() - insertStart }));
 
   const clvWithData = inserts.filter((r) => r.clv_edge !== null);
   const meanClv =
@@ -249,11 +284,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ? clvWithData.reduce((sum, r) => sum + (r.clv_edge ?? 0), 0) / clvWithData.length
       : null;
 
+  const allErrors = perPickErrors;
   console.info(
     JSON.stringify({
+      level: allErrors.length > 0 ? 'warn' : 'info',
       event: 'clv_compute_complete',
       computed: inserts.length,
       skipped,
+      per_pick_errors: allErrors.length,
       with_closing_prob: clvWithData.length,
       mean_clv_edge: meanClv !== null ? Math.round(meanClv * 10000) / 10000 : null,
       duration_ms: Date.now() - startMs,
@@ -266,8 +304,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       skipped,
       with_closing_prob: clvWithData.length,
       mean_clv_edge: meanClv,
+      errors: allErrors,
       duration_ms: Date.now() - startMs,
     },
-    { status: 200 },
+    { status: allErrors.length > 0 ? 207 : 200 },
   );
 }

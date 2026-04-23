@@ -51,69 +51,122 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const dates = [todayUTC, tomorrowUTC];
 
-  const scheduleResult = await syncSchedule(dates);
+  // ---------------------------------------------------------------------------
+  // Stage 1: MLB schedule sync
+  // ---------------------------------------------------------------------------
+  let scheduleResult: { ok: boolean; gamesUpserted?: number; errors: string[] };
+  const scheduleStageStart = Date.now();
+  try {
+    const result = await syncSchedule(dates);
+    scheduleResult = { ok: result.errors.length === 0, ...result };
+    console.info(JSON.stringify({
+      level: 'info',
+      event: 'cron_schedule_sync_stage',
+      ok: scheduleResult.ok,
+      gamesUpserted: result.gamesUpserted,
+      ms: Date.now() - scheduleStageStart,
+    }));
 
-  // Invalidate schedule cache for synced dates
-  if (scheduleResult.gamesUpserted > 0) {
-    const cacheKeys = dates.map(d => CacheKeys.scheduleDate(d));
-    await cacheInvalidate(...cacheKeys);
-    console.info(
-      JSON.stringify({
-        level: 'info',
-        event: 'cron_schedule_cache_invalidated',
-        dates,
-      })
-    );
+    if (result.gamesUpserted > 0) {
+      const cacheKeys = dates.map(d => CacheKeys.scheduleDate(d));
+      await cacheInvalidate(...cacheKeys).catch((err) => {
+        console.warn(JSON.stringify({ level: 'warn', event: 'cron_schedule_cache_invalidate_failed', error: String(err) }));
+      });
+      console.info(JSON.stringify({ level: 'info', event: 'cron_schedule_cache_invalidated', dates }));
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ level: 'error', event: 'cron_schedule_sync_stage', ok: false, error: msg, ms: Date.now() - scheduleStageStart }));
+    scheduleResult = { ok: false, errors: [msg] };
   }
 
-  // Step 2: pull fresh odds for any games just synced.
-  console.info(JSON.stringify({ level: 'info', event: 'cron_odds_refresh_start' }));
-  const oddsResult = await runOddsPoll();
+  // ---------------------------------------------------------------------------
+  // Stage 2: Odds API poll
+  // ---------------------------------------------------------------------------
+  let oddsResult: { ok: boolean; rowsInserted?: number; errors: string[] };
+  const oddsStageStart = Date.now();
+  try {
+    console.info(JSON.stringify({ level: 'info', event: 'cron_odds_refresh_start' }));
+    const result = await runOddsPoll();
+    oddsResult = { ok: result.errors.length === 0, ...result };
+    console.info(JSON.stringify({
+      level: 'info',
+      event: 'cron_odds_refresh_stage',
+      ok: oddsResult.ok,
+      rowsInserted: result.rowsInserted,
+      ms: Date.now() - oddsStageStart,
+    }));
 
-  if (oddsResult.rowsInserted > 0) {
-    const today = new Date().toISOString().slice(0, 10);
-    for (const tier of ['anon', 'free', 'pro', 'elite']) {
-      await cacheInvalidate(CacheKeys.picksToday(today, tier));
+    if (result.rowsInserted > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      for (const tier of ['anon', 'free', 'pro', 'elite']) {
+        await cacheInvalidate(CacheKeys.picksToday(today, tier)).catch(() => {});
+      }
+      const supabase = createServiceRoleClient();
+      const { data: games } = await supabase
+        .from('games')
+        .select('id')
+        .eq('game_date', today)
+        .in('status', ['scheduled', 'live']);
+      if (games?.length) {
+        const oddsKeys = games.map(g => CacheKeys.oddsGame(g.id));
+        await cacheInvalidate(...oddsKeys).catch(() => {});
+      }
     }
-    const supabase = createServiceRoleClient();
-    const { data: games } = await supabase
-      .from('games')
-      .select('id')
-      .eq('game_date', today)
-      .in('status', ['scheduled', 'live']);
-    if (games?.length) {
-      const oddsKeys = games.map(g => CacheKeys.oddsGame(g.id));
-      await cacheInvalidate(...oddsKeys);
-    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ level: 'error', event: 'cron_odds_refresh_stage', ok: false, error: msg, ms: Date.now() - oddsStageStart }));
+    oddsResult = { ok: false, errors: [msg] };
   }
 
-  // Step 3: pull RSS news sources for today's slate.
+  // ---------------------------------------------------------------------------
+  // Stage 3: RSS news poll
   // Bluesky is handled by the Supabase Edge Function (higher-frequency, pg_cron scheduled).
-  console.info(JSON.stringify({ level: 'info', event: 'cron_news_poll_start' }));
-  const newsResponse = await runNewsPoll();
-  const newsResult = await newsResponse.json();
+  // ---------------------------------------------------------------------------
+  let newsResult: { ok: boolean; errors: string[]; [key: string]: unknown };
+  const newsStageStart = Date.now();
+  try {
+    console.info(JSON.stringify({ level: 'info', event: 'cron_news_poll_start' }));
+    const newsResponse = await runNewsPoll();
+    // runNewsPoll returns a NextResponse — extract the JSON body without re-fetching
+    const newsBody = await newsResponse.json();
+    newsResult = {
+      ok: (newsBody.errors?.length ?? 0) === 0 && !newsBody.sources?.some((s: { errors: string[] }) => s.errors.length > 0),
+      ...newsBody,
+    };
+    console.info(JSON.stringify({
+      level: 'info',
+      event: 'cron_news_poll_stage',
+      ok: newsResult.ok,
+      totalInserted: newsBody.totalInserted,
+      ms: Date.now() - newsStageStart,
+    }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ level: 'error', event: 'cron_news_poll_stage', ok: false, error: msg, ms: Date.now() - newsStageStart }));
+    newsResult = { ok: false, errors: [msg] };
+  }
 
   const durationMs = Date.now() - startMs;
-  const hadErrors =
-    scheduleResult.errors.length > 0 ||
-    oddsResult.errors.length > 0 ||
-    (newsResult.errors?.length ?? 0) > 0;
+  const hadErrors = !scheduleResult.ok || !oddsResult.ok || !newsResult.ok;
 
-  const logPayload = {
+  console.info(JSON.stringify({
     level: hadErrors ? 'warn' : 'info',
     event: 'cron_schedule_sync_complete',
     durationMs,
-    schedule: scheduleResult,
-    odds: oddsResult,
-    news: newsResult,
-  };
-  console.info(JSON.stringify(logPayload));
+    schedule: { ok: scheduleResult.ok, errors: scheduleResult.errors },
+    odds: { ok: oddsResult.ok, errors: oddsResult.errors },
+    news: { ok: newsResult.ok, errors: newsResult.errors },
+  }));
 
-  return NextResponse.json({
-    ok: !hadErrors,
-    schedule: scheduleResult,
-    odds: oddsResult,
-    news: newsResult,
-    durationMs,
-  });
+  // 207 Multi-Status when any stage had errors; 200 when all succeeded
+  return NextResponse.json(
+    {
+      schedule: { ok: scheduleResult.ok, errors: scheduleResult.errors },
+      odds: { ok: oddsResult.ok, errors: oddsResult.errors },
+      news: { ok: newsResult.ok, errors: newsResult.errors },
+      durationMs,
+    },
+    { status: hadErrors ? 207 : 200 },
+  );
 }

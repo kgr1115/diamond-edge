@@ -34,14 +34,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   console.info(JSON.stringify({ event: 'pick_pipeline_trigger', date: today }));
 
-  const supabase = createServiceRoleClient();
+  let supabase;
+  try {
+    supabase = createServiceRoleClient();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(JSON.stringify({ event: 'pick_pipeline_client_init_failed', error: msg, date: today }));
+    // Misconfigured service-role key — this IS a hard config error, not a partial failure
+    return NextResponse.json(
+      { error: { code: 'CONFIG_ERROR', message: 'Supabase client init failed.' } },
+      { status: 500 },
+    );
+  }
 
   // Invoke the Edge Function asynchronously. We do NOT await completion here —
   // the Edge Function runs independently and will log its own completion/failure.
   // The invoke call itself should complete in < 2 seconds (fire-and-forget pattern).
-  const { error: invokeError } = await supabase.functions.invoke('pick-pipeline', {
-    method: 'POST',
-  });
+  let invokeError: { message: string } | null = null;
+  try {
+    const invokeResult = await supabase.functions.invoke('pick-pipeline', { method: 'POST' });
+    invokeError = invokeResult.error ?? null;
+  } catch (err) {
+    invokeError = { message: err instanceof Error ? err.message : String(err) };
+  }
 
   if (invokeError) {
     console.error(JSON.stringify({
@@ -50,9 +65,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       error: invokeError.message,
       duration_ms: Date.now() - startMs,
     }));
+    // 207 instead of 500: the trigger route itself is functional; the edge fn invocation failed.
+    // Vercel Cron will NOT retry on 207, which is correct — a retry storm would compound the issue.
     return NextResponse.json(
-      { error: { code: 'INVOCATION_FAILED', message: 'Pick pipeline invocation failed.' } },
-      { status: 500 }
+      {
+        triggered: false,
+        date: today,
+        pipeline: { ok: false, errors: [invokeError.message] },
+        duration_ms: Date.now() - startMs,
+      },
+      { status: 207 },
     );
   }
 
@@ -62,5 +84,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     duration_ms: Date.now() - startMs,
   }));
 
-  return NextResponse.json({ triggered: true, date: today }, { status: 200 });
+  return NextResponse.json({ triggered: true, date: today, pipeline: { ok: true, errors: [] } }, { status: 200 });
 }
