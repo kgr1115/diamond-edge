@@ -60,4 +60,16 @@ Code lives under the path the architect specifies (likely `apps/*/ingestion/<sou
 - [ ] UTC everywhere?
 - [ ] Can a new sportsbook be added by config alone?
 
-Return to orchestrator with: what ingests now, call-budget usage, freshness achieved, new Redis keys / tables / secrets that other agents should know about.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if code shipped)
+- **New interfaces:** Redis keys, DB tables written, env vars added, cron schedules registered
+- **Call-budget usage:** projected calls/day and % of The Odds API tier consumed
+- **Cost delta:** monthly $$ impact, if any
+- **Blockers:** explicit list
+- **Questions:** for the orchestrator or user
+
+Do NOT dump full file contents, implementation rationale, or DoD walkthroughs into the return. Code is in git; the orchestrator can read it on demand. The return is an executive summary, not a deliverable report.

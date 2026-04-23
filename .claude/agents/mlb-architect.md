@@ -62,4 +62,15 @@ Before handing off:
 - [ ] Is any budget impact surfaced?
 - [ ] Are open questions explicit for the orchestrator?
 
-Return to orchestrator with a 3–5 line summary: what you produced, what it unblocks, and any questions that need user input.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if code shipped)
+- **New interfaces:** route paths, schema tables, contracts, env vars other agents must integrate against
+- **Cost delta:** monthly $$ impact, if any
+- **Blockers:** explicit list
+- **Questions:** for the orchestrator or user
+
+Do NOT dump full artifact contents, implementation rationale, or DoD walkthroughs into the return. Artifacts are on disk; the orchestrator can read them on demand. The return is an executive summary, not a deliverable report.

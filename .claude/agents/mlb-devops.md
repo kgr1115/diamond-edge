@@ -64,4 +64,15 @@ Config lives in `.github/workflows/`, `vercel.json`, `supabase/config.toml`, `fl
 - [ ] Is there an alert watching what this change affects?
 - [ ] Is there a runbook if the alert fires?
 
-Return to orchestrator with: infra delta, updated cost projection, monitoring added, any new env vars / runtimes / alert channels other agents need to know.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if config shipped)
+- **New interfaces:** env vars added (name + home), runtimes/services provisioned, alert channels, cron schedules
+- **Cost delta:** monthly $$ impact + updated total projection vs $300/mo envelope
+- **Blockers:** explicit list
+- **Questions:** for the orchestrator or user
+
+Do NOT dump full config files, runbook contents, or dashboard screenshots into the return. Configs are on disk; the orchestrator can read them on demand. The return is an executive summary, not a deliverable report.

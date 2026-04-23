@@ -61,4 +61,17 @@ Tests live in `tests/` with subfolders per level. Playwright E2E under `tests/e2
 - [ ] Are flaky tests quarantined with a fix owner, not silently retried?
 - [ ] Do CI gates block the merges they should and allow the ones they shouldn't?
 
-Return to orchestrator with: tests shipped, coverage summary on golden paths, staging gate status, flake list, and bugs found worth a brief for the owning agent.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if tests shipped)
+- **New interfaces:** test suites added, CI jobs registered, fixtures/helpers exported
+- **Coverage headline:** golden-path status in one line (auth ✓ / slate ✓ / pick ✗ etc.)
+- **Flake list:** known flaky tests + quarantine status
+- **Bugs found:** briefs for owning agents (agent name + one-line summary)
+- **Blockers:** explicit list
+- **Questions:** for the orchestrator or user
+
+Do NOT paste full test code, failure stack traces, or coverage reports into the return. Tests are on disk; the orchestrator can read them on demand. The return is an executive summary, not a deliverable report.

@@ -60,4 +60,15 @@ State matrix lives in `docs/compliance/state-matrix.md`. Copy in `docs/complianc
 - [ ] Does responsible-gambling copy include real resources, not just platitudes?
 - [ ] Are tout-service / handicapper registration requirements checked per state?
 
-Return to orchestrator with: state matrix, RG copy drafts, engineering spec for geo-block, launch checklist, and an explicit list of attorney-review items.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if docs shipped)
+- **New interfaces:** engineering specs produced (geo-block, age gate), copy surfaces delivered, state matrix path
+- **Attorney-review items:** explicit list — what a lawyer must clear before publish
+- **Blockers:** explicit list
+- **Questions:** for the orchestrator or user
+
+Do NOT paste full state matrices, ToS drafts, or citation trails into the return. Docs are on disk under `docs/compliance/`; the orchestrator can read them on demand. The return is an executive summary, not a deliverable report.

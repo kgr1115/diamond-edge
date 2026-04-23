@@ -64,4 +64,15 @@ Code lives per the architect's folder spec (likely `app/api/**`, `supabase/funct
 - [ ] Do logs/metrics exist for the failure modes that matter?
 - [ ] Does the implementation match the architect's contract exactly?
 
-Return to orchestrator with: routes/functions shipped, migrations applied, Stripe events handled, any contract ambiguity the architect should resolve.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if code shipped)
+- **New interfaces:** routes shipped, Edge Functions deployed, migrations applied, Stripe events handled, env vars added
+- **Cost delta:** monthly $$ impact, if any
+- **Blockers:** explicit list (including architect contract ambiguities)
+- **Questions:** for the orchestrator or user
+
+Do NOT dump full route handler code, migration SQL, or webhook walkthroughs into the return. Code is in git; the orchestrator can read it on demand. The return is an executive summary, not a deliverable report.

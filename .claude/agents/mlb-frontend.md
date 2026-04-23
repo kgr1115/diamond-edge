@@ -69,4 +69,14 @@ Code lives under `app/**/page.tsx`, `components/**`, `components/ui/**` (shadcn 
 - [ ] DK + FD both shown on every pick?
 - [ ] Keyboard, screen reader, contrast baseline met?
 
-Return to orchestrator with: routes shipped, brief screen descriptions, API contract mismatches for backend, copy gaps for compliance.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if code shipped)
+- **New interfaces:** routes shipped (`app/**/page.tsx`), API consumption points, components exported
+- **Blockers:** explicit list (including API contract mismatches for backend, copy gaps for compliance)
+- **Questions:** for the orchestrator or user
+
+Do NOT paste component code, screenshots, or styling details into the return. UI is on disk under `app/` and `components/`; the orchestrator can read it on demand. The return is an executive summary, not a deliverable report.

@@ -63,4 +63,16 @@ Prompts live in `prompts/<use-case>.ts`. Evals in `prompts/evals/`.
 - [ ] Does cost-per-pick × expected volume fit the LLM budget?
 - [ ] Is there a fallback for LLM timeout or garbage output?
 
-Return to orchestrator with: prompts produced, cost estimate at launch volume, sample outputs, model-output schema asks for the ML engineer.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if code shipped)
+- **New interfaces:** prompt module paths, output contracts, tier routing function signatures
+- **Cost projection:** $/mo at launch volume; Haiku vs Sonnet split
+- **Cost delta:** monthly $$ impact, if any
+- **Blockers:** explicit list (including any model-output schema asks for the ML engineer)
+- **Questions:** for the orchestrator or user
+
+Do NOT paste full prompts or sample outputs into the return. Prompts are on disk under `prompts/`; the orchestrator can read them on demand. The return is an executive summary, not a deliverable report.

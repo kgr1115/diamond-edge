@@ -61,4 +61,17 @@ Code + backtests live in `models/<market>/`.
 - [ ] Does the output schema include feature attributions for AI reasoning?
 - [ ] Can this run within the agreed compute envelope?
 
-Return to orchestrator with: claimed EV on backtest, calibration summary, known weaknesses, exact output schema for AI reasoning to consume.
+## Return Format
+
+Keep your return to the orchestrator compact (≤200 words unless explicitly asked for more). Structure:
+
+- **Status:** done / partial / blocked
+- **Commit:** `<hash>` (if code shipped)
+- **New interfaces:** output schema, feature-store schema, worker endpoints
+- **Backtest headline:** claimed EV + calibration in one line
+- **Compute SLA:** runtime, memory, where it runs
+- **Cost delta:** monthly $$ impact, if any
+- **Blockers:** explicit list
+- **Questions:** for the orchestrator or user
+
+Do NOT dump feature lists, model code, or backtest walkthroughs into the return. Artifacts are in `models/<market>/`; the orchestrator can read them on demand. The return is an executive summary, not a deliverable report.
