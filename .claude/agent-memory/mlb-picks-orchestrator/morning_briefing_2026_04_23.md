@@ -112,6 +112,15 @@ Architect ADR-002 committed (`d85c1a0`): delta model as regression (`y = outcome
 - Data engineer: odds re-backfill (morning + afternoon snapshots for 2022–2024)
 - Data engineer: free-stack news ingestion (Bluesky + RSS + new Supabase tables from ADR-002)
 
+**Phase 2 COMPLETE (2026-04-23, evening):**
+
+- Odds re-backfill script (commit `ea47155`) + executed: 1,274 new snapshots, 38,220 credits consumed (42,640 remaining), 1,712 in-game sentinels filtered, zero errors. Data on disk at `data/historical-odds-{morning,afternoon}/{year}/`.
+- News ingestion (commits `d612ad5`, `f5d4aed`, `d46e46c`, `b9b3970`, `bef9b55`): migration 0008 APPLIED to live Supabase (3 new tables, RLS verified); Bluesky API client + 63 beat-writer seed; RSS clients for MLB.com, ESPN, RotoBaller (RotoBaller URL is best-guess, disabled by default); news-poll cron scaffolded; schedule-sync cron extended to also poll RSS. Bluesky 5-min polling deferred to pg_cron in Phase 5.
+
+**Phase 3 + 4 in flight (2026-04-23, late evening):**
+- AI Reasoning: Claude Haiku news extraction prompt + player/game resolvers + eval harness. Populates `news_signals` from `news_events`.
+- ML Engineer: B2 delta model training with 3-snapshot odds data. Extends `load_historical_odds.py` to read morning/afternoon/evening dirs, computes novig per slot, trains delta regression `y = outcome - morning_novig_prior`. Beats-market evaluation.
+
 ---
 
 ## Decisions awaiting you — RE-PRIORITIZED AFTER BIAS-FIX FINDINGS
