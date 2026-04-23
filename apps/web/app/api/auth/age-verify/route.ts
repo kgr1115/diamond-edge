@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+
+export const dynamic = 'force-dynamic';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 
 const AGE_VERIFY_SCHEMA = z.object({

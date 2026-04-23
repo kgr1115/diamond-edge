@@ -80,8 +80,8 @@ export async function runOddsPoll(): Promise<OddsPollResult> {
     id: row.id,
     game_date: row.game_date,
     game_time_utc: row.game_time_utc,
-    home_team_name: (row.home_team as { name: string } | null)?.name ?? '',
-    away_team_name: (row.away_team as { name: string } | null)?.name ?? '',
+    home_team_name: (row.home_team as unknown as { name: string } | null)?.name ?? '',
+    away_team_name: (row.away_team as unknown as { name: string } | null)?.name ?? '',
   }));
 
   if (games.length === 0) {

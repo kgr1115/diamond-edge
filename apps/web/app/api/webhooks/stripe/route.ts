@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
-import { stripe, tierFromPriceId } from '@/lib/stripe/client';
+import { getStripe, tierFromPriceId } from '@/lib/stripe/client';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import type { SubscriptionTier } from '@/lib/types/database';
 
 // Stripe sends the raw body for signature verification — disable body parsing
 export const runtime = 'nodejs';
+// Prevent Next.js from statically generating this route (Stripe client requires env vars at runtime)
+export const dynamic = 'force-dynamic';
 
 /**
  * Idempotent upsert of a subscription row + profile tier update.
@@ -148,7 +150,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(
+    event = getStripe().webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!

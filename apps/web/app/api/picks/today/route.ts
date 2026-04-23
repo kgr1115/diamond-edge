@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+
+export const dynamic = 'force-dynamic';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis/cache';
 import type { SubscriptionTier, MarketType } from '@/lib/types/database';

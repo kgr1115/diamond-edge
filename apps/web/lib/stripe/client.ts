@@ -1,10 +1,19 @@
 import Stripe from 'stripe';
 
-// Stripe client — server-only. Never import in client bundles.
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-02-24.acacia',
-  typescript: true,
-});
+// Lazy singleton — Stripe constructor requires STRIPE_SECRET_KEY which is only
+// available at request time in Vercel's environment. Do not initialize at module
+// load time (breaks `next build`'s static analysis phase).
+let _stripe: Stripe | null = null;
+
+export function getStripe(): Stripe {
+  if (!_stripe) {
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: '2025-02-24.acacia',
+      typescript: true,
+    });
+  }
+  return _stripe;
+}
 
 /**
  * Map a Stripe price ID to a subscription tier.
