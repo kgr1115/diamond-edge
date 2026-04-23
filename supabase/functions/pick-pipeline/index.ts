@@ -148,14 +148,27 @@ Deno.serve(async (_req: Request): Promise<Response> => {
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 4: EV filter (EV >= 4%)
+  // Stage 4: EV filter
+  //
+  // TEMP (v3 gate): 8% EV minimum + Tier 5 confidence until vig-removed
+  // backtest (run_backtest_v3.py) validates honest ROI and we confirm real
+  // alpha. Previous 4% threshold was set before vig removal was applied to
+  // the simulator — the v2 ROI numbers (40%+) included phantom edge from
+  // book overround. Revert to 4% once v3 report shows ROI 2-5% at 4% EV.
   // ---------------------------------------------------------------------------
-  const qualified = allCandidates.filter((c) => c.expected_value >= 0.04);
+  const EV_MIN = 0.08;   // temp: was 0.04
+  const TIER_MIN = 5;     // temp: was 3
+
+  const qualified = allCandidates.filter(
+    (c) => c.expected_value >= EV_MIN && c.confidence_tier >= TIER_MIN
+  );
   log('ev_filter', {
     ok: true,
     total: allCandidates.length,
     qualified: qualified.length,
     dropped: allCandidates.length - qualified.length,
+    ev_min: EV_MIN,
+    tier_min: TIER_MIN,
   });
 
   if (qualified.length === 0) {
