@@ -22,6 +22,8 @@ interface PickCardProps {
     model_probability?: number;
     expected_value?: number;
     rationale_preview?: string;
+    /** True when the user has a journal note saved for this pick. */
+    has_note?: boolean;
   };
   userTier: 'anon' | 'free' | 'pro' | 'elite';
 }
@@ -77,7 +79,7 @@ export function PickCard({ pick, userTier }: PickCardProps) {
   return (
     <Link href={`/picks/${pick.id}`} className="block group">
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors">
-        {/* Header row: teams + game time + result */}
+        {/* Header row: teams + game time + result + note indicator */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div>
             <p className="text-sm font-semibold text-gray-100">
@@ -85,7 +87,18 @@ export function PickCard({ pick, userTier }: PickCardProps) {
             </p>
             <p className="text-xs text-gray-500 mt-0.5">{formatGameTime(pick.game.game_time_utc)}</p>
           </div>
-          <ResultBadge result={pick.result} />
+          <div className="flex items-center gap-1.5">
+            {pick.has_note && (
+              <span
+                className="text-xs text-amber-400"
+                aria-label="This pick has a journal note"
+                title="Journal note saved"
+              >
+                [note]
+              </span>
+            )}
+            <ResultBadge result={pick.result} />
+          </div>
         </div>
 
         {/* Pick details */}

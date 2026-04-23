@@ -324,6 +324,80 @@ export async function GET(
 }
 
 // ---------------------------------------------------------------------------
+// PATCH — update journal fields (user_note, user_tags) for a pick
+// ---------------------------------------------------------------------------
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  const { id } = await params;
+
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+    return NextResponse.json(
+      { error: { code: 'NOT_FOUND', message: 'Pick not found.' } },
+      { status: 404 }
+    );
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json(
+      { error: { code: 'UNAUTHORIZED', message: 'Login required.' } },
+      { status: 401 }
+    );
+  }
+
+  let body: { user_note?: string; user_tags?: string[] };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: { code: 'BAD_REQUEST', message: 'Invalid JSON body.' } },
+      { status: 400 }
+    );
+  }
+
+  const { user_note, user_tags } = body;
+
+  if (user_note !== undefined && typeof user_note !== 'string') {
+    return NextResponse.json(
+      { error: { code: 'BAD_REQUEST', message: 'user_note must be a string.' } },
+      { status: 400 }
+    );
+  }
+  if (user_tags !== undefined && (!Array.isArray(user_tags) || user_tags.some((t) => typeof t !== 'string'))) {
+    return NextResponse.json(
+      { error: { code: 'BAD_REQUEST', message: 'user_tags must be a string array.' } },
+      { status: 400 }
+    );
+  }
+
+  const patch: { user_note?: string | null; user_tags?: string[] } = {};
+  if (user_note !== undefined) patch.user_note = user_note.trim() || null;
+  if (user_tags !== undefined) patch.user_tags = user_tags.map((t) => t.trim()).filter(Boolean);
+
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ ok: true });
+  }
+
+  const service = createServiceRoleClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (service as any).from('picks').update(patch).eq('id', id);
+
+  if (error) {
+    console.error({ event: 'pick_journal_patch_error', id, error });
+    return NextResponse.json(
+      { error: { code: 'INTERNAL_ERROR', message: 'Failed to save journal entry.' } },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

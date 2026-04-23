@@ -1,8 +1,11 @@
 import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
+import { createServerClient } from '@supabase/ssr';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
 import { ConfidenceBadge } from '@/components/picks/confidence-badge';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
+import { PickJournal } from '@/components/picks/pick-journal';
+import type { Database } from '@/lib/types/database';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,9 +83,49 @@ async function fetchPickDetail(id: string): Promise<PickDetailResponse | null> {
   }
 }
 
+interface JournalData {
+  user_note: string | null;
+  user_tags: string[];
+}
+
+async function fetchJournalData(pickId: string): Promise<JournalData | null> {
+  const cookieStore = await cookies();
+  const supabase = createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll(); },
+        setAll() {},
+      },
+    }
+  );
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // Read directly from service-role — picks has RLS for visibility=live, journal fields
+  // are non-sensitive but we still go via anon key; no RLS issue since visibility=live
+  // is already satisfied by the main pick fetch succeeding.
+  const { data } = await supabase
+    .from('picks')
+    .select('user_note, user_tags')
+    .eq('id', pickId)
+    .single();
+
+  if (!data) return null;
+  const row = data as unknown as { user_note: string | null; user_tags: string[] | null };
+  return {
+    user_note: row.user_note,
+    user_tags: row.user_tags ?? [],
+  };
+}
+
 export default async function PickDetailPage({ params }: PageProps) {
   const { id } = await params;
-  const data = await fetchPickDetail(id);
+  const [data, journal] = await Promise.all([
+    fetchPickDetail(id),
+    fetchJournalData(id),
+  ]);
 
   if (!data) {
     notFound();
@@ -218,6 +261,15 @@ export default async function PickDetailPage({ params }: PageProps) {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Journal — authenticated users only */}
+          {journal !== null && (
+            <PickJournal
+              pickId={pick.id}
+              initialNote={journal.user_note}
+              initialTags={journal.user_tags}
+            />
           )}
         </div>
 
