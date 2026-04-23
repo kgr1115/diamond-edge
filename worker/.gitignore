@@ -1,0 +1,15 @@
+# Model artifacts — trained locally, not committed
+models/moneyline/artifacts/*.pkl
+models/run_line/artifacts/*.pkl
+models/totals/artifacts/*.pkl
+
+# Processed training data
+../data/training/*.parquet
+
+# Backtest plots (large binary files)
+models/backtest/reports/*.png
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
