@@ -5,12 +5,21 @@ import { updateSession } from '@/lib/supabase/middleware';
 // Marketing pages, stats, and public history are intentionally excluded per geo-block-spec.md.
 const GEO_PROTECTED_PREFIXES = ['/api/picks', '/api/bankroll', '/picks', '/bankroll'];
 
-// ALLOW list sourced from GEO_ALLOW_STATES env var (comma-separated two-letter codes).
-// In v1 this is baked into a Vercel env var; v1.1 will add DB-driven refresh.
+// ALLOW list — canonical 25 jurisdictions (24 states + DC) where both DK and FD are
+// fully operational as of 2026-04-22 per docs/compliance/state-matrix.md.
+// GEO_ALLOW_STATES env var can override at runtime if needed (v1.1 DB-driven refresh);
+// otherwise the compiled-in default applies.
+const DEFAULT_ALLOW_STATES = [
+  'AZ', 'AR', 'CO', 'CT', 'DC', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
+  'MA', 'MD', 'MI', 'MO', 'NC', 'NJ', 'NY', 'OH', 'PA', 'VA', 'VT', 'WV', 'WY',
+];
+
 function getAllowedStates(): Set<string> {
   const raw = process.env.GEO_ALLOW_STATES ?? '';
-  if (!raw) return new Set();
-  return new Set(raw.split(',').map((s) => s.trim().toUpperCase()));
+  if (raw) {
+    return new Set(raw.split(',').map((s) => s.trim().toUpperCase()));
+  }
+  return new Set(DEFAULT_ALLOW_STATES);
 }
 
 function isGeoProtectedPath(pathname: string): boolean {
