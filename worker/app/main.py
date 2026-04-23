@@ -10,8 +10,12 @@ Endpoints:
 Auth: Bearer token via WORKER_API_KEY env var.
 Models loaded at startup (not per-request).
 
-Request shape matches PredictRequest in supabase/functions/pick-pipeline/types.ts:
-  { game_id: string, markets: string[], features: Record<string, number|string|null> }
+Request shape (simplified — worker builds features from game_id):
+  { game_id: string, markets: string[] }
+
+The `features` key is no longer accepted.  Feature engineering has moved
+entirely into the worker (worker/app/features.py) which queries Supabase
+directly using SUPABASE_SERVICE_ROLE_KEY.
 
 Response shape: { candidates: PickCandidate[] }
 """
@@ -42,6 +46,7 @@ from worker.models.pick_candidate_schema import (
     select_best_line,
     sort_attributions,
 )
+from worker.app.features import build_feature_vector as _build_features_from_supabase
 
 try:
     import shap
@@ -143,7 +148,9 @@ def _load_models() -> None:
 class PredictRequest(BaseModel):
     game_id: str
     markets: list[str] = Field(default=["moneyline", "run_line", "totals"])
-    features: dict[str, Any]
+    # `features` is no longer accepted — worker builds the full vector from game_id.
+    # Retained as optional for backward-compat logging only; ignored at inference.
+    features: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 class PredictResponse(BaseModel):
@@ -483,11 +490,13 @@ async def predict(request: Request) -> JSONResponse:
     """
     Run inference for a game across requested markets.
 
-    Request body (matches PredictRequest in supabase/functions/pick-pipeline/types.ts):
+    Worker builds the full feature vector from game_id by querying Supabase
+    directly.  The Edge Function no longer sends a `features` dict.
+
+    Request body:
     {
         "game_id": "uuid",
-        "markets": ["moneyline", "run_line", "total"],
-        "features": { ... feature key-value pairs ... }
+        "markets": ["moneyline", "run_line", "total"]
     }
 
     Response:
@@ -502,15 +511,45 @@ async def predict(request: Request) -> JSONResponse:
 
     game_id = body.get("game_id", "")
     markets = body.get("markets", ["moneyline", "run_line", "totals"])
-    features = body.get("features", {})
 
     if not game_id:
         raise HTTPException(status_code=400, detail="game_id is required")
+
+    if body.get("features"):
+        print(f"[WARN] /predict received deprecated `features` dict for game_id={game_id[:8]} "
+              "— ignoring; worker now builds features from Supabase internally")
 
     # Normalize market names: TypeScript sends "total", Python uses "totals"
     normalized = []
     for m in markets:
         normalized.append("totals" if m == "total" else m)
+
+    # Build feature vector once for all markets (same 90 features across all three)
+    try:
+        features = await _build_features_from_supabase(game_id, normalized[0] if normalized else "moneyline")
+    except Exception as e:
+        print(f"[ERROR] Feature build failed for game_id={game_id[:8]}: {e}")
+        raise HTTPException(status_code=500, detail=f"Feature engineering failed: {e}")
+
+    # Log how many features populated vs defaulted
+    model_feature_names = set()
+    for market in normalized:
+        if market in _REGISTRY:
+            model_feature_names.update(_REGISTRY[market]["features"])
+
+    missing = [f for f in model_feature_names if features.get(f) is None]
+    if missing:
+        for fname in missing:
+            print(f"[WARN] Feature {fname} is None — defaulting to 0.0 for game_id={game_id[:8]}")
+
+    populated = len(model_feature_names) - len(missing)
+    print(json.dumps({
+        "event": "feature_build_complete",
+        "game_id": game_id,
+        "features_populated": populated,
+        "features_defaulted": len(missing),
+        "defaulted_features": missing[:10],  # cap log size
+    }))
 
     all_candidates: list[dict] = []
 
