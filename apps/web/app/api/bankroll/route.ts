@@ -48,6 +48,23 @@ function computeProfitCents(amountCents: number, oddsPrice: number): number {
   return Math.round(amountCents * (100 / Math.abs(oddsPrice)));
 }
 
+interface BankrollEntryRaw {
+  id: string;
+  bet_date: string;
+  description: string | null;
+  market: string | null;
+  sportsbook_id: string | null;
+  bet_amount_cents: number;
+  odds_price: number;
+  outcome: string | null;
+  profit_loss_cents: number | null;
+  settled_at: string | null;
+  pick_id: string | null;
+  notes: string | null;
+  deleted_at: string | null;
+  sportsbooks: { name: string } | null;
+}
+
 export async function GET(): Promise<NextResponse> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -57,9 +74,10 @@ export async function GET(): Promise<NextResponse> {
 
   const service = createServiceRoleClient();
 
-  const { data: rawEntries, error } = await service
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: rawData, error } = await (service as any)
     .from('bankroll_entries')
-    .select('id, bet_date, description, market, sportsbook_id, bet_amount_cents, odds_price, outcome, profit_loss_cents, settled_at, pick_id, notes, deleted_at')
+    .select('id, bet_date, description, market, sportsbook_id, bet_amount_cents, odds_price, outcome, profit_loss_cents, settled_at, pick_id, notes, deleted_at, sportsbooks:sportsbook_id ( name )')
     .eq('user_id', user.id)
     .is('deleted_at', null)
     .order('bet_date', { ascending: false });
@@ -68,7 +86,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: { code: 'DB_ERROR', message: error.message } }, { status: 500 });
   }
 
-  const entries = rawEntries ?? [];
+  const entries = (rawData ?? []) as BankrollEntryRaw[];
 
   const now = new Date();
   const cutoff7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -153,12 +171,12 @@ export async function GET(): Promise<NextResponse> {
     cumulativeSeries.push({ date: e.bet_date, cumulative_units: Math.round(running * 100) / 100 });
   }
 
-  const mappedEntries: BankrollEntry[] = (rawEntries ?? []).map((e) => ({
+  const mappedEntries: BankrollEntry[] = entries.map((e) => ({
     id: e.id,
     bet_date: e.bet_date,
     description: e.description,
     market: e.market,
-    sportsbook: null, // book name join not included in this query; backend can enrich later
+    sportsbook: e.sportsbooks?.name ?? null,
     bet_amount_cents: e.bet_amount_cents,
     odds_price: e.odds_price,
     outcome: e.outcome,
