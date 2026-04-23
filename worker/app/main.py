@@ -2,9 +2,10 @@
 Diamond Edge — Fly.io ML worker.
 
 Endpoints:
-  POST /predict   — run model inference, return PickCandidate[]
-  POST /rationale — proxy Claude API for rationale generation (stub for now)
-  GET  /health    — liveness probe
+  POST /predict        — run model inference, return PickCandidate[]
+  POST /rationale      — proxy Claude API for rationale generation (stub for now)
+  POST /rationale-news — Haiku extraction: news_events → news_signals (structured JSON)
+  GET  /health         — liveness probe
 
 Auth: Bearer token via WORKER_API_KEY env var.
 Models loaded at startup (not per-request).
@@ -578,4 +579,206 @@ async def rationale(request: Request) -> JSONResponse:
         "tokens_used": 0,
         "cost_usd": 0.0,
         "generated_at": now,
+    })
+
+
+@app.post("/rationale-news")
+async def rationale_news(request: Request) -> JSONResponse:
+    """
+    POST /rationale-news — Haiku extraction: news_events rows → news_signals rows.
+
+    Called by the late-news-pipeline Supabase Edge Function (Phase 5).
+    This endpoint is the boundary between the Edge Function (Deno/TypeScript)
+    and the Claude API (Python/Anthropic SDK). It accepts a NewsExtractionRequest,
+    calls claude-haiku-4-5 with the stable cached system prompt + per-game user prompt,
+    and returns structured signal objects ready for upsert into news_signals.
+
+    Request shape (matches ADR-002 NewsExtractionRequest):
+    {
+        "game_id": "uuid",
+        "news_items": [
+            {
+                "headline": "string",     // optional; body is the primary content
+                "body": "string | null",
+                "published_at": "ISO8601",
+                "source": "string"
+            }
+        ],
+        "game_context": {
+            "home_team_name": "string",
+            "away_team_name": "string",
+            "home_players": [{ "player_id": "uuid", "name": "string", "war": float|null }],
+            "away_players": [{ "player_id": "uuid", "name": "string", "war": float|null }],
+            "game_time_utc": "ISO8601"
+        }
+    }
+
+    Response (matches ADR-002 NewsExtractionResponse):
+    {
+        "game_id": "uuid",
+        "signals": [
+            {
+                "signal_type": "late_scratch|lineup_change|injury_update|weather_note|opener_announcement|other",
+                "player_id": "uuid | null",
+                "payload": { ... signal-type-specific fields ... },
+                "confidence": float,
+                "news_event_id": "uuid | null"
+            }
+        ],
+        "haiku_tokens_used": int,
+        "haiku_cost_usd": float,
+        "extracted_at": "ISO8601"
+    }
+    """
+    _verify_auth(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    game_id = body.get("game_id", "")
+    news_items = body.get("news_items", [])
+    game_context = body.get("game_context", {})
+
+    if not game_id:
+        raise HTTPException(status_code=400, detail="game_id is required")
+    if not isinstance(news_items, list):
+        raise HTTPException(status_code=400, detail="news_items must be an array")
+
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not anthropic_key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+
+    try:
+        import anthropic as anthropic_sdk
+        client = anthropic_sdk.Anthropic(api_key=anthropic_key)
+    except ImportError:
+        raise HTTPException(status_code=503, detail="anthropic SDK not installed")
+
+    now_ts = datetime.now(timezone.utc).isoformat()
+
+    # Build the roster block for player resolution
+    home_players = game_context.get("home_players", [])
+    away_players = game_context.get("away_players", [])
+    all_players = home_players + away_players
+
+    roster_lines = [
+        f"  {p['name']} | id:{p['player_id']} | war:{p.get('war', 'n/a')} | "
+        f"{'home' if p in home_players else 'away'}"
+        for p in all_players
+    ]
+    roster_block = "\n".join(roster_lines) if roster_lines else "  (no roster data available)"
+
+    news_lines = []
+    for i, item in enumerate(news_items):
+        ts = (item.get("published_at") or now_ts)[:16].replace("T", " ") + " UTC"
+        source = item.get("source", "unknown")
+        body_text = (item.get("body") or item.get("headline") or "").strip()
+        news_lines.append(f"[{i + 1}] {ts} ({source})\n{body_text}")
+
+    news_block = "\n\n".join(news_lines) if news_lines else "  (no news items in this window)"
+
+    user_prompt = (
+        f"## Game\n\n"
+        f"{game_context.get('away_team_name', 'Away')} at {game_context.get('home_team_name', 'Home')}\n"
+        f"First pitch (UTC): {game_context.get('game_time_utc', now_ts)}\n\n"
+        f"## Active Roster (for player_id resolution)\n\n"
+        f"{roster_block}\n\n"
+        f"## News Items ({len(news_items)} items, ordered newest-first)\n\n"
+        f"{news_block}\n\n"
+        f"---\n\n"
+        f"Extract all actionable signals from the news items above. "
+        f"Match any player names to the player_id values in the Active Roster. "
+        f"If a player name does not appear in the roster, set player_id to null. "
+        f"Return only the JSON array — no other text."
+    )
+
+    # Stable system prompt (cache-eligible via cache_control ephemeral)
+    system_prompt = (
+        "You are a structured data extraction engine for Diamond Edge, an MLB statistical analysis service. "
+        "Your only job is to read raw news text and extract structured signal objects from it. "
+        "You do not generate analysis, opinions, or predictions. You extract only what is explicitly stated.\n\n"
+        "Signal types: late_scratch, lineup_change, injury_update, weather_note, opener_announcement, other.\n\n"
+        "Rules:\n"
+        "1. EXTRACT ONLY what is explicitly stated. Do not infer or speculate.\n"
+        "2. If no actionable signal is present, return an empty array [].\n"
+        "3. NEVER invent player names, team names, or statistics.\n"
+        "4. NEVER invent a player_id. Set to null if not in the roster.\n"
+        "5. Output: JSON array only. No markdown. No explanation.\n\n"
+        "Signal schemas:\n"
+        "late_scratch: {signal_type, player_name, player_id, team, position, war_proxy, reason:'injury'|'rest'|'personal'|'unknown', confidence, source_excerpt}\n"
+        "lineup_change: {signal_type, player_in, player_out, position, order_change:{from,to}, team, confidence, source_excerpt}\n"
+        "injury_update: {signal_type, player_name, player_id, severity:'day_to_day'|'questionable'|'il_10'|'il_15'|'il_60', body_part, expected_return_days, confidence, source_excerpt}\n"
+        "weather_note: {signal_type, venue, condition:'rain'|'wind'|'cold'|'heat'|'roof_open'|'roof_closed', delay_probability, confidence, source_excerpt}\n"
+        "opener_announcement: {signal_type, team, expected_starter, expected_innings, confidence, source_excerpt}\n"
+        "other: {signal_type, headline, source_excerpt}\n\n"
+        "confidence: 1.0=confirmed, 0.7=reported, 0.5=rumored, 0.3=very uncertain\n"
+        "Return [] if no signals. No other output."
+    )
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            temperature=0,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception as e:
+        print(f"[ERROR] /rationale-news Haiku call failed for game_id={game_id}: {e}")
+        raise HTTPException(status_code=502, detail=f"Claude API error: {e}")
+
+    raw_text = "".join(
+        block.text for block in response.content if hasattr(block, "text")
+    ).strip()
+
+    # Parse Claude's JSON response
+    signals: list[dict] = []
+    try:
+        stripped = raw_text.lstrip("```json\n").lstrip("```\n").rstrip("```").strip()
+        parsed = json.loads(stripped)
+        if isinstance(parsed, list):
+            signals = parsed
+    except Exception:
+        print(f"[WARN] /rationale-news: unparseable response for game_id={game_id}: {raw_text[:100]}")
+        signals = []
+
+    usage = response.usage
+    input_tokens = usage.input_tokens
+    output_tokens = usage.output_tokens
+    cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+
+    cost_usd = (
+        (input_tokens / 1_000_000) * 0.80
+        + (output_tokens / 1_000_000) * 4.00
+        + (cache_read / 1_000_000) * 0.08
+        + (cache_write / 1_000_000) * 1.00
+    )
+
+    print(json.dumps({
+        "event": "rationale_news_complete",
+        "game_id": game_id,
+        "news_items_count": len(news_items),
+        "signals_count": len(signals),
+        "tokens_input": input_tokens,
+        "tokens_output": output_tokens,
+        "tokens_cache_read": cache_read,
+        "tokens_cache_write": cache_write,
+        "cost_usd": round(cost_usd, 8),
+    }))
+
+    return JSONResponse({
+        "game_id": game_id,
+        "signals": signals,
+        "haiku_tokens_used": input_tokens + output_tokens,
+        "haiku_cost_usd": round(cost_usd, 8),
+        "extracted_at": now_ts,
     })
