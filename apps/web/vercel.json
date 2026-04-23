@@ -1,0 +1,32 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+
+  "crons": [
+    {
+      "path": "/api/cron/schedule-sync",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/pick-pipeline",
+      "schedule": "0 16 * * *"
+    }
+  ],
+
+  "functions": {
+    "app/api/cron/schedule-sync/route.ts": { "maxDuration": 60 },
+    "app/api/cron/pick-pipeline/route.ts": { "maxDuration": 10 },
+    "app/api/cron/odds-refresh/route.ts": { "maxDuration": 60 },
+    "app/api/cron/outcome-grader/route.ts": { "maxDuration": 10 }
+  },
+
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    }
+  ]
+}
