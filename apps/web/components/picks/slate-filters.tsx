@@ -8,7 +8,14 @@ interface SlateFiltersProps {
   visiblePicks: number;
 }
 
-const TIER_OPTIONS = [1, 2, 3, 4, 5] as const;
+const TIER_OPTIONS = [
+  { value: 1, label: 'Speculative', color: 'text-gray-400'    },
+  { value: 2, label: 'Low',         color: 'text-blue-400'    },
+  { value: 3, label: 'Moderate',    color: 'text-yellow-400'  },
+  { value: 4, label: 'High',        color: 'text-orange-400'  },
+  { value: 5, label: 'Strong',      color: 'text-emerald-400' },
+] as const;
+
 const MARKET_OPTIONS = [
   { value: 'moneyline', label: 'ML' },
   { value: 'run_line', label: 'RL' },
@@ -89,7 +96,7 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
   function toggleTier(tier: number) {
     const next = tiers.includes(tier)
       ? tiers.filter((t) => t !== tier)
-      : [...tiers, tier].sort();
+      : [...tiers, tier].sort((a, b) => a - b);
     // Don't allow deselecting all tiers
     if (next.length === 0) return;
     pushParams({ ev, tiers: next, markets });
@@ -166,22 +173,26 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
 
         {/* Confidence tier checkboxes */}
         <div>
-          <p className="text-xs text-gray-500 mb-2">Confidence tier</p>
-          <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Confidence tier filter">
-            {TIER_OPTIONS.map((t) => (
-              <button
-                key={t}
-                onClick={() => toggleTier(t)}
-                aria-pressed={tiers.includes(t)}
-                className={`text-xs px-2.5 py-1 rounded border transition-colors ${
-                  tiers.includes(t)
-                    ? 'bg-blue-700 border-blue-600 text-white'
-                    : 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
-                }`}
-              >
-                T{t}
-              </button>
-            ))}
+          <p className="text-xs text-gray-500 mb-2">Confidence</p>
+          <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Confidence filter">
+            {TIER_OPTIONS.map(({ value, label, color }) => {
+              const active = tiers.includes(value);
+              return (
+                <button
+                  key={value}
+                  onClick={() => toggleTier(value)}
+                  aria-pressed={active}
+                  className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded border transition-colors ${
+                    active
+                      ? `border-transparent bg-gray-800 ${color}`
+                      : 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  <span aria-hidden="true">{'◆'.repeat(value)}</span>
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
