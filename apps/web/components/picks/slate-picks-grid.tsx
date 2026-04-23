@@ -1,13 +1,22 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { PickCard } from './pick-card';
 import { ShapAttributionRow } from './shap-attribution-row';
 import { LineMovementSparkline } from './line-movement-sparkline';
-import { SlateFilters } from './slate-filters';
+import { SlateFilters, useSlateFilters } from './slate-filters';
+import type {
+  MarketFilter,
+  MinStrengthFilter,
+  VisibilityFilter,
+  SortFilter,
+} from './slate-filters';
 import { DailyExposureMeter } from './daily-exposure-meter';
-import Link from 'next/link';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface ShapAttribution {
   feature: string;
@@ -33,9 +42,12 @@ interface PickData {
   pick_side: string;
   confidence_tier: number;
   required_tier: string;
+  visibility: 'live' | 'shadow';
   result: string;
   best_line_price?: number;
   best_line_book?: string;
+  total_line?: number;
+  run_line_spread?: number;
   model_probability?: number;
   expected_value?: number;
   rationale_preview?: string;
@@ -56,23 +68,63 @@ interface SlatePicksGridProps {
   };
 }
 
-function parseEvParam(raw: string | null): number {
-  const n = parseFloat(raw ?? '');
-  return isNaN(n) ? 4 : Math.min(10, Math.max(0, n));
+// ---------------------------------------------------------------------------
+// Client-side filter + sort
+// ---------------------------------------------------------------------------
+
+function applyFilters(
+  picks: PickData[],
+  market: MarketFilter,
+  minStrength: MinStrengthFilter,
+  visibility: VisibilityFilter,
+  sort: SortFilter,
+  minEv: number,
+): PickData[] {
+  const filtered = picks.filter((p) => {
+    if (market !== 'all' && p.market !== market) return false;
+
+    const minTier = minStrength === 'all' ? 1 : parseInt(minStrength, 10);
+    if (p.confidence_tier < minTier) return false;
+
+    if (visibility === 'live' && p.visibility !== 'live') return false;
+
+    const evPct = (p.expected_value ?? 0) * 100;
+    if (evPct < minEv) return false;
+
+    return true;
+  });
+
+  return [...filtered].sort((a, b) => {
+    if (sort === 'ev') {
+      return (b.expected_value ?? 0) - (a.expected_value ?? 0);
+    }
+    if (sort === 'confidence') {
+      return b.confidence_tier - a.confidence_tier;
+    }
+    const aTime = a.game.game_time_utc ? new Date(a.game.game_time_utc).getTime() : Infinity;
+    const bTime = b.game.game_time_utc ? new Date(b.game.game_time_utc).getTime() : Infinity;
+    return aTime - bTime;
+  });
 }
 
-function parseTierParam(raw: string | null): number[] {
-  if (!raw) return [1, 2, 3, 4, 5];
-  const parsed = raw.split(',').map(Number).filter((n) => n >= 1 && n <= 5);
-  return parsed.length > 0 ? parsed : [1, 2, 3, 4, 5];
+// ---------------------------------------------------------------------------
+// Shadow badge
+// ---------------------------------------------------------------------------
+
+function ShadowBadge() {
+  return (
+    <span
+      className="text-xs px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-800/60 font-medium"
+      title="Shadow pick — below publish threshold (EV < 8% or confidence < Strong)"
+    >
+      Shadow
+    </span>
+  );
 }
 
-function parseMarketParam(raw: string | null): string[] {
-  const valid = ['moneyline', 'run_line', 'total'];
-  if (!raw) return valid;
-  const parsed = raw.split(',').filter((m) => valid.includes(m));
-  return parsed.length > 0 ? parsed : valid;
-}
+// ---------------------------------------------------------------------------
+// Zero state
+// ---------------------------------------------------------------------------
 
 function ZeroState({
   userTier,
@@ -123,8 +175,8 @@ function ZeroState({
           View pick history
         </Link>
         {userTier === 'elite' && (
-          <Link href="/picks/today?visibility=shadow" className="text-sm text-amber-400 hover:underline">
-            View shadow picks (Elite)
+          <Link href="/picks/today?visibility=all" className="text-sm text-amber-400 hover:underline">
+            Include shadow picks
           </Link>
         )}
       </div>
@@ -132,42 +184,48 @@ function ZeroState({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function SlatePicksGrid({ picks, userTier, meta }: SlatePicksGridProps) {
-  const searchParams = useSearchParams();
+  const { market, minStrength, visibility, sort, minEv } = useSlateFilters();
+  const canSeeShadow = userTier === 'pro' || userTier === 'elite';
 
-  const ev = parseEvParam(searchParams.get('ev'));
-  const tiers = parseTierParam(searchParams.get('tier'));
-  const markets = parseMarketParam(searchParams.get('market'));
+  const filtered = useMemo(
+    () => applyFilters(picks, market, minStrength, visibility, sort, minEv),
+    [picks, market, minStrength, visibility, sort, minEv]
+  );
 
-  const filtered = useMemo(() => {
-    return picks.filter((p) => {
-      const evPct = (p.expected_value ?? 0) * 100;
-      if (evPct < ev) return false;
-      if (!tiers.includes(p.confidence_tier)) return false;
-      if (!markets.includes(p.market)) return false;
-      return true;
-    });
-  }, [picks, ev, tiers, markets]);
-
-  const isActiveFilter = ev !== 4 || tiers.length !== 5 || markets.length !== 3;
+  const isActiveFilter =
+    market !== 'all' ||
+    minStrength !== 'all' ||
+    (canSeeShadow && visibility !== 'all') ||
+    sort !== 'ev' ||
+    minEv !== 0;
 
   return (
     <div className="space-y-4">
-      {/* Daily exposure meter */}
-      {(userTier === 'pro' || userTier === 'elite') && (
-        <DailyExposureMeter />
-      )}
+      {canSeeShadow && <DailyExposureMeter />}
 
-      {/* Filter bar */}
-      <SlateFilters totalPicks={picks.length} visiblePicks={filtered.length} />
+      <SlateFilters
+        totalPicks={picks.length}
+        visiblePicks={filtered.length}
+        canSeeShadow={canSeeShadow}
+      />
 
-      {/* Grid or zero state */}
       {filtered.length === 0 ? (
         <ZeroState userTier={userTier} meta={meta} filtered={isActiveFilter} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((pick) => (
             <article key={pick.id} className="flex flex-col">
+              {pick.visibility === 'shadow' && (
+                <div className="mb-1 flex justify-end">
+                  <ShadowBadge />
+                </div>
+              )}
+
               <PickCard pick={pick} userTier={userTier} />
 
               {userTier === 'elite' && pick.shap_attributions && pick.shap_attributions.length > 0 && (

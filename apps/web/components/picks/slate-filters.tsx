@@ -3,119 +3,204 @@
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
-interface SlateFiltersProps {
-  totalPicks: number;
-  visiblePicks: number;
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type MarketFilter = 'all' | 'moneyline' | 'run_line' | 'total';
+export type MinStrengthFilter = 'all' | '2' | '3' | '4' | '5';
+export type VisibilityFilter = 'all' | 'live';
+export type SortFilter = 'ev' | 'game_time' | 'confidence';
+
+export interface SlateFilterValues {
+  market: MarketFilter;
+  minStrength: MinStrengthFilter;
+  visibility: VisibilityFilter;
+  sort: SortFilter;
+  minEv: number;
 }
 
-const TIER_OPTIONS = [
-  { value: 1, label: 'Speculative', color: 'text-gray-400'    },
-  { value: 2, label: 'Low',         color: 'text-blue-400'    },
-  { value: 3, label: 'Moderate',    color: 'text-yellow-400'  },
-  { value: 4, label: 'High',        color: 'text-orange-400'  },
-  { value: 5, label: 'Strong',      color: 'text-emerald-400' },
-] as const;
+// ---------------------------------------------------------------------------
+// URL param helpers
+// ---------------------------------------------------------------------------
 
-const MARKET_OPTIONS = [
-  { value: 'moneyline', label: 'ML' },
-  { value: 'run_line', label: 'RL' },
-  { value: 'total', label: 'O/U' },
-] as const;
+function parseMarket(raw: string | null): MarketFilter {
+  const valid: MarketFilter[] = ['all', 'moneyline', 'run_line', 'total'];
+  return valid.includes(raw as MarketFilter) ? (raw as MarketFilter) : 'all';
+}
+
+function parseMinStrength(raw: string | null): MinStrengthFilter {
+  const valid: MinStrengthFilter[] = ['all', '2', '3', '4', '5'];
+  return valid.includes(raw as MinStrengthFilter) ? (raw as MinStrengthFilter) : 'all';
+}
+
+function parseVisibility(raw: string | null): VisibilityFilter {
+  return raw === 'live' ? 'live' : 'all';
+}
+
+function parseSort(raw: string | null): SortFilter {
+  const valid: SortFilter[] = ['ev', 'game_time', 'confidence'];
+  return valid.includes(raw as SortFilter) ? (raw as SortFilter) : 'ev';
+}
 
 function parseEvParam(raw: string | null): number {
   const n = parseFloat(raw ?? '');
-  return isNaN(n) ? 4 : Math.min(10, Math.max(0, n));
+  return isNaN(n) ? 0 : Math.min(10, Math.max(0, n));
 }
 
-function parseTierParam(raw: string | null): number[] {
-  if (!raw) return [1, 2, 3, 4, 5];
-  const parsed = raw.split(',').map(Number).filter((n) => n >= 1 && n <= 5);
-  return parsed.length > 0 ? parsed : [1, 2, 3, 4, 5];
-}
+// ---------------------------------------------------------------------------
+// Hook — exposes parsed filter values for the grid to consume
+// ---------------------------------------------------------------------------
 
-function parseMarketParam(raw: string | null): string[] {
-  const valid = ['moneyline', 'run_line', 'total'];
-  if (!raw) return valid;
-  const parsed = raw.split(',').filter((m) => valid.includes(m));
-  return parsed.length > 0 ? parsed : valid;
-}
-
-export function useSlateFilters() {
+export function useSlateFilters(): SlateFilterValues {
   const searchParams = useSearchParams();
-  const ev = parseEvParam(searchParams.get('ev'));
-  const tiers = parseTierParam(searchParams.get('tier'));
-  const markets = parseMarketParam(searchParams.get('market'));
-  return { ev, tiers, markets };
+  return {
+    market: parseMarket(searchParams.get('market')),
+    minStrength: parseMinStrength(searchParams.get('minStrength')),
+    visibility: parseVisibility(searchParams.get('visibility')),
+    sort: parseSort(searchParams.get('sort')),
+    minEv: parseEvParam(searchParams.get('ev')),
+  };
 }
 
-export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+interface SlateFiltersProps {
+  totalPicks: number;
+  visiblePicks: number;
+  /** When false, the visibility toggle is hidden (free/anon only ever see live). */
+  canSeeShadow: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function SegmentGroup<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-2">{label}</p>
+      <div className="flex flex-wrap gap-1" role="group" aria-label={label}>
+        {options.map((opt) => {
+          const active = opt.value === value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => onChange(opt.value)}
+              aria-pressed={active}
+              className={`text-xs px-3 py-1 rounded border transition-colors ${
+                active
+                  ? 'bg-blue-700 border-blue-600 text-white font-medium'
+                  : 'border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+export function SlateFilters({ totalPicks, visiblePicks, canSeeShadow }: SlateFiltersProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const ev = parseEvParam(searchParams.get('ev'));
-  const tiers = parseTierParam(searchParams.get('tier'));
-  const markets = parseMarketParam(searchParams.get('market'));
+  const market = parseMarket(searchParams.get('market'));
+  const minStrength = parseMinStrength(searchParams.get('minStrength'));
+  const visibility = parseVisibility(searchParams.get('visibility'));
+  const sort = parseSort(searchParams.get('sort'));
+  const minEv = parseEvParam(searchParams.get('ev'));
+
+  // Local EV state during drag — commits to URL only on release for smooth UX
+  const [localEv, setLocalEv] = useState(minEv);
+  useEffect(() => { setLocalEv(minEv); }, [minEv]);
 
   const isFiltered =
-    ev !== 4 ||
-    tiers.length !== 5 ||
-    markets.length !== 3;
+    market !== 'all' ||
+    minStrength !== 'all' ||
+    (canSeeShadow && visibility !== 'all') ||
+    sort !== 'ev' ||
+    minEv !== 0;
 
   const pushParams = useCallback(
-    (next: { ev: number; tiers: number[]; markets: string[] }) => {
+    (next: {
+      market: MarketFilter;
+      minStrength: MinStrengthFilter;
+      visibility: VisibilityFilter;
+      sort: SortFilter;
+      ev: number;
+    }) => {
       const p = new URLSearchParams(searchParams.toString());
-      p.set('ev', String(next.ev));
-      p.set('tier', next.tiers.join(','));
-      p.set('market', next.markets.join(','));
+      if (next.market === 'all') p.delete('market'); else p.set('market', next.market);
+      if (next.minStrength === 'all') p.delete('minStrength'); else p.set('minStrength', next.minStrength);
+      if (next.visibility === 'all') p.delete('visibility'); else p.set('visibility', next.visibility);
+      if (next.sort === 'ev') p.delete('sort'); else p.set('sort', next.sort);
+      if (next.ev === 0) p.delete('ev'); else p.set('ev', String(next.ev));
       router.replace(`${pathname}?${p.toString()}`, { scroll: false });
     },
     [router, pathname, searchParams]
   );
 
-  // EV slider uses local state during drag for smooth UX — URL is only
-  // updated on release (pointerup/touchend/change). The label always shows
-  // the local value so the user sees instant feedback while dragging.
-  const [localEv, setLocalEv] = useState(ev);
-
-  // If the URL value changes outside the slider (reset button, back nav),
-  // resync the slider's local position.
-  useEffect(() => {
-    setLocalEv(ev);
-  }, [ev]);
-
-  function resetFilters() {
-    setLocalEv(4);
-    router.replace(pathname, { scroll: false });
+  function update(patch: Partial<{ market: MarketFilter; minStrength: MinStrengthFilter; visibility: VisibilityFilter; sort: SortFilter; ev: number }>) {
+    pushParams({ market, minStrength, visibility, sort, ev: minEv, ...patch });
   }
 
   function commitEv(val: number) {
-    pushParams({ ev: val, tiers, markets });
+    pushParams({ market, minStrength, visibility, sort, ev: val });
   }
 
-  function toggleTier(tier: number) {
-    const next = tiers.includes(tier)
-      ? tiers.filter((t) => t !== tier)
-      : [...tiers, tier].sort((a, b) => a - b);
-    // Don't allow deselecting all tiers
-    if (next.length === 0) return;
-    pushParams({ ev, tiers: next, markets });
+  function reset() {
+    setLocalEv(0);
+    router.replace(pathname, { scroll: false });
   }
 
-  function toggleMarket(market: string) {
-    const next = markets.includes(market)
-      ? markets.filter((m) => m !== market)
-      : [...markets, market];
-    if (next.length === 0) return;
-    pushParams({ ev, tiers, markets: next });
-  }
+  const marketOptions: { value: MarketFilter; label: string }[] = [
+    { value: 'all',        label: 'All'       },
+    { value: 'moneyline',  label: 'Moneyline' },
+    { value: 'run_line',   label: 'Run Line'  },
+    { value: 'total',      label: 'Totals'    },
+  ];
+
+  const strengthOptions: { value: MinStrengthFilter; label: string }[] = [
+    { value: 'all', label: 'All picks'          },
+    { value: '2',   label: 'Low and above'      },
+    { value: '3',   label: 'Moderate and above' },
+    { value: '4',   label: 'High and above'     },
+    { value: '5',   label: 'Strong only'        },
+  ];
+
+  const sortOptions: { value: SortFilter; label: string }[] = [
+    { value: 'ev',         label: 'EV (highest first)'      },
+    { value: 'game_time',  label: 'Game time (soonest)'     },
+    { value: 'confidence', label: 'Confidence (highest)'    },
+  ];
 
   return (
     <div
-      className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-4"
+      className="bg-gray-900 border border-gray-800 rounded-lg p-3 sm:p-4 space-y-4"
       role="search"
       aria-label="Filter picks"
     >
+      {/* Header row */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Filters</h2>
         <div className="flex items-center gap-3">
@@ -130,7 +215,7 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
           )}
           {isFiltered && (
             <button
-              onClick={resetFilters}
+              onClick={reset}
               className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
               aria-label="Reset all filters"
             >
@@ -140,16 +225,87 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* EV threshold slider — smooth drag: local state updates instantly,
-            URL/filter commit happens on release (pointerup/touchend) or keyboard change. */}
+      {/* Row 1: Market (+ Visibility for Pro+) */}
+      <div className={`grid grid-cols-1 ${canSeeShadow ? 'sm:grid-cols-2' : ''} gap-4`}>
+        <SegmentGroup
+          label="Market"
+          options={marketOptions}
+          value={market}
+          onChange={(v) => update({ market: v })}
+        />
+
+        {canSeeShadow && (
+          <div>
+            <p className="text-xs text-gray-500 mb-2">Visibility</p>
+            <div className="flex gap-2 flex-wrap" role="group" aria-label="Visibility filter">
+              <button
+                onClick={() => update({ visibility: 'all' })}
+                aria-pressed={visibility === 'all'}
+                className={`text-xs px-3 py-1 rounded border transition-colors ${
+                  visibility === 'all'
+                    ? 'bg-blue-700 border-blue-600 text-white font-medium'
+                    : 'border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                }`}
+              >
+                Include shadow picks
+              </button>
+              <button
+                onClick={() => update({ visibility: 'live' })}
+                aria-pressed={visibility === 'live'}
+                className={`text-xs px-3 py-1 rounded border transition-colors ${
+                  visibility === 'live'
+                    ? 'bg-blue-700 border-blue-600 text-white font-medium'
+                    : 'border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                }`}
+              >
+                Published only
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Row 2: Min strength + Sort + EV slider */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div>
-          <label htmlFor="ev-slider" className="text-xs text-gray-500 block mb-2">
+          <label htmlFor="slate-strength" className="text-xs text-gray-500 block mb-2">
+            Minimum strength
+          </label>
+          <select
+            id="slate-strength"
+            value={minStrength}
+            onChange={(e) => update({ minStrength: e.target.value as MinStrengthFilter })}
+            className="w-full bg-gray-800 border border-gray-700 text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {strengthOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="slate-sort" className="text-xs text-gray-500 block mb-2">
+            Sort by
+          </label>
+          <select
+            id="slate-sort"
+            value={sort}
+            onChange={(e) => update({ sort: e.target.value as SortFilter })}
+            className="w-full bg-gray-800 border border-gray-700 text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {sortOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="slate-ev" className="text-xs text-gray-500 block mb-2">
             Min EV:{' '}
             <span className="text-white font-semibold">{localEv.toFixed(0)}%</span>
           </label>
           <input
-            id="ev-slider"
+            id="slate-ev"
             type="range"
             min={0}
             max={10}
@@ -168,52 +324,6 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
           <div className="flex justify-between text-xs text-gray-700 mt-0.5">
             <span>0%</span>
             <span>10%</span>
-          </div>
-        </div>
-
-        {/* Confidence tier checkboxes */}
-        <div>
-          <p className="text-xs text-gray-500 mb-2">Confidence</p>
-          <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Confidence filter">
-            {TIER_OPTIONS.map(({ value, label, color }) => {
-              const active = tiers.includes(value);
-              return (
-                <button
-                  key={value}
-                  onClick={() => toggleTier(value)}
-                  aria-pressed={active}
-                  className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded border transition-colors ${
-                    active
-                      ? `border-transparent bg-gray-800 ${color}`
-                      : 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
-                  }`}
-                >
-                  <span aria-hidden="true">{'◆'.repeat(value)}</span>
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Market checkboxes */}
-        <div>
-          <p className="text-xs text-gray-500 mb-2">Market</p>
-          <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Market filter">
-            {MARKET_OPTIONS.map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={() => toggleMarket(value)}
-                aria-pressed={markets.includes(value)}
-                className={`text-xs px-2.5 py-1 rounded border transition-colors ${
-                  markets.includes(value)
-                    ? 'bg-blue-700 border-blue-600 text-white'
-                    : 'border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
           </div>
         </div>
       </div>

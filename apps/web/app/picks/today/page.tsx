@@ -78,9 +78,17 @@ function SkeletonCard() {
 async function PicksContent() {
   const { tier, geoState } = await getUserTierAndState();
 
+  // Pro+ load ALL picks (live + shadow) so the client-side visibility filter can
+  // widen the slate beyond the Strong-only publish gate. Free/anon stay on live.
+  const canSeeShadow = tier === 'pro' || tier === 'elite';
+
   let data: Awaited<ReturnType<typeof loadPicksSlate>> | null = null;
   try {
-    data = await loadPicksSlate({ userTier: tier, pickDate: todayInET(), visibility: 'live' });
+    data = await loadPicksSlate({
+      userTier: tier,
+      pickDate: todayInET(),
+      visibility: canSeeShadow ? 'all' : 'live',
+    });
   } catch {
     data = null;
   }
