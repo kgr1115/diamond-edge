@@ -4,9 +4,11 @@ description: Current backlog, in-progress work, blockers, critical path, and ope
 type: project
 ---
 
-Last updated: 2026-04-22 (TASK-011 QA complete — session 4)
+Last updated: 2026-04-22 (OPERATING MODE PIVOT — personal use, SaaS dormant)
 
-## Status: Phase 2 complete. TASK-011 (QA scaffold) complete. TASK-012 (real infra provisioning) gated on user confirmation.
+## Status: Personal-use v1. Phase 2 complete, TASK-011 QA complete. TASK-012 now "free-tier provisioning" — gated on Kyle creating external accounts.
+
+**Operating mode locked:** Personal-use v1. See `project_operating_mode.md` for full implications. Legal/commercial pre-launch blockers all SKIPPED.
 
 ## Done
 
