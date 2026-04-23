@@ -582,6 +582,57 @@ async def rationale(request: Request) -> JSONResponse:
     })
 
 
+@app.post("/retrain")
+async def trigger_retrain(request: Request) -> JSONResponse:
+    """
+    POST /retrain — trigger the monthly retrain pipeline as a background subprocess.
+
+    This endpoint exists for Option B (Supabase pg_cron → worker POST).
+    Returns immediately (202 Accepted) and runs monthly.py in the background.
+    The Fly.io scheduled machine approach (Option A in retrain/README.md) is preferred
+    over this endpoint — use this only if pg_cron triggering is required.
+
+    Body (optional):
+      { "dry_run": true }  — evaluate but do not promote artifacts
+    """
+    _verify_auth(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    dry_run = bool(body.get("dry_run", False))
+
+    import subprocess
+    import sys as _sys
+    cmd = [_sys.executable, "-m", "worker.models.retrain.monthly"]
+    if dry_run:
+        cmd.append("--dry-run")
+
+    try:
+        # Fire and forget: retrain runs for ~20-30 min; caller should not wait.
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(Path(__file__).parents[2]),
+        )
+        print(json.dumps({
+            "event": "retrain_triggered",
+            "pid": proc.pid,
+            "dry_run": dry_run,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }))
+        return JSONResponse(
+            {"status": "accepted", "pid": proc.pid, "dry_run": dry_run},
+            status_code=202,
+        )
+    except Exception as e:
+        print(f"[ERROR] /retrain subprocess launch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Retrain launch failed: {e}")
+
+
 @app.post("/rationale-news")
 async def rationale_news(request: Request) -> JSONResponse:
     """
