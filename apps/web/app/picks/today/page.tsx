@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { PickCard } from '@/components/picks/pick-card';
+import { RefreshOddsButton } from '@/components/picks/refresh-odds-button';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
 import type { Database } from '@/lib/types/database';
 import Link from 'next/link';
@@ -147,11 +148,14 @@ async function PicksContent() {
           <h1 className="text-2xl font-bold text-white">Today&apos;s Picks</h1>
           <p className="text-sm text-gray-400 mt-1">{today}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <TierBadge tier={data.user_tier} />
-          <span className="text-sm text-gray-500">
-            {data.total} {data.total === 1 ? 'pick' : 'picks'}
-          </span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <TierBadge tier={data.user_tier} />
+            <span className="text-sm text-gray-500">
+              {data.total} {data.total === 1 ? 'pick' : 'picks'}
+            </span>
+          </div>
+          <RefreshOddsButton userTier={data.user_tier} />
         </div>
       </div>
 
