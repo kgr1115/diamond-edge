@@ -19,6 +19,8 @@ interface PickCardProps {
     result: string;
     best_line_price?: number;
     best_line_book?: string;
+    total_line?: number;
+    run_line_spread?: number;
     model_probability?: number;
     expected_value?: number;
     rationale_preview?: string;
@@ -30,6 +32,10 @@ interface PickCardProps {
 
 function formatOdds(price: number): string {
   return price >= 0 ? `+${price}` : `${price}`;
+}
+
+function formatSpread(spread: number): string {
+  return spread >= 0 ? `+${spread}` : `${spread}`;
 }
 
 function formatGameTime(utc: string | null): string {
@@ -58,16 +64,60 @@ function ResultBadge({ result }: { result: string }) {
 
 function MarketLabel({ market }: { market: string }) {
   const labels: Record<string, string> = {
-    moneyline: 'ML',
-    run_line: 'RL',
-    total: 'O/U',
+    moneyline: 'Moneyline',
+    run_line: 'Run Line',
+    total: 'Total',
     prop: 'Prop',
     future: 'Future',
   };
   return (
-    <span className="text-xs text-gray-400 font-mono uppercase tracking-wide">
+    <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wide">
       {labels[market] ?? market}
     </span>
+  );
+}
+
+function sideLabelForMoneyline(pick: PickCardProps['pick']): string {
+  if (pick.pick_side === 'home') return pick.game.home_team.abbreviation;
+  if (pick.pick_side === 'away') return pick.game.away_team.abbreviation;
+  return pick.pick_side.toUpperCase();
+}
+
+/**
+ * Primary line block — the prominent "what is the bet" display.
+ * Varies by market so O/U shows "OVER 8.5", RL shows "NYY -1.5", ML shows team.
+ */
+function PickHeadline({ pick }: { pick: PickCardProps['pick'] }) {
+  if (pick.market === 'total') {
+    const side = pick.pick_side.toUpperCase();
+    const line = pick.total_line !== undefined ? pick.total_line : null;
+    return (
+      <p className="text-xl font-bold text-white leading-tight break-words">
+        {side}
+        {line !== null && <span className="text-amber-300 ml-2">{line}</span>}
+      </p>
+    );
+  }
+
+  if (pick.market === 'run_line') {
+    const teamAbbr =
+      pick.pick_side === 'home'
+        ? pick.game.home_team.abbreviation
+        : pick.game.away_team.abbreviation;
+    const spread = pick.run_line_spread;
+    return (
+      <p className="text-xl font-bold text-white leading-tight break-words">
+        {teamAbbr}
+        {spread !== undefined && <span className="text-amber-300 ml-2">{formatSpread(spread)}</span>}
+      </p>
+    );
+  }
+
+  // moneyline or unknown
+  return (
+    <p className="text-xl font-bold text-white leading-tight break-words">
+      {sideLabelForMoneyline(pick)}
+    </p>
   );
 }
 
@@ -78,16 +128,16 @@ export function PickCard({ pick, userTier }: PickCardProps) {
 
   return (
     <Link href={`/picks/${pick.id}`} className="block group">
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors">
-        {/* Header row: teams + game time + result + note indicator */}
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div>
-            <p className="text-sm font-semibold text-gray-100">
+      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors min-w-0">
+        {/* Matchup + game time + result */}
+        <div className="flex items-start justify-between gap-2 mb-3 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-100 truncate">
               {pick.game.away_team.abbreviation} @ {pick.game.home_team.abbreviation}
             </p>
             <p className="text-xs text-gray-500 mt-0.5">{formatGameTime(pick.game.game_time_utc)}</p>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             {pick.has_note && (
               <span
                 className="text-xs text-amber-400"
@@ -101,22 +151,24 @@ export function PickCard({ pick, userTier }: PickCardProps) {
           </div>
         </div>
 
-        {/* Pick details */}
-        <div className="flex items-center gap-3 mb-3">
+        {/* Prominent pick headline */}
+        <div className="mb-3">
           <MarketLabel market={pick.market} />
-          <span className="text-base font-bold text-white">{pick.pick_side}</span>
+          <div className="mt-0.5">
+            <PickHeadline pick={pick} />
+          </div>
           {hasProData && pick.best_line_price !== undefined && (
-            <span className="text-sm font-mono text-emerald-400">
+            <p className="mt-1 text-sm font-mono text-emerald-400">
               {formatOdds(pick.best_line_price)}
-            </span>
-          )}
-          {hasProData && pick.best_line_book && (
-            <span className="text-xs text-gray-500">@{pick.best_line_book}</span>
+              {pick.best_line_book && (
+                <span className="text-xs text-gray-500 font-sans ml-1.5">@ {pick.best_line_book}</span>
+              )}
+            </p>
           )}
         </div>
 
         {/* Confidence + model prob */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <ConfidenceBadge tier={pick.confidence_tier} showLabel />
           {pick.model_probability !== undefined && (
             <span className="text-xs text-gray-400">
@@ -132,7 +184,7 @@ export function PickCard({ pick, userTier }: PickCardProps) {
           </p>
         ) : showPaywall ? (
           <div className="mt-3 border-t border-gray-800 pt-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <p className="text-xs text-gray-500">Full analysis available with Pro</p>
               <UpgradeCta tier="pro" size="xs" />
             </div>
