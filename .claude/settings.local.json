@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:who.is)",
+      "WebFetch(domain:tmsearch.uspto.gov)",
+      "WebFetch(domain:uspto.report)",
+      "WebFetch(domain:www.diamondedge.com)",
+      "WebFetch(domain:trademarks.justia.com)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(claude --model claude-sonnet-4-6 --agent mlb-architect \"You are being invoked as mlb-architect on TASK-001. Read CLAUDE.md at the project root and then docs/briefs/TASK-001-architect-foundation.md for your full task brief. Produce all 5 deliverables specified in the brief. Write them to the paths specified. Return a 3-5 line summary to the orchestrator when complete.\")",
+      "Bash(grep \"^### \\\\`\")",
+      "Skill(update-config)"
+    ]
+  }
+}

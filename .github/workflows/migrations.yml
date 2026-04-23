@@ -1,0 +1,164 @@
+name: Database Migrations
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (staging or prod)"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - prod
+
+env:
+  SUPABASE_VERSION: "2.x"
+
+jobs:
+  validate:
+    name: Validate migrations (dry run)
+    runs-on: ubuntu-latest
+    # Run on every PR touching migrations
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate migration file naming
+        # Migration files must be numbered sequentially: YYYYMMDDHHMMSS_description.sql
+        run: |
+          echo "Checking migration file naming conventions..."
+          invalid=0
+          for f in supabase/migrations/*.sql; do
+            basename=$(basename "$f")
+            if ! echo "$basename" | grep -qE '^[0-9]{14}_[a-z0-9_]+\.sql$'; then
+              echo "ERROR: Invalid migration filename: $basename"
+              echo "  Expected format: YYYYMMDDHHMMSS_description.sql (lowercase, underscores)"
+              invalid=1
+            fi
+          done
+          if [ "$invalid" -eq 1 ]; then
+            exit 1
+          fi
+          echo "All migration filenames are valid."
+
+      - name: Lint SQL migrations
+        run: |
+          supabase db lint --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Dry-run migration diff against staging
+        # Checks what supabase db push would apply — does NOT execute
+        run: |
+          supabase db push \
+            --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} \
+            --dry-run
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
+  apply-staging:
+    name: Apply migrations to staging
+    runs-on: ubuntu-latest
+    # Only auto-apply on merge to main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Apply migrations to staging
+        run: |
+          supabase db push \
+            --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} \
+            --include-all
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
+      - name: Verify staging schema post-migration
+        run: |
+          supabase db diff \
+            --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} \
+            --schema public
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
+  # PRODUCTION MIGRATIONS — MANUAL TRIGGER ONLY
+  # Safety gate: prod migrations require explicit workflow_dispatch with environment: prod
+  # Never run automatically. Always backed by a DB backup before execution.
+  #
+  # To run: GitHub Actions → Workflows → Database Migrations → Run workflow
+  #         Select environment: prod
+  #
+  # Pre-flight checklist (do these BEFORE triggering):
+  #   1. Take a Supabase DB backup from the Supabase dashboard (Backups tab)
+  #   2. Verify the migration has been validated + applied successfully on staging
+  #   3. Confirm a rollback script exists for this migration (see migration comments)
+  #   4. Coordinate with team — prod migrations should run during low-traffic window (4-6am ET)
+  apply-prod:
+    name: Apply migrations to production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Confirm pre-flight backup acknowledgment
+        run: |
+          echo "Applying migrations to PRODUCTION."
+          echo "Pre-flight checklist must be completed before this step."
+          echo "See workflow comments for required steps."
+
+      - name: Apply migrations to production
+        run: |
+          supabase db push \
+            --project-ref ${{ secrets.PROD_SUPABASE_PROJECT_REF }} \
+            --include-all
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+
+      - name: Verify production schema post-migration
+        run: |
+          supabase db diff \
+            --project-ref ${{ secrets.PROD_SUPABASE_PROJECT_REF }} \
+            --schema public
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+
+# Required GitHub secrets (set in repo Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN        — Supabase personal access token (all envs)
+#   STAGING_SUPABASE_PROJECT_REF — Staging project ref (Settings → General in Supabase)
+#   STAGING_SUPABASE_DB_PASSWORD — Staging database password
+#   PROD_SUPABASE_PROJECT_REF    — Production project ref
+#   PROD_SUPABASE_DB_PASSWORD    — Production database password
+#
+# Required GitHub environments (repo Settings → Environments):
+#   staging    — auto-approve
+#   production — require manual approval from a repo admin
