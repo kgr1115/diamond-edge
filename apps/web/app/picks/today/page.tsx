@@ -4,6 +4,8 @@ import { createServerClient } from '@supabase/ssr';
 import { PickCard } from '@/components/picks/pick-card';
 import { RefreshOddsButton } from '@/components/picks/refresh-odds-button';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
+import { ShapAttributionRow } from '@/components/picks/shap-attribution-row';
+import { LineMovementSparkline } from '@/components/picks/line-movement-sparkline';
 import type { Database } from '@/lib/types/database';
 import Link from 'next/link';
 
@@ -38,11 +40,15 @@ async function getUserTierAndState(): Promise<{ tier: UserTier; geoState: string
   };
 }
 
-interface PicksApiResponse {
-  date: string;
-  picks: PickData[];
-  total: number;
-  user_tier: UserTier;
+interface ShapAttribution {
+  feature: string;
+  value: number;
+  direction: 'positive' | 'negative';
+}
+
+interface OddsSnapshot {
+  label: string;
+  price: number;
 }
 
 interface PickData {
@@ -64,12 +70,26 @@ interface PickData {
   model_probability?: number;
   expected_value?: number;
   rationale_preview?: string;
+  shap_attributions?: ShapAttribution[];
+  line_snapshots?: OddsSnapshot[];
+}
+
+interface PicksApiResponse {
+  date: string;
+  picks: PickData[];
+  total: number;
+  user_tier: UserTier;
+  meta?: {
+    pipeline_ran: boolean;
+    games_analyzed: number;
+    below_threshold: number;
+    ev_threshold: number;
+    confidence_threshold: number;
+  };
 }
 
 async function fetchPicks(): Promise<PicksApiResponse | null> {
   try {
-    // Resolve the app URL defensively — prefer explicit NEXT_PUBLIC_APP_URL, fall back
-    // to VERCEL_URL (auto-set by Vercel, missing https://), final fallback localhost for dev.
     const baseUrl =
       process.env.NEXT_PUBLIC_APP_URL ??
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
@@ -123,6 +143,65 @@ function SkeletonCard() {
   );
 }
 
+/** Zero-state with diagnostic context. */
+function ZeroStateDiagnostic({
+  userTier,
+  meta,
+}: {
+  userTier: UserTier;
+  meta?: PicksApiResponse['meta'];
+}) {
+  return (
+    <div className="text-center py-16 space-y-4 max-w-md mx-auto">
+      <p className="text-gray-300 font-semibold text-lg">No qualifying picks today.</p>
+
+      {meta ? (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-left space-y-2 text-sm">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Pipeline diagnostic</p>
+          <ul className="space-y-1 text-gray-400">
+            <li>
+              Pipeline ran:{' '}
+              <span className={meta.pipeline_ran ? 'text-emerald-400' : 'text-red-400'}>
+                {meta.pipeline_ran ? 'Yes' : 'No — check back later'}
+              </span>
+            </li>
+            {meta.pipeline_ran && (
+              <>
+                <li>Games analyzed: <span className="text-white">{meta.games_analyzed}</span></li>
+                <li>
+                  Below threshold:{' '}
+                  <span className="text-white">{meta.below_threshold}</span>
+                  <span className="text-gray-600 text-xs ml-1">
+                    (EV &lt; {(meta.ev_threshold * 100).toFixed(0)}% or Tier &lt; {meta.confidence_threshold})
+                  </span>
+                </li>
+              </>
+            )}
+          </ul>
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">
+          Our model requires EV &gt; 4% — on lighter slates, no picks qualify. Check back tomorrow.
+        </p>
+      )}
+
+      <div className="flex items-center justify-center gap-4 flex-wrap pt-2">
+        <Link href="/history" className="text-sm text-blue-400 hover:underline">
+          View pick history
+        </Link>
+        {userTier === 'elite' && (
+          <Link
+            href="/picks/today?visibility=shadow"
+            className="text-sm text-amber-400 hover:underline"
+          >
+            View shadow picks (Elite)
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
 async function PicksContent() {
   const [data, { tier, geoState }] = await Promise.all([
     fetchPicks(),
@@ -163,31 +242,45 @@ async function PicksContent() {
         </div>
       </div>
 
-      {/* Responsible gambling banner — Surface 1 */}
+      {/* Responsible gambling banner */}
       <div className="mb-6">
         <ResponsibleGamblingBanner surface="banner" geoState={geoState} />
       </div>
 
       {/* Zero state */}
       {data.picks.length === 0 ? (
-        <div className="text-center py-16 space-y-3">
-          <p className="text-gray-300 font-medium">No qualifying picks today.</p>
-          <p className="text-sm text-gray-500 max-w-md mx-auto">
-            Our model requires EV &gt; 4% — on lighter slates, no picks qualify. Check back tomorrow.
-          </p>
-          <Link href="/history" className="text-sm text-blue-400 hover:underline">
-            View pick history
-          </Link>
-        </div>
+        <ZeroStateDiagnostic userTier={tier} meta={data.meta} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {data.picks.map((pick) => (
-            <PickCard key={pick.id} pick={pick} userTier={data.user_tier} />
+            <article key={pick.id} className="flex flex-col">
+              <PickCard pick={pick} userTier={data.user_tier} />
+
+              {/* SHAP attributions — Elite-visible, top-3 */}
+              {tier === 'elite' && pick.shap_attributions && pick.shap_attributions.length > 0 && (
+                <div className="mt-1 px-4 pb-3 bg-gray-900 border border-t-0 border-gray-800 rounded-b-lg">
+                  <ShapAttributionRow attributions={pick.shap_attributions} limit={3} />
+                </div>
+              )}
+
+              {/* Line movement sparkline — Pro+ when snapshots available */}
+              {(tier === 'pro' || tier === 'elite') &&
+                pick.line_snapshots &&
+                pick.line_snapshots.length >= 2 && (
+                  <div className="mt-1 px-4 py-2 bg-gray-900/60 border border-t-0 border-gray-800/60 rounded-b-lg">
+                    <p className="text-xs text-gray-600 mb-1">Line movement</p>
+                    <LineMovementSparkline
+                      snapshots={pick.line_snapshots}
+                      pickSide={pick.pick_side}
+                    />
+                  </div>
+                )}
+            </article>
           ))}
         </div>
       )}
 
-      {/* Surface 1 footer disclaimer */}
+      {/* Footer disclaimer */}
       <ResponsibleGamblingBanner surface="footer" geoState={geoState} />
     </>
   );
