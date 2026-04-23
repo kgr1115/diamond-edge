@@ -60,6 +60,32 @@ Bias-fix agent (`41faa99`) found TWO bugs in the simulator:
 
 The 4% EV threshold and calibration both need re-work before any real picks ship. This is **not a bug fix — it's model v2** work.
 
+## Update 2026-04-23 afternoon — ML v3 shipped, deploy self-blocked
+
+Commits `9327d7f`, `d51ee1c`, `7298f3b`, `e212372`, `dd8d3b1`:
+- **Vig removal** implemented in the backtest simulator
+- **CLV harness** added (limitation: only 1 snapshot/day in the backfill — not true closing lines; meaningful for moneyline only)
+- **Run-line architecture bug identified**: model outputs league-average 36% home-cover regardless of game state, bets away 96% of time harvesting base rate → not real alpha
+- **Temp gate**: pipeline set to EV≥8%, Tier≥5 (from 4%/Tier 3)
+
+### Honest vig-removed ROI (2024 holdout)
+
+| Market | @ 4% EV | @ 8% EV | Mean CLV | Verdict |
+|---|---|---|---|---|
+| Moneyline | +8.4% (920 picks) | +10.4% (713 picks) | +2.19% | **Plausible** — pending data corruption fix |
+| Run line | +41% | (base-rate echo) | -0.27% | **No alpha** — needs architectural rewrite |
+| Totals | +37% | suspicious | +0.09% | **No confirmed alpha** — likely base-rate artifact |
+
+### Deploy status
+
+**Worker redeploy self-blocked** by v3 agent — correct behavior. Won't push new code while numbers are above the >10% sanity threshold. Kyle's v1/v2 artifacts still serving at `diamond-edge-worker.fly.dev`.
+
+### Data corruption flagged
+
+`worker/models/pipelines/load_historical_odds.py` has ~8% row corruption (run-line prices appearing in h2h field). Data engineer dispatched 2026-04-23 to fix. Critical because moneyline's +8.4% ROI may be artifact of corruption — or may survive and be real alpha. Cannot tell until rerun.
+
+---
+
 ## Decisions awaiting you — RE-PRIORITIZED AFTER BIAS-FIX FINDINGS
 
 **The #1 decision has shifted.** Before the fix: "gate totals, ship MLine + RL." After the fix: **the model itself needs v2 work before publishing any picks is honest**.
