@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
+import { GlobalFooter } from '@/components/layout/global-footer';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -16,8 +17,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className="dark">
+      <body className={`${inter.className} bg-gray-950 text-gray-100 min-h-screen flex flex-col`}>
+        <main className="flex-1">{children}</main>
+        <GlobalFooter />
+      </body>
     </html>
   );
 }
