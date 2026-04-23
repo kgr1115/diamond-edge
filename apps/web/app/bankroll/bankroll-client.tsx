@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { BetLogForm } from '@/components/bankroll/bet-log-form';
 import { DrawdownChart } from '@/components/charts/drawdown-chart';
 import { UnitSizingPanel } from '@/components/bankroll/unit-sizing-panel';
+import { BankrollSettingsPanel } from '@/components/bankroll/bankroll-settings-panel';
 
 interface BankrollSummary {
   total_wagered_cents: number;
@@ -138,6 +139,9 @@ export function BankrollDashboardClient() {
     <div className="space-y-6">
       {/* Unit Sizing Panel */}
       <UnitSizingPanel onUnitChange={handleUnitChange} />
+
+      {/* Bankroll Settings */}
+      <BankrollSettingsPanel />
 
       {/* Summary stats */}
       {summary ? (
