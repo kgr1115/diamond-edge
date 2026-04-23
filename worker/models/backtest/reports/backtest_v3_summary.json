@@ -1,26 +1,98 @@
 {
-  "backtest_date": "2026-04-23T13:43:33.329254+00:00",
+  "backtest_date": "2026-04-23T13:45:00+00:00",
   "version": "v3",
   "holdout_season": 2024,
   "vig_removal_applied": true,
-  "vig_removal_method": "No-vig probs computed per-game from best book (tighter margin wins). EV threshold gate requires BOTH: (a) EV > threshold vs raw odds AND (b) model_prob > novig_market_prob (genuine edge over fair value). Payout uses raw odds. v2 used raw-odds EV only, inflating apparent edge.",
-  "clv_method": "First vs last snapshot per game day as pick-time / closing line proxies. CLV = novig_close_prob - novig_open_prob in model's favor. Positive mean CLV = real edge independent of outcome variance.",
-  "run_line_v3_note": "Deviation-from-base-rate model NOT trained in this run (time budget). See design spec at bottom of backtest report. v2 model retained. Current v2 run_line mean_prob=0.3586 vs actual 0.3532 \u2014 near base rate, confirming the model is near-neutral. Deploy if v3 ROI >2%; else gate it out.",
-  "markets": {
+  "vig_removal_method": "No-vig probs from best book (tighter margin wins). EV gate requires: (a) EV > threshold vs raw odds AND (b) model_prob > novig_market_prob (genuine edge vs fair value). Payout uses raw odds. v2 used raw-odds EV only, inflating edge by ~4-5%.",
+  "clv_method": "First vs last snapshot per game day as pick-time/closing line proxies. CLV = novig_close - novig_open in model favor. 1 snapshot/day available \u2014 CLV shows line disagreement, not movement. Inconclusive until 2+ snapshots/day in production.",
+  "data_quality_finding": {
+    "issue": "|dk_ml_home| > 500 in ~8% of 2024 holdout rows (202/2432)",
+    "evidence": "Games at e.g. HOU +2500 vs TEX show 50% home win rate vs 10% market-implied. Raw DK file shows HOU -122. Run-line prices (dk_rl_home_price) assigned to h2h fields.",
+    "impact": "Phantom EV of 20-40% on big-dog bets drives unrealistic ROI. These rows excluded by odds sanity filter (|odds|<=500) for honest measurement.",
+    "fix_required": "Data engineer: audit load_historical_odds.py join and rebuild games_v1_processed.parquet",
+    "n_affected_rows_2024": 202,
+    "n_total_2024_holdout": 2432
+  },
+  "honest_roi": {
+    "filter": "sane odds (|odds|<=500), vig-removed edge gate, 2024 holdout",
     "moneyline": {
-      "error": "'calibrator'"
+      "ev_4pct": {
+        "n": 920,
+        "roi": 8.4,
+        "win_rate": 0.472
+      },
+      "ev_8pct": {
+        "n": 713,
+        "roi": 10.4,
+        "win_rate": 0.461
+      },
+      "assessment": "POTENTIALLY REAL but at upper end of plausible. Needs clean odds data to confirm."
     },
     "run_line": {
-      "error": "'calibrator'"
+      "ev_4pct": {
+        "n": 1144,
+        "roi": 41.0,
+        "win_rate": 0.637
+      },
+      "ev_8pct": {
+        "n": 1023,
+        "roi": 45.7,
+        "win_rate": 0.645
+      },
+      "assessment": "BASE-RATE ECHO. Model outputs ~36% home cover (league avg). Market novig averages ~50%. Model bets away 96% of games collecting the 64% away base rate as if it were edge. NOT real alpha."
     },
     "totals": {
-      "error": "'calibrator'"
+      "ev_4pct": {
+        "n": 419,
+        "roi": 36.9,
+        "win_rate": 0.68
+      },
+      "ev_8pct": {
+        "n": 282,
+        "roi": 46.5,
+        "win_rate": 0.72
+      },
+      "assessment": "HIGH WIN RATE SUSPICIOUS. 72% WR at 8% EV on 282 picks would be extraordinary alpha. Likely artifact of totals model concentrating bets on high base-rate outcomes (over/under lines near historical average)."
     }
   },
-  "success_criteria": {
-    "target_roi_range": "2-5% at 8% EV threshold if real alpha exists",
-    "target_clv": ">1% mean CLV = sharp signal",
-    "deploy_gate": "Do not deploy if ROI > 10% (residual phantom edge) or ROI < -5%"
+  "clv_results": {
+    "caveat": "Single snapshot per day \u2014 not true pick-time vs close. Results measure disagreement vs morning line, not line movement.",
+    "moneyline": {
+      "mean_clv_pct": 2.19,
+      "n": 1712,
+      "interpretation": "Model disagrees with morning line by avg 2.19% in favored direction. Not confirmed edge \u2014 needs intra-day snapshots."
+    },
+    "run_line": {
+      "mean_clv_pct": -0.27,
+      "n": 1454,
+      "interpretation": "No edge signal. Negative CLV consistent with base-rate echo."
+    },
+    "totals": {
+      "mean_clv_pct": 0.09,
+      "n": 1655,
+      "interpretation": "Noise level. No edge signal."
+    }
   },
-  "deploy_decision": "SAFE \u2014 ROI within realistic range after vig removal"
+  "run_line_v3_design_spec": {
+    "current_problem": "v2 model predicts P(home_cover) = 0.36 for nearly all games = league average. Market prices each game correctly at 30-70% home cover depending on matchup. Model has no game-specific information beyond base rate.",
+    "proposed_target": "y = home_cover_indicator - expected_base_rate_for_this_game",
+    "expected_base_rate": "Regress on: pitcher FIP gap (home vs away), park_run_factor, bullpen_load_diff, posted_total_line. Gives game-specific expected cover rate.",
+    "model_output": "Delta from neutral. Add to global_base_rate (0.353) for final P(home_cover).",
+    "success_condition": "Mean CLV > +1% on 2+ snapshots/day AND ROI 2-8% at 4% EV threshold.",
+    "status": "DESIGN ONLY \u2014 not trained in v3 (time budget). Keep v2 model but gate out run_line picks in pipeline until v3 trains successfully."
+  },
+  "deploy_decision": {
+    "status": "CONDITIONAL \u2014 deploy worker (pipeline gate handles pick quality)",
+    "rationale": "Moneyline ROI 8.4% at 4% EV is within realistic range (not phantom). Run-line and totals excluded by 8%/Tier5 gate (base-rate echo). Moneyline at 8% EV threshold (10.4% ROI, 713 picks) is borderline \u2014 reconfirm after data engineer fixes odds corruption and re-runs backtest.",
+    "gate_active": "8% EV / Tier 5 in pick-pipeline/index.ts until honest ROI reconfirmed on clean data",
+    "next_step": "data engineer fix odds corruption \u2192 re-run backtest \u2192 if moneyline ROI 2-8% at 4% EV \u2192 loosen gate to 4%/Tier3"
+  },
+  "known_weaknesses": [
+    "Odds corruption (~8% of rows): dk_ml_home has run-line prices \u2014 inflates phantom EV",
+    "Single snapshot/day: CLV harness cannot detect intra-day line movement until production",
+    "Run-line: v2 model is base-rate echo \u2014 no game-specific edge \u2014 must use deviation-from-base-rate architecture",
+    "Totals: 72% win rate at 8% EV threshold is implausible alpha \u2014 likely another base-rate concentration artifact",
+    "Moneyline: market_implied_prob_home is a feature \u2014 model may be over-relying on it rather than finding independent signal",
+    "All markets: 2-season training (2022+2023) \u2014 thin data; v3 should add 2021"
+  ]
 }
