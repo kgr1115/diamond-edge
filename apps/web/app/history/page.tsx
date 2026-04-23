@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
+import { HistoryFilters } from '@/components/history/history-filters';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,10 +28,26 @@ interface HistoryResponse {
   pagination: { page: number; per_page: number; total: number; total_pages: number };
 }
 
-async function fetchHistory(page: number = 1): Promise<HistoryResponse | null> {
+interface FilterState {
+  market: string;
+  result: string;
+  date_from: string;
+  date_to: string;
+  page: number;
+}
+
+async function fetchHistory(filters: FilterState): Promise<HistoryResponse | null> {
   try {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-    const res = await fetch(`${baseUrl}/api/history?page=${page}&per_page=50`, {
+    const params = new URLSearchParams();
+    params.set('page', String(filters.page));
+    params.set('per_page', '50');
+    if (filters.market) params.set('market', filters.market);
+    if (filters.result) params.set('result', filters.result);
+    if (filters.date_from) params.set('date_from', filters.date_from);
+    if (filters.date_to) params.set('date_to', filters.date_to);
+
+    const res = await fetch(`${baseUrl}/api/history?${params.toString()}`, {
       cache: 'no-store',
     });
     if (!res.ok) return null;
@@ -46,31 +63,32 @@ function ResultBadge({ result }: { result: string }) {
     loss: 'text-red-400',
     push: 'text-yellow-400',
     void: 'text-gray-500',
-    pending: 'text-gray-600',
+    pending: 'text-gray-500',
   };
   return (
     <span className={`text-xs capitalize ${styles[result] ?? 'text-gray-400'}`}>{result}</span>
   );
 }
 
-async function HistoryContent({ page }: { page: number }) {
-  const data = await fetchHistory(page);
+async function HistoryContent({ filters }: { filters: FilterState }) {
+  const data = await fetchHistory(filters);
 
   if (!data) {
     return <div className="text-gray-500 text-sm py-8 text-center">Unable to load pick history.</div>;
   }
 
   const { stats } = data;
+  const hasFilter = filters.market || filters.result || filters.date_from || filters.date_to;
 
   return (
     <>
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+      {/* Aggregate stats for current filter */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Total Picks', value: stats.total_picks },
+          { label: hasFilter ? 'Filtered Picks' : 'Total Picks', value: stats.total_picks },
           { label: 'Win Rate', value: `${(stats.win_rate * 100).toFixed(1)}%` },
           {
-            label: 'ROI (flat $100)',
+            label: 'Unit ROI',
             value: `${stats.roi_pct >= 0 ? '+' : ''}${stats.roi_pct.toFixed(1)}%`,
             highlight: stats.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400',
           },
@@ -83,8 +101,8 @@ async function HistoryContent({ page }: { page: number }) {
         ))}
       </div>
 
-      {/* Market breakdown */}
-      {Object.keys(stats.by_market).length > 0 && (
+      {/* Market breakdown — only when no market filter applied */}
+      {!filters.market && Object.keys(stats.by_market).length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">By Market</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -92,7 +110,7 @@ async function HistoryContent({ page }: { page: number }) {
               <div key={mkt}>
                 <p className="text-xs text-gray-500 uppercase">{mkt}</p>
                 <p className="text-sm text-gray-200">
-                  {s.picks} picks · {(s.win_rate * 100).toFixed(0)}% W
+                  {s.picks} picks · {(s.win_rate * 100).toFixed(0)}% W · {s.roi_pct >= 0 ? '+' : ''}{s.roi_pct.toFixed(1)}% ROI
                 </p>
               </div>
             ))}
@@ -100,62 +118,78 @@ async function HistoryContent({ page }: { page: number }) {
         </div>
       )}
 
-      {/* Pick history table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
-              <th className="py-2 pr-4">Date</th>
-              <th className="py-2 pr-4">Matchup</th>
-              <th className="py-2 pr-4">Market</th>
-              <th className="py-2 pr-4">Pick</th>
-              <th className="py-2 pr-4">Confidence</th>
-              <th className="py-2 pr-4">Odds</th>
-              <th className="py-2">Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.picks.map((pick) => (
-              <tr key={pick.id} className="border-b border-gray-800/50 hover:bg-gray-900/50">
-                <td className="py-3 pr-4 text-gray-400 whitespace-nowrap text-xs">{pick.pick_date}</td>
-                <td className="py-3 pr-4 text-gray-200 text-xs whitespace-nowrap">
-                  {pick.game.away_team} @ {pick.game.home_team}
-                </td>
-                <td className="py-3 pr-4 text-gray-400 uppercase text-xs">{pick.market}</td>
-                <td className="py-3 pr-4 text-white font-medium text-xs">
-                  <Link href={`/picks/${pick.id}`} className="hover:underline">
-                    {pick.pick_side}
-                  </Link>
-                </td>
-                <td className="py-3 pr-4 text-gray-400 text-xs">Tier {pick.confidence_tier}</td>
-                <td className="py-3 pr-4 font-mono text-gray-300 text-xs">
-                  {pick.best_line_price != null
-                    ? (pick.best_line_price >= 0 ? `+${pick.best_line_price}` : `${pick.best_line_price}`)
-                    : '—'}
-                </td>
-                <td className="py-3">
-                  <ResultBadge result={pick.result} />
-                </td>
+      {/* Pick table */}
+      {data.picks.length === 0 ? (
+        <div className="text-center py-12 text-gray-500 text-sm">
+          No picks match your filters.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
+                <th className="py-2 pr-4">Date</th>
+                <th className="py-2 pr-4">Matchup</th>
+                <th className="py-2 pr-4">Market</th>
+                <th className="py-2 pr-4">Pick</th>
+                <th className="py-2 pr-4">Confidence</th>
+                <th className="py-2 pr-4">Odds</th>
+                <th className="py-2">Result</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {data.picks.map((pick) => (
+                <tr key={pick.id} className="border-b border-gray-800/50 hover:bg-gray-900/50">
+                  <td className="py-3 pr-4 text-gray-400 whitespace-nowrap text-xs">{pick.pick_date}</td>
+                  <td className="py-3 pr-4 text-gray-200 text-xs whitespace-nowrap">
+                    {pick.game.away_team} @ {pick.game.home_team}
+                  </td>
+                  <td className="py-3 pr-4 text-gray-400 uppercase text-xs">{pick.market}</td>
+                  <td className="py-3 pr-4 text-white font-medium text-xs">
+                    <Link
+                      href={`/picks/${pick.id}`}
+                      className="hover:underline focus:underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                    >
+                      {pick.pick_side}
+                    </Link>
+                  </td>
+                  <td className="py-3 pr-4 text-gray-400 text-xs">Tier {pick.confidence_tier}</td>
+                  <td className="py-3 pr-4 font-mono text-gray-300 text-xs">
+                    {pick.best_line_price != null
+                      ? (pick.best_line_price >= 0 ? `+${pick.best_line_price}` : `${pick.best_line_price}`)
+                      : '—'}
+                  </td>
+                  <td className="py-3">
+                    <ResultBadge result={pick.result} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Pagination */}
       {data.pagination.total_pages > 1 && (
         <div className="flex justify-center gap-4 mt-6 text-sm">
-          {page > 1 && (
-            <Link href={`/history?page=${page - 1}`} className="text-blue-400 hover:underline">
-              ← Previous
+          {filters.page > 1 && (
+            <Link
+              href={buildPageHref(filters, filters.page - 1)}
+              className="text-blue-400 hover:underline"
+            >
+              Previous
             </Link>
           )}
           <span className="text-gray-500">
-            Page {page} of {data.pagination.total_pages}
+            Page {filters.page} of {data.pagination.total_pages}
+            {' '}({data.pagination.total} total)
           </span>
-          {page < data.pagination.total_pages && (
-            <Link href={`/history?page=${page + 1}`} className="text-blue-400 hover:underline">
-              Next →
+          {filters.page < data.pagination.total_pages && (
+            <Link
+              href={buildPageHref(filters, filters.page + 1)}
+              className="text-blue-400 hover:underline"
+            >
+              Next
             </Link>
           )}
         </div>
@@ -164,22 +198,68 @@ async function HistoryContent({ page }: { page: number }) {
   );
 }
 
+function buildPageHref(filters: FilterState, page: number): string {
+  const params = new URLSearchParams();
+  params.set('page', String(page));
+  if (filters.market) params.set('market', filters.market);
+  if (filters.result) params.set('result', filters.result);
+  if (filters.date_from) params.set('date_from', filters.date_from);
+  if (filters.date_to) params.set('date_to', filters.date_to);
+  return `/history?${params.toString()}`;
+}
+
 interface PageProps {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{
+    page?: string;
+    market?: string;
+    result?: string;
+    date_from?: string;
+    date_to?: string;
+  }>;
 }
 
 export default async function HistoryPage({ searchParams }: PageProps) {
   const params = await searchParams;
-  const page = Math.max(1, parseInt(params.page ?? '1', 10));
+  const filters: FilterState = {
+    page: Math.max(1, parseInt(params.page ?? '1', 10)),
+    market: params.market ?? '',
+    result: params.result ?? '',
+    date_from: params.date_from ?? '',
+    date_to: params.date_to ?? '',
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Pick Performance</h1>
-        <p className="text-sm text-gray-400 mt-1">Historical pick results. Public social proof.</p>
+        <p className="text-sm text-gray-400 mt-1">Historical pick results and ROI by market.</p>
       </div>
-      <Suspense fallback={<div className="text-gray-500 animate-pulse">Loading…</div>}>
-        <HistoryContent page={page} />
+
+      {/* Filters are a Client Component — URL-driven via router.push */}
+      <div className="mb-6">
+        <Suspense>
+          <HistoryFilters
+            market={filters.market}
+            result={filters.result}
+            dateFrom={filters.date_from}
+            dateTo={filters.date_to}
+          />
+        </Suspense>
+      </div>
+
+      <Suspense
+        fallback={
+          <div className="space-y-3">
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="bg-gray-900 border border-gray-800 rounded-lg p-4 animate-pulse h-16" />
+              ))}
+            </div>
+            <div className="text-gray-500 animate-pulse text-sm">Loading picks…</div>
+          </div>
+        }
+      >
+        <HistoryContent filters={filters} />
       </Suspense>
     </div>
   );
