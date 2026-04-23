@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 interface SlateFiltersProps {
   totalPicks: number;
@@ -66,11 +66,23 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
     [router, pathname, searchParams]
   );
 
+  // EV slider uses local state during drag for smooth UX — URL is only
+  // updated on release (pointerup/touchend/change). The label always shows
+  // the local value so the user sees instant feedback while dragging.
+  const [localEv, setLocalEv] = useState(ev);
+
+  // If the URL value changes outside the slider (reset button, back nav),
+  // resync the slider's local position.
+  useEffect(() => {
+    setLocalEv(ev);
+  }, [ev]);
+
   function resetFilters() {
+    setLocalEv(4);
     router.replace(pathname, { scroll: false });
   }
 
-  function handleEvChange(val: number) {
+  function commitEv(val: number) {
     pushParams({ ev: val, tiers, markets });
   }
 
@@ -122,11 +134,12 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* EV threshold slider */}
+        {/* EV threshold slider — smooth drag: local state updates instantly,
+            URL/filter commit happens on release (pointerup/touchend) or keyboard change. */}
         <div>
           <label htmlFor="ev-slider" className="text-xs text-gray-500 block mb-2">
             Min EV:{' '}
-            <span className="text-white font-semibold">{ev.toFixed(0)}%</span>
+            <span className="text-white font-semibold">{localEv.toFixed(0)}%</span>
           </label>
           <input
             id="ev-slider"
@@ -134,13 +147,16 @@ export function SlateFilters({ totalPicks, visiblePicks }: SlateFiltersProps) {
             min={0}
             max={10}
             step={1}
-            value={ev}
-            onChange={(e) => handleEvChange(Number(e.target.value))}
+            value={localEv}
+            onChange={(e) => setLocalEv(Number(e.target.value))}
+            onPointerUp={(e) => commitEv(Number((e.target as HTMLInputElement).value))}
+            onTouchEnd={(e) => commitEv(Number((e.target as HTMLInputElement).value))}
+            onKeyUp={(e) => commitEv(Number((e.target as HTMLInputElement).value))}
             className="w-full accent-blue-500 cursor-pointer"
             aria-valuemin={0}
             aria-valuemax={10}
-            aria-valuenow={ev}
-            aria-valuetext={`${ev}% minimum EV`}
+            aria-valuenow={localEv}
+            aria-valuetext={`${localEv}% minimum EV`}
           />
           <div className="flex justify-between text-xs text-gray-700 mt-0.5">
             <span>0%</span>
