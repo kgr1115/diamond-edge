@@ -1,8 +1,79 @@
-# Diamond Edge Training Report — v1 + v2
+# Diamond Edge Training Report — v1 + v2 + v4
 
-**Date:** 2026-04-23 (v1) / 2026-04-23 (v2)
+**Date:** 2026-04-23 (v1) / 2026-04-23 (v2) / 2026-04-23 (v4 moneyline)
 **Author:** mlb-ml-engineer
-**Status:** v2 models trained and deployed. All three markets ECE-pass. Calibration deviation borderline-fail. ROI simulator confirms no real alpha — the simulator is measuring base-rate advantage of away +1.5 run line, not model edge. Full diagnosis below.
+**Status:** v4 moneyline training complete. Walk-forward CV confirmed: overfitting was NOT the primary cause of inflated ROI. Full diagnosis below.
+
+---
+
+## v4 — Moneyline Walk-Forward CV (2026-04-23)
+
+### Verdict: NO ALPHA — structural underdog-selection artifact, not model edge
+
+### Leak sources found in v2 (confirmed)
+
+1. **`CalibratedClassifierCV(cv=5, random k-fold)`** applied to combined 2022+2023 training set (`train_models_v2.py` lines 326-334). Random folds allow July-2023 to calibrate against April-2023, violating temporal ordering. This is the exact contamination the task brief anticipated.
+
+2. **Early stopping val = random 15% of combined 2022+2023 train** (`train_models_v2.py` line 426-427). Non-temporal: 2023 games can validate 2022 games out of sequence. This inflates apparent generalization during model selection.
+
+### What walk-forward v4 fixed
+
+- Final model trains ONLY on 2022+H1-2023 (3662 games)
+- H2-2023 (Jul-Oct, 1206 games) is a temporal calibration hold-out — strictly after all training data
+- Early stopping val = last 10% of training window (temporal)
+- 2024 holdout untouched until final evaluation
+- Isotonic calibrator fit on H2-2023 raw predictions
+
+### v4 results vs v3 (2024 holdout, vig-removed)
+
+| Metric | v3 (random k-fold) | v4 (walk-forward) |
+|--------|-------------------|-------------------|
+| ROI @ 4% EV | +15.83% (1526 picks) | +15.6% (1437 picks) |
+| ROI @ 6% EV | +17.82% (1325 picks) | +17.23% (1299 picks) |
+| ROI @ 8% EV | +17.9% (1177 picks, WR 47.8%) | +17.8% (1172 picks, WR 49.0%) |
+| Mean CLV | +0.057% | +0.036% |
+| ECE (2024) | 0.013 | 0.015 |
+| Log-loss (2024) | 0.683 | 0.681 |
+
+**ROI is unchanged.** The walk-forward fix made zero material difference to the bottom-line number.
+
+### Root cause: structural underdog-selection artifact (not overfitting)
+
+The phantom 17-18% ROI has a different root cause than the data engineer's hypothesis. At 8% EV threshold:
+
+- **64% of picks are underdogs (positive American odds)**, average line +184
+- **Win rate: 43.6%** vs market-implied 35.3% = underdogs outperform market implied
+- **But this is NOT model edge**: the model outputs near-50% for virtually every game (mean=0.510, std=0.083, max=0.727). Since novig prob for a +184 underdog is ~38%, model's 49% always exceeds novig and passes the edge gate.
+- The underdogs' actual 43.6% win rate exceeds market implied (35%) because of vig shading — the market's vig markup on underdogs understates their true probability. Removing vig corrects this partially but the model contributes no signal.
+- **CLV = +0.036%** (effectively zero, compared to threshold of >1.0% for real alpha). Lines do not move toward model predictions.
+
+### What the model IS doing
+
+The LightGBM model reaches best_iteration=25 on 3662 training games. With only 25 trees at depth 5, it extracts modest signal from pitcher ERA/FIP and bullpen ERA but outputs a narrow probability range (0.10–0.73, std=0.083). For ~70% of games it outputs 0.45–0.57. The isotonic calibrator then maps these to actual win rates, which are also near 50%. The EV gate sees these near-50% model outputs and passes every game where the odds line prices the team below 40%.
+
+### Calibration metrics (v4, 2024 holdout)
+
+| Metric | Value | Target | Pass |
+|--------|-------|--------|------|
+| Log-loss | 0.681 | <0.69 | PASS |
+| Brier | 0.244 | <0.25 | PASS |
+| ECE | 0.015 | <0.025 | PASS |
+| Max calibration deviation | 0.066 | <0.05 | FAIL (borderline) |
+| Probs > 0.80 | 0 | 0 | PASS |
+| Mean P(home win) | 0.510 | ~0.52 | Drift 0.011 |
+
+ECE passes. Max deviation borderline fail (0.066 vs 0.05) — model is slightly miscalibrated in the 0.45-0.55 bucket where it has most of its predictions.
+
+### What to do next (v5 moneyline)
+
+The phantom ROI can only be addressed by either:
+1. **Fix the EV gate**: require model probability to exceed novig by a meaningful margin (e.g., +5pp minimum, not just any positive edge). This would reduce pick volume significantly and may reveal true ROI.
+2. **More training data**: 3 seasons (2021-2023) with walk-forward protocol. More data = more iterations = wider prob range = fewer near-50% outputs passing the gate.
+3. **Probability range fix**: cap EV gate to only bet games where model prob is in [0.35, 0.65] but deviates significantly from novig (e.g., >0.10 gap). Games where model says 0.50 and novig says 0.38 are not real picks.
+
+**The model is NOT ready to ship pick signals.** The ROI number is structurally inflated and CLV confirms no alpha.
+
+---
 
 ---
 
