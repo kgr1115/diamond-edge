@@ -1,13 +1,10 @@
 import { Suspense } from 'react';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
-import { PickCard } from '@/components/picks/pick-card';
 import { RefreshOddsButton } from '@/components/picks/refresh-odds-button';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
-import { ShapAttributionRow } from '@/components/picks/shap-attribution-row';
-import { LineMovementSparkline } from '@/components/picks/line-movement-sparkline';
+import { SlatePicksGrid } from '@/components/picks/slate-picks-grid';
 import type { Database } from '@/lib/types/database';
-import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -143,65 +140,6 @@ function SkeletonCard() {
   );
 }
 
-/** Zero-state with diagnostic context. */
-function ZeroStateDiagnostic({
-  userTier,
-  meta,
-}: {
-  userTier: UserTier;
-  meta?: PicksApiResponse['meta'];
-}) {
-  return (
-    <div className="text-center py-16 space-y-4 max-w-md mx-auto">
-      <p className="text-gray-300 font-semibold text-lg">No qualifying picks today.</p>
-
-      {meta ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-left space-y-2 text-sm">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Pipeline diagnostic</p>
-          <ul className="space-y-1 text-gray-400">
-            <li>
-              Pipeline ran:{' '}
-              <span className={meta.pipeline_ran ? 'text-emerald-400' : 'text-red-400'}>
-                {meta.pipeline_ran ? 'Yes' : 'No — check back later'}
-              </span>
-            </li>
-            {meta.pipeline_ran && (
-              <>
-                <li>Games analyzed: <span className="text-white">{meta.games_analyzed}</span></li>
-                <li>
-                  Below threshold:{' '}
-                  <span className="text-white">{meta.below_threshold}</span>
-                  <span className="text-gray-600 text-xs ml-1">
-                    (EV &lt; {(meta.ev_threshold * 100).toFixed(0)}% or Tier &lt; {meta.confidence_threshold})
-                  </span>
-                </li>
-              </>
-            )}
-          </ul>
-        </div>
-      ) : (
-        <p className="text-sm text-gray-500">
-          Our model requires EV &gt; 4% — on lighter slates, no picks qualify. Check back tomorrow.
-        </p>
-      )}
-
-      <div className="flex items-center justify-center gap-4 flex-wrap pt-2">
-        <Link href="/history" className="text-sm text-blue-400 hover:underline">
-          View pick history
-        </Link>
-        {userTier === 'elite' && (
-          <Link
-            href="/picks/today?visibility=shadow"
-            className="text-sm text-amber-400 hover:underline"
-          >
-            View shadow picks (Elite)
-          </Link>
-        )}
-      </div>
-    </div>
-  );
-}
-
 async function PicksContent() {
   const [data, { tier, geoState }] = await Promise.all([
     fetchPicks(),
@@ -247,41 +185,13 @@ async function PicksContent() {
         <ResponsibleGamblingBanner surface="banner" geoState={geoState} />
       </div>
 
-      {/* Zero state */}
-      {data.picks.length === 0 ? (
-        <ZeroStateDiagnostic userTier={tier} meta={data.meta} />
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {data.picks.map((pick) => (
-            <article key={pick.id} className="flex flex-col">
-              <PickCard pick={pick} userTier={data.user_tier} />
-
-              {/* SHAP attributions — Elite-visible, top-3 */}
-              {tier === 'elite' && pick.shap_attributions && pick.shap_attributions.length > 0 && (
-                <div className="mt-1 px-4 pb-3 bg-gray-900 border border-t-0 border-gray-800 rounded-b-lg">
-                  <ShapAttributionRow attributions={pick.shap_attributions} limit={3} />
-                </div>
-              )}
-
-              {/* Line movement sparkline — Pro+ when snapshots available */}
-              {(tier === 'pro' || tier === 'elite') &&
-                pick.line_snapshots &&
-                pick.line_snapshots.length >= 2 && (
-                  <div className="mt-1 px-4 py-2 bg-gray-900/60 border border-t-0 border-gray-800/60 rounded-b-lg">
-                    <p className="text-xs text-gray-600 mb-1">Line movement</p>
-                    <LineMovementSparkline
-                      snapshots={pick.line_snapshots}
-                      pickSide={pick.pick_side}
-                    />
-                  </div>
-                )}
-            </article>
-          ))}
-        </div>
-      )}
+      {/* Picks grid with filters + exposure meter (Client Component) */}
+      <SlatePicksGrid picks={data.picks} userTier={tier} meta={data.meta} />
 
       {/* Footer disclaimer */}
-      <ResponsibleGamblingBanner surface="footer" geoState={geoState} />
+      <div className="mt-6">
+        <ResponsibleGamblingBanner surface="footer" geoState={geoState} />
+      </div>
     </>
   );
 }
