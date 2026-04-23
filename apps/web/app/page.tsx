@@ -1,17 +1,38 @@
-export default function HomePage() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl">
-          Diamond Edge
-        </h1>
-        <p className="mt-4 text-lg text-muted-foreground">
-          MLB picks powered by data. Coming soon.
-        </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Statistically-grounded, AI-explained picks for serious bettors.
-        </p>
-      </div>
-    </main>
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { createServerClient } from '@supabase/ssr';
+import type { Database } from '@/lib/types/database';
+
+export const dynamic = 'force-dynamic';
+
+export default async function HomePage() {
+  const cookieStore = await cookies();
+  const supabase = createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll(); },
+        setAll() { /* read-only in Server Component */ },
+      },
+    }
   );
+
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/signup');
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('age_verified_at')
+    .eq('id', user.id)
+    .single();
+
+  if (!profile?.age_verified_at) {
+    redirect('/age-gate');
+  }
+
+  redirect('/picks/today');
 }
