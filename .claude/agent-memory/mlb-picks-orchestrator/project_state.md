@@ -60,8 +60,35 @@ Last updated: 2026-04-23 (App deployed, Kyle signed in as Elite, ML training + e
 
 ## In Progress
 
-- **ML model training (background agent)** — training LightGBM models for moneyline/run line/totals; building FastAPI Fly.io worker skeleton; running 2024 holdout backtest against the $59 backfill. Does NOT deploy to Fly.io (gated on Kyle's confirmation per Auto Mode). Started 2026-04-23.
-- **MLB edge research (background agent)** — researching professional gambler strategies, unexplored MLB market inefficiencies, and out-of-the-box edges. Producing `docs/research/mlb-edge-research.md` for the ML engineer to iterate with post-baseline. Kyle specifically asked for depth on pro strategies and contrarian angles. Started 2026-04-23.
+- **ML engineer ROI bias fix (background agent, late-night)** — spawned 2026-04-23 04:XX to fix the home-side EV bias bug the v2 ML agent flagged. Narrow scope: locate, fix, rerun backtest, report corrected numbers. Does not retrain.
+
+## Recently Completed (Overnight 2026-04-23)
+
+- **Research v1** (`5f6c38a`, `docs/research/mlb-edge-research.md`) — 30+ row edge catalog. Top 3: handedness-split park factors, opener detection + TTOP, LINEUP-01 late-news LLM pipeline.
+- **Research v2** (`2f88af9`, `docs/research/mlb-edge-research-v2.md`) — 4 non-overlapping tracks: bankroll/Kelly ramp (0.10→0.25 over first 500 picks), advanced Statcast (release-point variability is peer-reviewed), prop derivatives (F5 markets confirmed on Odds API), data source audit (Retrosheet umpire CSVs free back to 1898; AAA Statcast free).
+- **ML engineer v2** (8 commits `a9f432c` → `5c1ac27`) — Python worker scaffold, data pipelines (MLB Stats + Statcast + odds), handedness park factors, opener detection, training pipelines, backtest harness, FastAPI `/predict` + `/rationale` endpoints, Dockerfile.
+
+## ML Backtest Results (2024 holdout) — NUMBERS PRE-BIAS-FIX
+
+- **Moneyline**: log-loss=0.689, Brier=0.248, ECE=0.019 — calibration PASS. ROI inflated (bias bug).
+- **Run line**: log-loss=0.655, Brier=0.225, ECE=0.016 — calibration PASS. ROI 18% (credible).
+- **Totals**: log-loss=0.679, Brier=0.243, ECE=0.035 — calibration FAIL (max dev 0.065 > 0.05 threshold).
+
+ML engineer recommends GATING totals picks to Tier 4+ only until calibration is resolved in v1.1 (needs more training data — Retrosheet history + umpire features from v2 research).
+
+## Compute SLA
+
+Worker: ~50ms/game inference (3 markets + SHAP), 200MB RAM, CPU-only, scale-to-zero on Fly.io.
+
+## Outstanding Decisions for Kyle (Morning Check-in)
+
+1. **Totals gating**: block entirely until v1.1, or publish with "lower confidence" flag? (ML engineer recommends gate to Tier 4+ only)
+2. **Kelly sizing**: v2 research recommends ramp 0.10 → 0.25 over first 500 picks, not flat 0.25. Approve?
+3. **Odds API plan**: current $59/100K tier. v2 research notes F5 + 30-min polling would hit cap; plan for $119/5M jump after F5 backtest.
+4. **LINEUP-01 (late-news LLM)**: $30/mo RotoWire feed approval? Research says highest-ROI addition after v1 ships.
+5. **AAA Statcast features**: v1 or v1.1 timing?
+6. **Fly.io worker deploy**: ready to `flyctl deploy` the worker? Needed before any real picks land. Cost: ~$3-5/mo scale-to-zero.
+7. **/rationale endpoint**: currently a stub. Full Claude Haiku integration needed — medium-scope work. v1 or v1.1?
 
 ## Recent Completion
 
