@@ -32,6 +32,8 @@ Other agents: add your required env vars as a PR to this file when you introduce
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key. Used by Stripe.js in the browser. | ✅ Yes | staging, prod | mlb-devops |
 | `STRIPE_SECRET_KEY` | Stripe secret key for server-side API calls (create sessions, webhooks). | ❌ Server-only | staging, prod | mlb-devops |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures in `/api/webhooks/stripe`. | ❌ Server-only | staging, prod | mlb-devops |
+| `STRIPE_PRICE_PRO` | Stripe price ID for Diamond Edge Pro ($19/mo). Set after running `apps/web/lib/stripe/products.ts` seeding script. | ❌ Server-only | staging, prod | mlb-backend |
+| `STRIPE_PRICE_ELITE` | Stripe price ID for Diamond Edge Elite ($39/mo). Set after running `apps/web/lib/stripe/products.ts` seeding script. | ❌ Server-only | staging, prod | mlb-backend |
 | `ODDS_API_KEY` | The Odds API authentication key. | ❌ Server-only | staging, prod | mlb-devops |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key for LLM rationale generation. | ❌ Server-only | staging, prod | mlb-devops |
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis REST endpoint URL. | ❌ Server-only | dev, staging, prod | mlb-devops |
@@ -70,6 +72,8 @@ Set via: Supabase Dashboard → Edge Functions → Manage secrets (or `supabase 
 | `ODDS_API_KEY` | The Odds API key if odds-refresh moves to an Edge Function. | `odds-refresh` (if applicable) |
 | `UPSTASH_REDIS_REST_URL` | Redis URL for cache invalidation after pipeline writes. | `pick-pipeline`, `outcome-grader` |
 | `UPSTASH_REDIS_REST_TOKEN` | Redis token for the above. | `pick-pipeline`, `outcome-grader` |
+| `MODEL_ENDPOINT_URL` | Fly.io worker base URL (`https://diamond-edge-worker.fly.dev`). Used by pick-pipeline to call /predict and /rationale. | `pick-pipeline` |
+| `WORKER_API_KEY` | Shared secret for authenticating requests to the Fly.io worker. Also set as a Fly.io secret. | `pick-pipeline` |
 
 Note: The Supabase service role key is NOT in Vault — Edge Functions have native Supabase access via `Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")` which is automatically injected by the Supabase runtime.
 
@@ -87,6 +91,8 @@ Never committed to fly.toml or any tracked file.
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key for DB access from the worker. |
 | `UPSTASH_REDIS_REST_URL` | Redis URL for cache invalidation after worker completes. |
 | `UPSTASH_REDIS_REST_TOKEN` | Redis token for the above. |
+
+Note: `STRIPE_PRICE_PRO` and `STRIPE_PRICE_ELITE` are **not needed** in the Fly.io worker. The worker does not call Stripe — all billing is handled by the Next.js API routes.
 
 ---
 
