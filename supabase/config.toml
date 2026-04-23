@@ -51,8 +51,8 @@ enabled = true
 enabled = true
 # Site URL — set to production URL in Vercel env vars
 site_url = "http://127.0.0.1:3000"
-# Add production URLs here after diamondedge.ai domain is purchased + DNS wired:
-# "https://diamondedge.ai/**", "https://www.diamondedge.ai/**"
+# Production URLs (diamond-edge.co purchased 2026-04-23). Still requires DNS + Supabase dashboard update — see docs/runbooks/domain-migration-diamond-edge-co.md:
+# "https://diamond-edge.co/**", "https://www.diamond-edge.co/**"
 additional_redirect_urls = ["https://localhost:3000", "https://*.vercel.app/**"]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
@@ -97,8 +97,3 @@ enabled = false
 
 [experimental]
 orioledb_version = ""
-s3_host = "env(S3_HOST)"
-s3_region = "env(S3_REGION)"
-s3_endpoint = "env(S3_ENDPOINT)"
-s3_access_key = "env(S3_ACCESS_KEY)"
-s3_secret_key = "env(S3_SECRET_KEY)"

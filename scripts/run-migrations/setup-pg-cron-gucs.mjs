@@ -16,7 +16,7 @@ const env = Object.fromEntries(
 const client = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } });
 await client.connect();
 
-const vercelUrl = 'https://diamond-edge-beryl.vercel.app';
+const vercelUrl = 'https://diamond-edge.co';
 const supabaseUrl = env.SUPABASE_URL;
 const cronSecret = env.CRON_SECRET;
 const anonKey = env.SUPABASE_ANON_KEY;

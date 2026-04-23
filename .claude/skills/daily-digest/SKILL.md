@@ -68,7 +68,7 @@ Summarize as a 5-section table:
 | **Infra** | Worker health, models loaded, feature count |
 | **Most recent cron** | pick-pipeline last run time + success/fail |
 
-End with: "Open slate at https://diamond-edge-beryl.vercel.app/picks/today".
+End with: "Open slate at https://diamond-edge.co/picks/today".
 
 ## Constraints
 

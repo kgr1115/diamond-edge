@@ -15,7 +15,7 @@ Provision Vercel + Supabase + Upstash projects across dev/staging/prod environme
 
 ## Context
 
-- Domain: `diamondedge.ai` is the primary domain. DO NOT purchase it yet — domain purchase is deferred pending USPTO trademark clearance (hard pre-launch blocker). Provision Vercel with a temporary Vercel URL for now. Add a TODO comment in `vercel.json` noting where to wire the custom domain.
+- Domain: `diamond-edge.co` purchased 2026-04-23 (supersedes the earlier `diamondedge.ai` plan). DNS + Vercel wiring tracked in `docs/runbooks/domain-migration-diamond-edge-co.md`. USPTO trademark clearance remains the pre-launch gate.
 - Repo root: `C:\Projects\Baseball_Edge`. No GitHub repo exists yet — you may need to create it or assume it exists. If GitHub repo needs to be created, flag to orchestrator.
 - Three environments: dev (local Supabase), staging (Supabase project + Vercel preview), prod (Supabase project + Vercel production). Each gets its own Supabase project and its own set of secrets.
 - Secrets philosophy: Vercel env vars for app secrets (SUPABASE_SERVICE_ROLE_KEY, STRIPE_SECRET_KEY, ODDS_API_KEY, etc.). Supabase Vault for any secrets the Edge Functions need at runtime. Nothing in code, nothing in client bundle.
@@ -42,7 +42,7 @@ Config files and documentation committed to `C:\Projects\Baseball_Edge`:
 1. **`vercel.json`** — Vercel project config:
    - Cron job definitions: `/api/cron/odds-refresh` (every 30 min, 8am–11pm ET), `/api/cron/schedule-sync` (2x/day: 6am and 1pm ET), `/api/cron/pick-pipeline` (1x/day: 8am ET), `/api/cron/outcome-grader` (1x/day: 4am ET)
    - Function timeout overrides if any route needs >10s
-   - TODO comment for custom domain wiring (diamondedge.ai — deferred)
+   - TODO comment for custom domain wiring (diamond-edge.co — purchased 2026-04-23, DNS pending)
 
 2. **`.github/workflows/ci.yml`** — GitHub Actions CI:
    - Triggers: push to `main`, pull request to `main`

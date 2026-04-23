@@ -5,19 +5,19 @@
 
 ---
 
-## Custom Domain — DEFERRED
+## Custom Domain — diamond-edge.co
 
-`diamondedge.ai` is the primary domain and `diamondedgepicks.com` is the backup.
+`diamond-edge.co` is the primary domain (purchased 2026-04-23 via Cloudflare registrar).
 
-**Status: NOT PURCHASED — pending USPTO trademark clearance.**
+**Status: PURCHASED. DNS / Vercel wiring pending — see `docs/runbooks/domain-migration-diamond-edge-co.md` for the operational checklist.**
 
-When clearance is confirmed and domain is purchased:
+Summary of remaining wiring (full steps in runbook):
 
-1. Register `diamondedge.ai` and `diamondedgepicks.com` at any registrar.
-2. In Vercel: Project → Settings → Domains → Add Domain → `diamondedge.ai`
-3. Add DNS records as Vercel instructs (typically an A record + CNAME for www).
-4. Add to `supabase/config.toml` → `additional_redirect_urls` (see comment in that file).
-5. Update `NEXT_PUBLIC_APP_URL` in Vercel env vars to `https://diamondedge.ai`.
+1. Vercel dashboard: Project → Settings → Domains → Add `diamond-edge.co` and `www.diamond-edge.co`.
+2. Cloudflare DNS: A record `@ → 76.76.21.21`, CNAME `www → cname.vercel-dns.com` (both DNS-only / gray cloud).
+3. Add to `supabase/config.toml` → `additional_redirect_urls` (already in the file comments; Supabase dashboard must mirror).
+4. Update `NEXT_PUBLIC_APP_URL` in Vercel env vars to `https://diamond-edge.co`.
+5. Stripe webhook endpoint + Customer Portal return URL updated in dashboard.
 6. Verify SSL auto-provisions (Vercel handles this via Let's Encrypt).
 
 ---

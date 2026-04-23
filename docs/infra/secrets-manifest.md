@@ -40,7 +40,7 @@ Other agents: add your required env vars as a PR to this file when you introduce
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST auth token. | ❌ Server-only | dev, staging, prod | mlb-devops |
 | `CRON_SECRET` | Shared secret for all `/api/cron/*` route handlers. Prevents unauthorized cron triggers. Must be a cryptographically random string (min 32 chars). | ❌ Server-only | staging, prod | mlb-devops |
 | `GEO_ALLOW_STATES` | Comma-separated list of allowed US state codes for geo-gate. | ❌ Server-only | staging, prod | mlb-devops |
-| `NEXT_PUBLIC_APP_URL` | Canonical app URL (e.g., `https://diamondedge.ai`). Used for absolute URLs in emails and OG meta. | ✅ Yes | staging, prod | mlb-devops |
+| `NEXT_PUBLIC_APP_URL` | Canonical app URL (e.g., `https://diamond-edge.co`). Used for absolute URLs in emails and OG meta. | ✅ Yes | staging, prod | mlb-devops |
 
 ---
 

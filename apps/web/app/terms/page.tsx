@@ -176,8 +176,8 @@ export default function TermsPage() {
         <Section title="12. Contact">
           <p>
             Questions about these Terms? Contact us at{' '}
-            <a href="mailto:support@diamondedge.ai" className="text-blue-400 hover:underline">
-              support@diamondedge.ai
+            <a href="mailto:support@diamond-edge.co" className="text-blue-400 hover:underline">
+              support@diamond-edge.co
             </a>.
           </p>
         </Section>

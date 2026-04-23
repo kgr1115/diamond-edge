@@ -22,7 +22,7 @@ const env = Object.fromEntries(
   })
 );
 
-const VERCEL_URL = 'https://diamond-edge-beryl.vercel.app';
+const VERCEL_URL = 'https://diamond-edge.co';
 const SUPABASE_URL = env.SUPABASE_URL;
 const CRON_SECRET = env.CRON_SECRET;
 const ANON_KEY = env.SUPABASE_ANON_KEY;
@@ -82,6 +82,37 @@ const jobs = [
     command: `
       SELECT net.http_post(
         url := '${VERCEL_URL}/api/cron/clv-compute',
+        headers := jsonb_build_object(
+          'Content-Type', 'application/json',
+          'Authorization', 'Bearer ${CRON_SECRET}'
+        ),
+        body := '{}'::jsonb
+      ) AS request_id;
+    `,
+  },
+  {
+    // Daily full stats-sync: pitcher season stats, bullpen, team batting, umpires.
+    // 14:30 UTC = 10:30 AM ET — right after schedule-sync pulls today's games.
+    name: 'stats-sync-daily',
+    schedule: '30 14 * * *',
+    command: `
+      SELECT net.http_post(
+        url := '${VERCEL_URL}/api/cron/stats-sync',
+        headers := jsonb_build_object(
+          'Content-Type', 'application/json',
+          'Authorization', 'Bearer ${CRON_SECRET}'
+        ),
+        body := '{}'::jsonb
+      ) AS request_id;
+    `,
+  },
+  {
+    // Lineup refresh every 15 min during game-day evening window (17:00–23:00 UTC = 1–7 PM ET).
+    name: 'lineup-sync-15min',
+    schedule: '*/15 17-23 * * *',
+    command: `
+      SELECT net.http_post(
+        url := '${VERCEL_URL}/api/cron/stats-sync?stage=lineup',
         headers := jsonb_build_object(
           'Content-Type', 'application/json',
           'Authorization', 'Bearer ${CRON_SECRET}'

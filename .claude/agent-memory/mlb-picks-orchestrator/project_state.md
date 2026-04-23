@@ -4,15 +4,15 @@ description: Current backlog, in-progress work, blockers, critical path, and ope
 type: project
 ---
 
-Last updated: 2026-04-23 (App deployed, Kyle signed in as Elite, ML training + edge research spawned)
+Last updated: 2026-04-23 (App deployed + primary domain `diamond-edge.co` purchased; DNS/Vercel wiring pending per `docs/runbooks/domain-migration-diamond-edge-co.md`)
 
-## Status: DEPLOYED. Kyle can log into https://diamond-edge-beryl.vercel.app — Elite tier, age-verified, geo-check passes. Slate shows zero-state pending ML model. ML training + edge-research agents running in background.
+## Status: DEPLOYED. Primary URL during transition: https://diamond-edge-beryl.vercel.app (will switch to https://diamond-edge.co once DNS/Vercel/Supabase/Stripe wiring completes).
 
 **Operating mode locked:** Personal-use v1. See `project_operating_mode.md` for full implications. Legal/commercial pre-launch blockers all SKIPPED.
 
 ## Deployment infrastructure (all provisioned, free tier)
 
-- **Vercel Hobby**: `diamond-edge-beryl.vercel.app` (production). GitHub: `github.com/kgr1115/diamond-edge` (private, branch `main`)
+- **Vercel Hobby**: `diamond-edge-beryl.vercel.app` (production; primary alias `diamond-edge.co` pending DNS). GitHub: `github.com/kgr1115/diamond-edge` (private, branch `main`)
 - **Supabase Free**: project ref `wdxqqoafigbnwfqturmv`, 13 tables + RLS applied via `scripts/run-migrations/run.mjs`. Sportsbooks (DK, FD) + 26 blocked states seeded.
 - **Upstash Redis Free**: `famous-bunny-77949.upstash.io`
 - **Anthropic API**: configured, not yet used in production

@@ -8,18 +8,11 @@
 
 ## Domain Status
 
-**`diamondedge.ai` — DOMAIN PURCHASE DEFERRED**
+**`diamond-edge.co` — PURCHASED 2026-04-23** (supersedes the earlier `diamondedge.ai` plan).
 
-Domain is available as of 2026-04-22 but has NOT been purchased.
-**Blocker:** USPTO trademark clearance against "Diamond Edge Technology LLC" must complete first.
-- Search at: [tmsearch.uspto.gov](https://tmsearch.uspto.gov)
-- Estimated clearance timeline: 1–2 weeks manual review
-
-Until clearance is confirmed:
-- Vercel project is live on a `*.vercel.app` temporary URL.
-- `diamondedge.ai` is NOT in vercel.json — the TODO comment is the placeholder.
-- Estimated domain cost: ~$12–15/year (negligible, amortized <$2/mo) — not included in monthly projection until purchased.
-- Backup domain `diamondedgepicks.com` should also be registered at the same time.
+- Registrar: Cloudflare. DNS + Vercel wiring pending — see `docs/runbooks/domain-migration-diamond-edge-co.md`.
+- Domain cost: ~$10–12/year on .co (negligible, amortized <$1/mo).
+- USPTO trademark search for "Diamond Edge Technology LLC" is still the pre-launch gate — domain ownership does not substitute for clearance.
 
 ---
 

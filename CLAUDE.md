@@ -27,8 +27,7 @@ A paid, web-only MLB betting picks SaaS with tiered subscriptions. Users get sta
 ## Brand
 
 - **Name:** Diamond Edge
-- **Primary domain:** `diamondedge.ai` (available as of 2026-04-22)
-- **Backup domain:** `diamondedgepicks.com`
+- **Primary domain:** `diamond-edge.co` (purchased 2026-04-23 — replaces the earlier plan to use `diamondedge.ai`; superseded by this commit)
 - **Pre-launch blocker:** USPTO clearance check at [tmsearch.uspto.gov](https://tmsearch.uspto.gov) against "Diamond Edge Technology LLC"
 
 ## Sportsbooks & Compliance

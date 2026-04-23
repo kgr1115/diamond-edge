@@ -50,10 +50,8 @@ Items marked [A] cannot be self-completed by the founder — they require licens
   - **Do not launch with the Diamond Edge brand until an attorney clears trademark risk.**
   - Option: File a use-based trademark application in Class 41 (entertainment / sports information services) after attorney clearance.
 
-- [ ] **Secure the primary domain: diamondedge.ai**
-  - Verify it is still available (last checked 2026-04-22).
-  - Purchase through a registrar that supports DNSSEC and offers domain privacy.
-  - Backup: diamondedgepicks.com
+- [x] **Secure the primary domain: diamond-edge.co** (purchased 2026-04-23 via Cloudflare).
+  - DNS + Vercel + Supabase + Stripe wiring pending — see `docs/runbooks/domain-migration-diamond-edge-co.md`.
 
 - [ ] **Purchase `diamondedge.io` defensively if budget allows.**
   - Currently registered (privacy-protected). Monitor WHOIS. If it becomes available, consider acquiring to prevent brand confusion.

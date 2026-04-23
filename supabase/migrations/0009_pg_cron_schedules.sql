@@ -103,7 +103,7 @@ SELECT cron.schedule(
 -- These are NOT hardcoded here to avoid leaking secrets into migration history.
 -- Example (run separately in SQL editor before applying migration):
 --
---   ALTER DATABASE postgres SET app.vercel_url      = 'https://diamondedge.ai';
+--   ALTER DATABASE postgres SET app.vercel_url      = 'https://diamond-edge.co';
 --   ALTER DATABASE postgres SET app.supabase_url    = 'https://<project>.supabase.co';
 --   ALTER DATABASE postgres SET app.cron_secret     = '<your-cron-secret>';
 --   ALTER DATABASE postgres SET app.supabase_anon_key = '<your-anon-key>';

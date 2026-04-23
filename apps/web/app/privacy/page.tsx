@@ -36,8 +36,8 @@ export default function PrivacyPage() {
           <p>
             Diamond Edge (&ldquo;we&rdquo;, &ldquo;our&rdquo;, &ldquo;us&rdquo;) operates the
             Diamond Edge MLB picks information service at{' '}
-            <a href="https://diamondedge.ai" className="text-blue-400 hover:underline">
-              diamondedge.ai
+            <a href="https://diamond-edge.co" className="text-blue-400 hover:underline">
+              diamond-edge.co
             </a>
             . We are not a sportsbook, licensed handicapper, or financial services provider. We
             provide statistical analysis and AI-generated rationale for informational purposes.
@@ -139,8 +139,8 @@ export default function PrivacyPage() {
             satisfy legal, billing, and security obligations. Bet log and bankroll data you create
             is retained until you delete it or close your account. You may request deletion of
             your account and associated data by contacting us at{' '}
-            <a href="mailto:support@diamondedge.ai" className="text-blue-400 hover:underline">
-              support@diamondedge.ai
+            <a href="mailto:support@diamond-edge.co" className="text-blue-400 hover:underline">
+              support@diamond-edge.co
             </a>.
           </p>
         </Section>
@@ -155,8 +155,8 @@ export default function PrivacyPage() {
           </ul>
           <p className="mt-2">
             To exercise any of these rights, contact us at{' '}
-            <a href="mailto:support@diamondedge.ai" className="text-blue-400 hover:underline">
-              support@diamondedge.ai
+            <a href="mailto:support@diamond-edge.co" className="text-blue-400 hover:underline">
+              support@diamond-edge.co
             </a>. We will respond within 30 days.
           </p>
           <p className="text-amber-400 text-xs mt-3">
@@ -187,8 +187,8 @@ export default function PrivacyPage() {
             The Service is not directed at anyone under 21 years of age. We do not knowingly
             collect data from minors. If you believe a minor has created an account, contact us
             immediately at{' '}
-            <a href="mailto:support@diamondedge.ai" className="text-blue-400 hover:underline">
-              support@diamondedge.ai
+            <a href="mailto:support@diamond-edge.co" className="text-blue-400 hover:underline">
+              support@diamond-edge.co
             </a>{' '}
             and we will delete the account.
           </p>
@@ -214,8 +214,8 @@ export default function PrivacyPage() {
         <Section title="12. Contact">
           <p>
             Questions about this Privacy Policy or your data? Contact us at{' '}
-            <a href="mailto:support@diamondedge.ai" className="text-blue-400 hover:underline">
-              support@diamondedge.ai
+            <a href="mailto:support@diamond-edge.co" className="text-blue-400 hover:underline">
+              support@diamond-edge.co
             </a>.
           </p>
         </Section>
