@@ -4,9 +4,9 @@ description: Current backlog, in-progress work, blockers, critical path, and ope
 type: project
 ---
 
-Last updated: 2026-04-22 (Phase 2 COMPLETE — session 4 cleanup after context-limit interruption)
+Last updated: 2026-04-22 (TASK-011 QA complete — session 4)
 
-## Status: Phase 2 complete. All code committed. Phase 3 not yet spawned.
+## Status: Phase 2 complete. TASK-011 (QA scaffold) complete. TASK-012 (real infra provisioning) gated on user confirmation.
 
 ## Done
 
@@ -38,7 +38,11 @@ Last updated: 2026-04-22 (Phase 2 COMPLETE — session 4 cleanup after context-l
 
 ## In Progress
 
-- (none — awaiting user direction on Phase 3)
+- (none — awaiting user direction on TASK-012 infra provisioning and ML model training)
+
+## Recent Completion
+
+- **TASK-011 QA (commit 910c6d9):** 5 Playwright E2E suites (auth/slate/pick-detail/subscription/bankroll), 3 Vitest integration suites (pipeline/ingestion/rationale), test fixtures + idempotent seed, GitHub Actions `test.yml`, staging gate checklist, flake registry. Tests scaffolded and enumerate cleanly (28 Playwright + 19 Vitest) but skip locally until `supabase start` runs.
 
 ## Blocked
 
