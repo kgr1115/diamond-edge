@@ -71,8 +71,10 @@ interface FetchOddsParams {
  * Retries on 429 (rate-limited) and 5xx with exponential backoff.
  */
 export async function fetchMlbOdds(params: FetchOddsParams): Promise<OddsApiFetchResult> {
-  const apiKey = process.env.ODDS_API_KEY;
-  if (!apiKey) throw new Error('ODDS_API_KEY env var is not set');
+  // Env var name has been inconsistent during provisioning — accept both.
+  // THE_ODDS_API_KEY is the canonical name used in .env and Vercel.
+  const apiKey = process.env.THE_ODDS_API_KEY ?? process.env.ODDS_API_KEY;
+  if (!apiKey) throw new Error('THE_ODDS_API_KEY env var is not set');
 
   const { bookmakerKeys, markets = ['h2h', 'spreads', 'totals'] } = params;
 
