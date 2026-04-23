@@ -326,10 +326,24 @@ export function BankrollDashboardClient() {
                       <button
                         onClick={() => handleDelete(entry.id)}
                         disabled={deletingId === entry.id}
-                        className="text-xs text-gray-600 hover:text-red-400 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-gray-800 text-gray-500 hover:bg-red-900/30 hover:border-red-800 hover:text-red-300 transition-colors disabled:opacity-50"
                         aria-label={`Delete bet from ${entry.bet_date}`}
+                        title="Delete this bet"
                       >
-                        {deletingId === entry.id ? '…' : 'Del'}
+                        {deletingId === entry.id ? (
+                          <span>…</span>
+                        ) : (
+                          <>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6l-2 14a2 2 0 01-2 2H9a2 2 0 01-2-2L5 6" />
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                              <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                            </svg>
+                            <span>Delete</span>
+                          </>
+                        )}
                       </button>
                     </td>
                   </tr>
