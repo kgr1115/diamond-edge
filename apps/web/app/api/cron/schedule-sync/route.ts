@@ -3,7 +3,7 @@ import { syncSchedule } from '@/lib/ingestion/mlb-stats/schedule';
 import { runOddsPoll } from '@/lib/ingestion/odds/poll';
 import { cacheInvalidate, CacheKeys } from '@/lib/redis/cache';
 import { createServiceRoleClient } from '@/lib/supabase/server';
-import { runNewsPoll } from '@/app/api/cron/news-poll/route';
+import { runNewsPoll } from '@/lib/ingestion/news/poll';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
