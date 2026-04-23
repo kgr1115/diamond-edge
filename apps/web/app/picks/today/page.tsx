@@ -68,7 +68,11 @@ interface PickData {
 
 async function fetchPicks(): Promise<PicksApiResponse | null> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+    // Resolve the app URL defensively — prefer explicit NEXT_PUBLIC_APP_URL, fall back
+    // to VERCEL_URL (auto-set by Vercel, missing https://), final fallback localhost for dev.
+    const baseUrl =
+      process.env.NEXT_PUBLIC_APP_URL ??
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
     const res = await fetch(`${baseUrl}/api/picks/today`, {
       cache: 'no-store',
       headers: { cookie: (await cookies()).toString() },
