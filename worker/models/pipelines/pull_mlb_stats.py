@@ -112,6 +112,8 @@ def _extract_pitcher_line(pitcher_data: dict, team_side: str, game_pk: int, game
     stats = pitcher_data.get("stats", {}).get("pitching", {})
     if not stats:
         return None
+    # MLB Stats API uses gamesStarted=1 for starters; sequenceNumber is not exposed
+    is_starter = bool(stats.get("gamesStarted", 0))
     return {
         "game_pk": game_pk,
         "game_date": game_date,
@@ -125,7 +127,7 @@ def _extract_pitcher_line(pitcher_data: dict, team_side: str, game_pk: int, game
         "k": stats.get("strikeOuts", 0),
         "hr": stats.get("homeRuns", 0),
         "pitches": stats.get("pitchesThrown", 0),
-        "is_starter": pitcher_data.get("sequenceNumber", 99) == 1,
+        "is_starter": is_starter,
     }
 
 

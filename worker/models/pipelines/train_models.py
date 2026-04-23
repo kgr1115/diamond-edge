@@ -69,7 +69,7 @@ from worker.models.pipelines.build_training_data import (
 )
 
 DATA_DIR = Path(__file__).parents[3] / "data" / "training"
-MODELS_DIR = Path(__file__).parents[2]
+MODELS_DIR = Path(__file__).parents[1]  # worker/models/
 REPORTS_DIR = MODELS_DIR / "backtest" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
