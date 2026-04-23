@@ -16,6 +16,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/picks/today', label: "Today's Picks" },
+  { href: '/picks/all',   label: 'All Picks',     minTier: 'free' },
   { href: '/history',     label: 'History' },
   { href: '/bankroll',    label: 'Bankroll' },
   { href: '/clv',         label: 'CLV', minTier: 'elite' },
