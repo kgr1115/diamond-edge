@@ -1,7 +1,10 @@
-# Model artifacts — trained locally, not committed
-models/moneyline/artifacts/
-models/run_line/artifacts/
-models/totals/artifacts/
+# Model artifacts — pkl binaries excluded (large), JSON pointers committed
+models/moneyline/artifacts/**/*.pkl
+models/run_line/artifacts/**/*.pkl
+models/totals/artifacts/**/*.pkl
+models/moneyline/artifacts/**/*.png
+models/run_line/artifacts/**/*.png
+models/totals/artifacts/**/*.png
 
 # Processed training data
 ../data/training/*.parquet

@@ -95,10 +95,58 @@ MARKET_VERSIONS = {
 _REGISTRY: dict[str, dict] = {}
 _LOAD_ERRORS: dict[str, str] = {}
 
+# Features whose None/missing value should impute to 0.5 (probability scale)
+# rather than 0.0. Imputing 0.0 for probability features maps to the extreme low
+# end of the feature distribution, which collapses classifier outputs.
+_PROB_SCALE_FEATURES: frozenset[str] = frozenset({
+    "market_implied_prob_home",
+    "market_novig_home_morning",
+    "market_novig_rl_prior_morning",
+    "market_novig_over_prior_morning",
+    "h2h_home_wins_pct_season",
+    "home_team_win_pct_season",
+    "away_team_win_pct_season",
+    "home_team_win_pct_home",
+    "away_team_win_pct_away",
+    "home_team_last10_win_pct",
+    "away_team_last10_win_pct",
+    "home_team_pythag_win_pct",
+    "away_team_pythag_win_pct",
+})
+
+
+def _resolve_b2_artifact_path(market: str) -> Path | None:
+    """
+    Return path to the current promoted B2 versioned model_b2.pkl if one exists,
+    otherwise return None.  Reads current_version.json pointer.
+    """
+    pointer_path = MODELS_DIR / market / "artifacts" / "current_version.json"
+    if not pointer_path.exists():
+        return None
+    try:
+        with open(pointer_path) as f:
+            pointer = json.load(f)
+        artifact_dir = Path(pointer["artifact_dir"])
+        b2_pkl = artifact_dir / "model_b2.pkl"
+        if b2_pkl.exists():
+            return b2_pkl
+    except (KeyError, OSError, json.JSONDecodeError):
+        pass
+    return None
+
 
 def _load_models() -> None:
-    """Load all model artifacts at startup. Failures are non-fatal (graceful degradation)."""
-    for market, pkl_path in MARKET_ARTIFACT_PATHS.items():
+    """
+    Load model artifacts at startup from two possible locations (priority order):
+      1. B2 versioned pkl from current_version.json  (LGBMRegressor delta model)
+      2. Fallback: market artifacts/model.pkl         (LGBMClassifier v2 model)
+    Failures are non-fatal (graceful degradation).
+    """
+    for market, fallback_pkl_path in MARKET_ARTIFACT_PATHS.items():
+        b2_path = _resolve_b2_artifact_path(market)
+        pkl_path = b2_path if b2_path is not None else fallback_pkl_path
+        model_label = f"B2({b2_path.parent.name})" if b2_path else "v2-classifier"
+
         if not pkl_path.exists():
             _LOAD_ERRORS[market] = f"Artifact not found: {pkl_path}"
             print(f"[WARN] {market}: artifact not found at {pkl_path}")
@@ -111,13 +159,17 @@ def _load_models() -> None:
             model = artifact["model"]
             features = artifact["features"]
 
-            # v2 artifact: calibrated_model is a CalibratedClassifierCV that provides
-            # predict_proba directly. v1 artifact: calibrator is an IsotonicRegression
-            # that maps raw_prob → calibrated_prob.
+            # B2 artifact: keys are model, features, delta_clip, trained_at.
+            # v2 artifact: calibrated_model (CalibratedClassifierCV) or calibrator
+            # (IsotonicRegression). B2 uses LGBMRegressor — predict() returns delta,
+            # not probability. The prior is supplied per-game from market features.
+            is_b2_regressor = artifact.get("delta_clip") is not None
+
             calibrated_model = artifact.get("calibrated_model")
             calibrator = artifact.get("calibrator")
-            prob_clip_lo = float(artifact.get("prob_clip_lo", 0.001))
-            prob_clip_hi = float(artifact.get("prob_clip_hi", 0.999))
+            delta_clip = float(artifact.get("delta_clip", 0.15))
+            prob_clip_lo = float(artifact.get("prob_clip_lo", 0.05))
+            prob_clip_hi = float(artifact.get("prob_clip_hi", 0.95))
 
             # Build SHAP explainer if available (always use base LightGBM model)
             explainer = None
@@ -131,12 +183,16 @@ def _load_models() -> None:
                 "model": model,
                 "calibrated_model": calibrated_model,
                 "calibrator": calibrator,
+                "is_b2_regressor": is_b2_regressor,
+                "delta_clip": delta_clip,
                 "prob_clip_lo": prob_clip_lo,
                 "prob_clip_hi": prob_clip_hi,
                 "features": features,
                 "explainer": explainer,
+                "model_label": model_label,
             }
-            print(f"[OK] Loaded {market} model ({len(features)} features)")
+            print(f"[OK] Loaded {market} model ({model_label}, {len(features)} features)")
+            MARKET_VERSIONS[market] = artifact.get("trained_at", MARKET_VERSIONS.get(market, "unknown"))
         except Exception as e:
             _LOAD_ERRORS[market] = str(e)
             print(f"[ERROR] Failed to load {market} model: {e}")
@@ -164,9 +220,19 @@ def _build_feature_vector(
     feature_names: list[str],
     features: dict[str, Any],
 ) -> np.ndarray:
-    """Build ordered feature vector, filling missing with 0."""
+    """
+    Build ordered feature vector from feature dict.
+
+    Imputation strategy:
+    - Most features: missing/None → 0.0 (league average for count/rate features)
+    - Probability-scale features (win%, market prob, H2H): missing/None → 0.5
+      Rationale: imputing 0.0 for probability features places games at the extreme
+      low tail of the training distribution, collapsing model output to a plateau.
+      0.5 (neutral/league-average) is a more defensible prior.
+    """
     vec = np.array([
-        float(features.get(f, 0.0) or 0.0)
+        0.5 if (features.get(f) is None and f in _PROB_SCALE_FEATURES)
+        else float(features.get(f, 0.0) or 0.0)
         for f in feature_names
     ], dtype=np.float32)
     return vec.reshape(1, -1)
@@ -332,19 +398,37 @@ def run_inference(
     model = reg["model"]
     calibrated_model = reg.get("calibrated_model")
     calibrator = reg.get("calibrator")
-    prob_clip_lo = reg.get("prob_clip_lo", 0.001)
-    prob_clip_hi = reg.get("prob_clip_hi", 0.999)
+    is_b2_regressor = reg.get("is_b2_regressor", False)
+    delta_clip = reg.get("delta_clip", 0.15)
+    prob_clip_lo = reg.get("prob_clip_lo", 0.05)
+    prob_clip_hi = reg.get("prob_clip_hi", 0.95)
     feature_names = reg["features"]
     explainer = reg["explainer"]
 
     # Build feature vector
     x = _build_feature_vector(feature_names, features)
 
-    # v2: CalibratedClassifierCV provides calibrated probs directly.
-    # v1 fallback: use raw LightGBM + IsotonicRegression calibrator.
-    if calibrated_model is not None:
+    if is_b2_regressor:
+        # B2 delta model: predict() returns delta (float), not probability.
+        # final_prob = clip(prior + clip(delta, ±delta_clip), 0.05, 0.95)
+        # Prior comes from market_implied_prob_home (or market_novig_home_morning).
+        # Fall back to 0.5 when prior is absent.
+        raw_delta = float(model.predict(x)[0])
+        clipped_delta = float(np.clip(raw_delta, -delta_clip, delta_clip))
+
+        # Prefer novig prior; fall back to vigged implied prob; then 0.5
+        prior_val = (
+            features.get("market_novig_home_morning")
+            or features.get("market_implied_prob_home")
+        )
+        prior = float(prior_val) if prior_val is not None else 0.5
+
+        cal_prob = float(np.clip(prior + clipped_delta, prob_clip_lo, prob_clip_hi))
+    elif calibrated_model is not None:
+        # v2 CalibratedClassifierCV
         cal_prob = float(calibrated_model.predict_proba(x)[0, 1])
     else:
+        # v1 LGBMClassifier + IsotonicRegression calibrator
         raw_prob = float(model.predict_proba(x)[0, 1])
         cal_prob = float(calibrator.predict([raw_prob])[0])
 

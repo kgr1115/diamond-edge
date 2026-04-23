@@ -199,60 +199,82 @@ def pull_pick_outcomes_from_supabase(supabase, days: int = 90) -> pd.DataFrame:
 def build_news_features(df: pd.DataFrame, news_signals: pd.DataFrame) -> pd.DataFrame:
     """
     Aggregate news_signals per game into training features.
-    Returns df with appended news feature columns.
-    Features are all zero/False when news_signals is empty (first months of live data).
+
+    Feature names MUST match the features.py inference path (canonical source):
+      late_scratch_count         — count of late_scratch signals
+      late_scratch_war_impact_sum — sum of payload.war_proxy for late scratches
+      lineup_change_count        — count of lineup_change signals
+      injury_update_severity_max — max SEVERITY_WEIGHT for injury_update signals
+      opener_announced           — 1 if any opener_announcement signal
+      weather_note_flag          — 1 if any weather_note signal
 
     Feature leakage audit:
-      - news_signals are only written AFTER game starts (T-90min pipeline).
-        For TRAINING purposes, signals are used only for games where the signal
-        was recorded before first pitch (confidence >= 0.5).
-        The signal was available at bet time — no leakage.
+      - news_signals are only written AFTER T-90min pipeline runs (pre-first-pitch).
+        For TRAINING, signals are only present for games with accumulated data.
+        Available at bet time — no leakage.
       - For any game without a news_signal row, all features default to 0.
     """
+    SEVERITY_WEIGHT = {
+        "day_to_day": 1, "questionable": 2,
+        "il_10": 3, "il_15": 4, "il_60": 5,
+    }
+
+    news_cols = [
+        "late_scratch_count", "late_scratch_war_impact_sum", "lineup_change_count",
+        "injury_update_severity_max", "opener_announced", "weather_note_flag",
+    ]
+
     if news_signals.empty or "game_id" not in news_signals.columns:
-        df["news_has_late_scratch"] = 0.0
-        df["news_has_injury_update"] = 0.0
-        df["news_has_lineup_change"] = 0.0
-        df["news_has_weather_note"] = 0.0
-        df["news_has_opener"] = 0.0
-        df["news_signal_count"] = 0.0
-        df["news_max_confidence"] = 0.0
-        return df
-
-    # Pivot signals to per-game aggregates
-    agg = (
-        news_signals
-        .groupby("game_id")
-        .agg(
-            news_has_late_scratch=("signal_type", lambda x: int((x == "late_scratch").any())),
-            news_has_injury_update=("signal_type", lambda x: int((x == "injury_update").any())),
-            news_has_lineup_change=("signal_type", lambda x: int((x == "lineup_change").any())),
-            news_has_weather_note=("signal_type", lambda x: int((x == "weather_note").any())),
-            news_has_opener=("signal_type", lambda x: int((x == "opener_announcement").any())),
-            news_signal_count=("signal_type", "count"),
-            news_max_confidence=("confidence", "max"),
-        )
-        .reset_index()
-    )
-
-    # Merge on game_id (UUID in Supabase, string in parquet)
-    game_id_col = "id" if "id" in df.columns else "game_pk"
-    if game_id_col in df.columns:
-        df = df.merge(agg.rename(columns={"game_id": game_id_col}),
-                      on=game_id_col, how="left")
-    else:
-        # Fall back: add zero columns (no game_id join key available)
-        for col in ["news_has_late_scratch", "news_has_injury_update",
-                    "news_has_lineup_change", "news_has_weather_note",
-                    "news_has_opener", "news_signal_count", "news_max_confidence"]:
+        for col in news_cols:
             df[col] = 0.0
         return df
 
-    # Fill NaN for games with no news signals
-    news_cols = [
-        "news_has_late_scratch", "news_has_injury_update", "news_has_lineup_change",
-        "news_has_weather_note", "news_has_opener", "news_signal_count", "news_max_confidence",
-    ]
+    # Build per-game aggregates matching features.py SEVERITY_WEIGHT and payload logic
+    records: list[dict] = []
+    for game_id, grp in news_signals.groupby("game_id"):
+        row: dict = {c: 0.0 for c in news_cols}
+        row["game_id"] = game_id
+        for _, sig in grp.iterrows():
+            sig_type = sig.get("signal_type", "")
+            payload = sig.get("payload") or {}
+            if sig_type == "late_scratch":
+                row["late_scratch_count"] += 1
+                war = payload.get("war_proxy")
+                if isinstance(war, (int, float)):
+                    row["late_scratch_war_impact_sum"] += war
+            elif sig_type == "lineup_change":
+                row["lineup_change_count"] += 1
+            elif sig_type == "injury_update":
+                severity = payload.get("severity") or ""
+                weight = SEVERITY_WEIGHT.get(severity, 1)
+                if weight > row["injury_update_severity_max"]:
+                    row["injury_update_severity_max"] = float(weight)
+            elif sig_type == "opener_announcement":
+                row["opener_announced"] = 1.0
+            elif sig_type == "weather_note":
+                row["weather_note_flag"] = 1.0
+        records.append(row)
+
+    if not records:
+        for col in news_cols:
+            df[col] = 0.0
+        return df
+
+    agg = pd.DataFrame(records)
+
+    # Merge on game_id
+    game_id_col = "id" if "id" in df.columns else "game_pk"
+    if game_id_col in df.columns:
+        df = df.merge(
+            agg.rename(columns={"game_id": game_id_col}),
+            on=game_id_col,
+            how="left",
+        )
+    else:
+        for col in news_cols:
+            df[col] = 0.0
+        return df
+
     for col in news_cols:
         if col in df.columns:
             df[col] = df[col].fillna(0.0)
@@ -263,13 +285,12 @@ def build_news_features(df: pd.DataFrame, news_signals: pd.DataFrame) -> pd.Data
 
 
 NEWS_FEATURES = [
-    "news_has_late_scratch",
-    "news_has_injury_update",
-    "news_has_lineup_change",
-    "news_has_weather_note",
-    "news_has_opener",
-    "news_signal_count",
-    "news_max_confidence",
+    "late_scratch_count",
+    "late_scratch_war_impact_sum",
+    "lineup_change_count",
+    "injury_update_severity_max",
+    "opener_announced",
+    "weather_note_flag",
 ]
 
 
