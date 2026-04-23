@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { pickClvFrom } from '@/lib/types/pick-clv';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -151,8 +152,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // Filter out picks already in pick_clv
   const pickIds = picks.map((p) => p.id);
-  const { data: existingClv } = await supabase
-    .from('pick_clv')
+  const { data: existingClv } = await pickClvFrom(supabase)
     .select('pick_id')
     .in('pick_id', pickIds);
 
@@ -265,12 +265,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // `pick_clv` was added in migration 0011 but Supabase generated types haven't
-  // been regenerated yet, so the table isn't in the Database type. Cast to any
-  // until `supabase gen types` runs; then this cast can be removed.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const insertStart = Date.now();
-  const { error: insertError } = await (supabase.from as any)('pick_clv').insert(inserts);
+  const { error: insertError } = await pickClvFrom(supabase).insert(inserts);
 
   if (insertError) {
     console.error(JSON.stringify({ level: 'error', event: 'clv_compute_insert_error', error: insertError.message, ms: Date.now() - insertStart }));

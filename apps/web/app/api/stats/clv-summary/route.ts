@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
+import { pickClvFrom } from '@/lib/types/pick-clv';
+import type { PickClvWithPick, PickClvWithPickRaw } from '@/lib/types/pick-clv';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,17 +16,7 @@ export const dynamic = 'force-dynamic';
  * Positive = market moved toward our pick after generation time (sharp signal).
  */
 
-interface ClvRow {
-  pick_id: string;
-  pick_time_novig_prob: number;
-  closing_novig_prob: number | null;
-  clv_edge: number | null;
-  computed_at: string;
-  picks: {
-    pick_date: string;
-    market: string;
-  } | null;
-}
+type ClvRow = PickClvWithPick;
 
 interface MarketClvSummary {
   market: string;
@@ -64,9 +56,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 
   const service = createServiceRoleClient();
 
-  // pick_clv not in generated types yet — cast to any until supabase gen types is re-run
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: rawClv, error } = await (service.from as any)('pick_clv')
+  const { data: rawClv, error } = await pickClvFrom(service)
     .select('pick_id, pick_time_novig_prob, closing_novig_prob, clv_edge, computed_at, picks ( pick_date, market )')
     .not('clv_edge', 'is', null)
     .order('computed_at', { ascending: false })
@@ -76,7 +66,11 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: { code: 'DB_ERROR', message: error.message } }, { status: 500 });
   }
 
-  const clvRows = (rawClv ?? []) as ClvRow[];
+  // Normalise: PostgREST returns joined picks as an array; unwrap to single object.
+  const clvRows: ClvRow[] = ((rawClv ?? []) as unknown as PickClvWithPickRaw[]).map((r) => ({
+    ...r,
+    picks: r.picks?.[0] ?? null,
+  }));
 
   // Aggregate by market
   const byMarket: Record<string, { count: number; sum: number; positive: number }> = {};
