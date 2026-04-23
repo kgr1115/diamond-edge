@@ -1,7 +1,7 @@
 # Model artifacts — trained locally, not committed
-models/moneyline/artifacts/*.pkl
-models/run_line/artifacts/*.pkl
-models/totals/artifacts/*.pkl
+models/moneyline/artifacts/
+models/run_line/artifacts/
+models/totals/artifacts/
 
 # Processed training data
 ../data/training/*.parquet
