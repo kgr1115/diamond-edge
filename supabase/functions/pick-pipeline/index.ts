@@ -326,6 +326,57 @@ async function runPipeline(): Promise<Response> {
   }
 
   // ---------------------------------------------------------------------------
+  // Dedup: one pick per (game_id, market) — highest EV wins.
+  //
+  // The worker returns one candidate per (game_id, market, pick_side): both
+  // home and away for moneyline/run_line, both over and under for totals.
+  // Both sides can independently pass the EV gate, producing duplicate picks
+  // for the same game+market.  We keep only the strongest signal per market.
+  //
+  // Tiebreaker order (all rare in practice):
+  //   1. Higher expected_value (primary)
+  //   2. 'live' visibility over 'shadow'
+  //   3. best_line.sportsbook_key === 'draftkings' (arbitrary, stable tiebreaker)
+  // ---------------------------------------------------------------------------
+  const deduped = new Map<string, PickCandidate>();
+
+  for (const candidate of shadowCandidates) {
+    const key = `${candidate.game_id}:${candidate.market}`;
+    const existing = deduped.get(key);
+
+    if (!existing) {
+      deduped.set(key, candidate);
+      continue;
+    }
+
+    const existingIsLive = liveCandidates.has(`${existing.game_id}:${existing.market}:${existing.pick_side}`);
+    const incomingIsLive = liveCandidates.has(`${candidate.game_id}:${candidate.market}:${candidate.pick_side}`);
+
+    let prefer = false;
+    if (candidate.expected_value > existing.expected_value) {
+      prefer = true;
+    } else if (candidate.expected_value === existing.expected_value) {
+      if (incomingIsLive && !existingIsLive) {
+        prefer = true;
+      } else if (incomingIsLive === existingIsLive) {
+        // Stable tiebreaker: prefer DraftKings
+        prefer = candidate.best_line.sportsbook_key === 'draftkings' &&
+                 existing.best_line.sportsbook_key !== 'draftkings';
+      }
+    }
+
+    if (prefer) {
+      deduped.set(key, candidate);
+    }
+  }
+
+  const dedupedCandidates = Array.from(deduped.values());
+  log('ev_filter_deduped', {
+    input_count: shadowCandidates.length,
+    output_count: dedupedCandidates.length,
+  });
+
+  // ---------------------------------------------------------------------------
   // Stage 6: Rationale generation for LIVE picks only
   // Shadow picks skip rationale to save LLM cost.
   // ---------------------------------------------------------------------------
@@ -378,7 +429,7 @@ async function runPipeline(): Promise<Response> {
 
   const preparedPicks: PreparedPickWithVisibility[] = [];
 
-  for (const candidate of shadowCandidates) {
+  for (const candidate of dedupedCandidates) {
     const candidateKey = `${candidate.game_id}:${candidate.market}:${candidate.pick_side}`;
     const visibility = liveCandidates.has(candidateKey) ? 'live' : 'shadow';
     const requiredTier = requiredTierFor(candidate.confidence_tier);
