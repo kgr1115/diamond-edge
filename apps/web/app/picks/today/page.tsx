@@ -5,10 +5,9 @@ import { RefreshOddsButton } from '@/components/picks/refresh-odds-button';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
 import { SlatePicksGrid } from '@/components/picks/slate-picks-grid';
 import type { Database } from '@/lib/types/database';
+import { loadPicksSlate, todayInET, type UserTier } from '@/lib/picks/load-slate';
 
 export const dynamic = 'force-dynamic';
-
-type UserTier = 'anon' | 'free' | 'pro' | 'elite';
 
 async function getUserTierAndState(): Promise<{ tier: UserTier; geoState: string | null }> {
   const cookieStore = await cookies();
@@ -35,70 +34,6 @@ async function getUserTierAndState(): Promise<{ tier: UserTier; geoState: string
     tier: (profile?.subscription_tier as UserTier) ?? 'free',
     geoState: profile?.geo_state ?? null,
   };
-}
-
-interface ShapAttribution {
-  feature: string;
-  value: number;
-  direction: 'positive' | 'negative';
-}
-
-interface OddsSnapshot {
-  label: string;
-  price: number;
-}
-
-interface PickData {
-  id: string;
-  game: {
-    id: string;
-    home_team: { id: string; name: string; abbreviation: string };
-    away_team: { id: string; name: string; abbreviation: string };
-    game_time_utc: string | null;
-    status: string;
-  };
-  market: string;
-  pick_side: string;
-  confidence_tier: number;
-  required_tier: string;
-  result: string;
-  best_line_price?: number;
-  best_line_book?: string;
-  model_probability?: number;
-  expected_value?: number;
-  rationale_preview?: string;
-  shap_attributions?: ShapAttribution[];
-  line_snapshots?: OddsSnapshot[];
-}
-
-interface PicksApiResponse {
-  date: string;
-  picks: PickData[];
-  total: number;
-  user_tier: UserTier;
-  meta?: {
-    pipeline_ran: boolean;
-    games_analyzed: number;
-    below_threshold: number;
-    ev_threshold: number;
-    confidence_threshold: number;
-  };
-}
-
-async function fetchPicks(): Promise<PicksApiResponse | null> {
-  try {
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ??
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-    const res = await fetch(`${baseUrl}/api/picks/today`, {
-      cache: 'no-store',
-      headers: { cookie: (await cookies()).toString() },
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
 }
 
 function TierBadge({ tier }: { tier: string }) {
@@ -141,10 +76,14 @@ function SkeletonCard() {
 }
 
 async function PicksContent() {
-  const [data, { tier, geoState }] = await Promise.all([
-    fetchPicks(),
-    getUserTierAndState(),
-  ]);
+  const { tier, geoState } = await getUserTierAndState();
+
+  let data: Awaited<ReturnType<typeof loadPicksSlate>> | null = null;
+  try {
+    data = await loadPicksSlate({ userTier: tier, pickDate: todayInET(), visibility: 'live' });
+  } catch {
+    data = null;
+  }
 
   if (!data) {
     return (
@@ -163,7 +102,6 @@ async function PicksContent() {
 
   return (
     <>
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Today&apos;s Picks</h1>
@@ -180,15 +118,12 @@ async function PicksContent() {
         </div>
       </div>
 
-      {/* Responsible gambling banner */}
       <div className="mb-6">
         <ResponsibleGamblingBanner surface="banner" geoState={geoState} />
       </div>
 
-      {/* Picks grid with filters + exposure meter (Client Component) */}
       <SlatePicksGrid picks={data.picks} userTier={tier} meta={data.meta} />
 
-      {/* Footer disclaimer */}
       <div className="mt-6">
         <ResponsibleGamblingBanner surface="footer" geoState={geoState} />
       </div>

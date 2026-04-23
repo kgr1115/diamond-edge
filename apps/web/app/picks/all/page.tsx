@@ -4,56 +4,9 @@ import { createServerClient } from '@supabase/ssr';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
 import { AllPicksGrid } from '@/components/picks/all-picks-grid';
 import type { Database } from '@/lib/types/database';
+import { loadPicksSlate, todayInET, type UserTier } from '@/lib/picks/load-slate';
 
 export const dynamic = 'force-dynamic';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type UserTier = 'anon' | 'free' | 'pro' | 'elite';
-
-interface ShapAttribution {
-  feature: string;
-  value: number;
-  direction: 'positive' | 'negative';
-}
-
-interface OddsSnapshot {
-  label: string;
-  price: number;
-}
-
-interface PickData {
-  id: string;
-  game: {
-    id: string;
-    home_team: { id: string; name: string; abbreviation: string };
-    away_team: { id: string; name: string; abbreviation: string };
-    game_time_utc: string | null;
-    status: string;
-  };
-  market: string;
-  pick_side: string;
-  confidence_tier: number;
-  required_tier: string;
-  visibility: 'live' | 'shadow';
-  result: string;
-  best_line_price?: number;
-  best_line_book?: string;
-  model_probability?: number;
-  expected_value?: number;
-  rationale_preview?: string;
-  shap_attributions?: ShapAttribution[];
-  line_snapshots?: OddsSnapshot[];
-}
-
-interface PicksApiResponse {
-  date: string;
-  picks: PickData[];
-  total: number;
-  user_tier: UserTier;
-}
 
 // ---------------------------------------------------------------------------
 // Server-side data helpers
@@ -86,29 +39,6 @@ async function getUserTierAndState(): Promise<{ tier: UserTier; geoState: string
   };
 }
 
-async function fetchAllPicks(tier: UserTier): Promise<PicksApiResponse | null> {
-  try {
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ??
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-
-    // Pro+ users see all visibility; free/anon fall back to live-only
-    const visibilityParam = tier === 'pro' || tier === 'elite' ? 'all' : 'live';
-
-    const res = await fetch(
-      `${baseUrl}/api/picks/today?visibility=${visibilityParam}`,
-      {
-        cache: 'no-store',
-        headers: { cookie: (await cookies()).toString() },
-      }
-    );
-    if (!res.ok) return null;
-    return res.json() as Promise<PicksApiResponse>;
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Skeleton
 // ---------------------------------------------------------------------------
@@ -139,7 +69,6 @@ function SkeletonCard() {
 async function AllPicksContent() {
   const { tier, geoState } = await getUserTierAndState();
 
-  // Free/anon — redirect to upgrade prompt instead of showing empty shadow state
   if (tier === 'anon') {
     return (
       <div className="text-center py-16 space-y-4 max-w-md mx-auto">
@@ -157,7 +86,18 @@ async function AllPicksContent() {
     );
   }
 
-  const data = await fetchAllPicks(tier);
+  const canSeeShadow = tier === 'pro' || tier === 'elite';
+
+  let data: Awaited<ReturnType<typeof loadPicksSlate>> | null = null;
+  try {
+    data = await loadPicksSlate({
+      userTier: tier,
+      pickDate: todayInET(),
+      visibility: canSeeShadow ? 'all' : 'live',
+    });
+  } catch {
+    data = null;
+  }
 
   if (!data) {
     return (
@@ -174,13 +114,11 @@ async function AllPicksContent() {
     timeZone: 'America/New_York',
   });
 
-  const canSeeShadow = tier === 'pro' || tier === 'elite';
   const shadowCount = data.picks.filter((p) => p.visibility === 'shadow').length;
   const liveCount = data.picks.filter((p) => p.visibility === 'live').length;
 
   return (
     <>
-      {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">All Picks</h1>
         <p className="text-sm text-gray-400 mt-1">{today}</p>
@@ -197,12 +135,10 @@ async function AllPicksContent() {
         </div>
       </div>
 
-      {/* Responsible gambling */}
       <div className="mb-6">
         <ResponsibleGamblingBanner surface="banner" geoState={geoState} />
       </div>
 
-      {/* Shadow pick context — helps paying users understand what they're seeing */}
       {canSeeShadow && shadowCount > 0 && (
         <div className="mb-4 bg-amber-950/30 border border-amber-900/50 rounded-lg px-4 py-3 text-xs text-amber-300/80">
           <span className="font-semibold text-amber-300">Shadow picks</span> met our minimum EV
@@ -211,10 +147,8 @@ async function AllPicksContent() {
         </div>
       )}
 
-      {/* Grid with filters */}
       <AllPicksGrid picks={data.picks} userTier={tier} />
 
-      {/* Footer disclaimer */}
       <div className="mt-6">
         <ResponsibleGamblingBanner surface="footer" geoState={geoState} />
       </div>
