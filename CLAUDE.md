@@ -19,7 +19,7 @@ A paid, web-only MLB betting picks SaaS with tiered subscriptions. Users get sta
 | Cache | Upstash Redis | Aggressive caching for odds data |
 | Background jobs | Vercel Cron (light) + Supabase Edge Functions (>10s) | Fly.io worker as overflow for ML/LLM |
 | Billing | Stripe | Subscriptions + webhooks |
-| Odds data | The Odds API (entry tier, ~$79/mo) | Hard cap $100/mo. Cached pulls, no real-time polling |
+| Odds data | The Odds API ($59/mo 100K-credit tier as of 2026-04) | Tiers: $30 (20K) / $59 (100K) / $119 (5M). Cached pulls, no real-time polling |
 | MLB stats | MLB Stats API (free, public) | Authoritative for schedules, rosters, box scores |
 | Statcast | Baseball Savant | Free, scrape-friendly pitch/batted-ball data |
 | LLM | Anthropic Claude only | Haiku 4.5 default, Sonnet 4.6 for premium picks |
