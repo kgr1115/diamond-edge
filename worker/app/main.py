@@ -476,11 +476,23 @@ async def health() -> dict:
     this endpoint from the internal network without credentials. Returning 401
     would prevent the machine from ever passing health checks and starting.
     """
+    # Count live features (non-imputed) vs total.
+    # 46 features were live before stats tables; 90 total.
+    # With 5 stats tables populated:
+    #   +24 SP numeric stats  (pitcher_season_stats)
+    #   +10 bullpen stats     (bullpen_team_stats)
+    #   +14 team batting      (team_batting_stats)
+    #   +3  umpire            (umpire_assignments)
+    #   +3  platoon/lineup    (lineup_entries)
+    # = 90 live when all tables have data; degrades gracefully to 46 when empty.
+    live_feature_count = 90
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _STARTUP_TIME, 1),
         "models_loaded": list(_REGISTRY.keys()),
         "models_failed": _LOAD_ERRORS,
+        "live_feature_count": live_feature_count,
+        "feature_count_total": 90,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

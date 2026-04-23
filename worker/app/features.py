@@ -247,38 +247,64 @@ def _compute_sp_stats_from_games(
     supabase,
 ) -> dict[str, Any]:
     """
-    Query recent game_pitcher_stats (if table exists) or fall back to games
-    linescore data to compute SP season/rolling stats.
+    Query pitcher_season_stats for the current season's pitcher stats.
 
     Returns dict with all sp_* sub-keys (without side prefix).
-    All values default to league average when data is thin.
-
-    Because no pitcher_stats table exists in v1 schema, this implementation
-    queries the players table for handedness and returns defaults for numeric
-    stats.  A [WARN] line is printed for every stat that falls back to default.
+    Falls back to league-average defaults and logs [WARN] for any missing stat.
+    Season rookies or pitchers with no stats table entry will default gracefully.
     """
     result: dict[str, Any] = dict(SP_DEFAULTS)
 
     if not pitcher_uuid:
         return result
 
+    season = game_date.year
+
+    # --- Handedness + confirmation from players table ---
     try:
         player_resp = supabase.table("players").select("throws, position").eq("id", pitcher_uuid).limit(1).execute()
         rows = player_resp.data or []
         if rows:
             throws_val = rows[0].get("throws")
-            position = rows[0].get("position", "")
-            # throws: 'L'=0, 'R'=1 (numeric encoding matching training data)
             result["throws"] = 1 if throws_val == "R" else 0
-            result["is_confirmed"] = 1  # pitcher ID is set → confirmed
-            # Opener detection: SP position with opener-prone flag computed at game level
+            result["is_confirmed"] = 1  # pitcher ID present → confirmed
     except Exception as e:
-        print(f"[WARN] SP handedness query failed for {pitcher_uuid}: {e}")
+        print(f"[WARN] SP handedness query failed for {pitcher_uuid[:8]}: {e}")
 
-    # Numeric stats fall back to league average — no pitcher_stats table in v1
-    # [WARN] logged once per market build, not per feature
-    print(f"[WARN] SP numeric stats (ERA/FIP/K9/BB9/HR9/WHIP) defaulting to league avg "
-          f"— no pitcher_stats table in schema for pitcher_id={pitcher_uuid[:8]}")
+    # --- Season stats from pitcher_season_stats ---
+    try:
+        stats_resp = supabase.table("pitcher_season_stats").select(
+            "era, fip, xfip, whip, k_per_9, bb_per_9, hr_per_9, "
+            "k_rate, bb_rate, innings_pitched"
+        ).eq("player_id", pitcher_uuid).eq("season", season).limit(1).execute()
+
+        stats_rows = stats_resp.data or []
+        if stats_rows:
+            s = stats_rows[0]
+            if s.get("era")     is not None: result["era_season"]  = float(s["era"])
+            if s.get("fip")     is not None: result["fip_season"]  = float(s["fip"])
+            if s.get("whip")    is not None: result["whip_season"] = float(s["whip"])
+            if s.get("k_per_9") is not None: result["k9_season"]   = float(s["k_per_9"])
+            if s.get("bb_per_9") is not None: result["bb9_season"] = float(s["bb_per_9"])
+            if s.get("hr_per_9") is not None: result["hr9_season"] = float(s["hr_per_9"])
+
+            # Rolling ERA proxies — season table has season aggregate only.
+            # Use season ERA for all windows; true rolling requires per-game data
+            # (out of scope for v1; ML engineer noted this is acceptable).
+            if s.get("era") is not None:
+                era_val = float(s["era"])
+                result["era_last_30d"] = era_val
+                result["era_last_10d"] = era_val
+
+            if s.get("innings_pitched") is not None:
+                result["ip_last_start"] = min(float(s["innings_pitched"]) / 10.0, 9.0)
+
+        else:
+            print(f"[WARN] SP stats not in pitcher_season_stats for "
+                  f"pitcher_id={pitcher_uuid[:8]} season={season} — defaulting to league avg")
+
+    except Exception as e:
+        print(f"[WARN] pitcher_season_stats query failed for {pitcher_uuid[:8]}: {e}")
 
     return result
 
@@ -293,13 +319,44 @@ def _compute_bullpen_stats_from_games(
     supabase,
 ) -> dict[str, Any]:
     """
-    Compute bullpen load and ERA from recent completed games.
+    Query bullpen_team_stats for season ERA/FIP/WHIP and rolling IP windows.
 
-    No bullpen_stats table exists in v1 schema.  Returns defaults with [WARN].
+    Falls back to league-average defaults with [WARN] when the table row
+    is absent (start of season, new team).
     """
     result: dict[str, Any] = dict(BP_DEFAULTS)
-    print(f"[WARN] Bullpen stats defaulting to league avg — no bullpen_stats table "
-          f"in schema for team_id={str(team_uuid)[:8]}")
+    if not team_uuid:
+        return result
+
+    season = game_date.year
+
+    try:
+        resp = supabase.table("bullpen_team_stats").select(
+            "bullpen_era, bullpen_fip, bullpen_whip, "
+            "bullpen_k_rate, bullpen_bb_rate, bullpen_hr_rate, "
+            "bullpen_ip_last_7d, bullpen_pitches_last_3d, "
+            "closer_availability, high_leverage_availability"
+        ).eq("team_id", team_uuid).eq("season", season).limit(1).execute()
+
+        rows = resp.data or []
+        if rows:
+            s = rows[0]
+            if s.get("bullpen_era")         is not None: result["era_season"]    = float(s["bullpen_era"])
+            if s.get("bullpen_whip")        is not None: result["whip_last_7d"]  = float(s["bullpen_whip"])
+            if s.get("bullpen_ip_last_7d")  is not None:
+                ip_7d = float(s["bullpen_ip_last_7d"])
+                result["ip_last_2d"] = min(ip_7d * (2 / 7), 15.0)
+                result["ip_last_3d"] = min(ip_7d * (3 / 7), 20.0)
+            # era_last_7d: use season ERA as proxy (true 7d requires per-game data)
+            if s.get("bullpen_era") is not None:
+                result["era_last_7d"] = float(s["bullpen_era"])
+        else:
+            print(f"[WARN] Bullpen stats not in bullpen_team_stats for "
+                  f"team_id={team_uuid[:8]} season={season} — defaulting to league avg")
+
+    except Exception as e:
+        print(f"[WARN] bullpen_team_stats query failed for team_id={team_uuid[:8]}: {e}")
+
     return result
 
 
@@ -321,6 +378,7 @@ def _compute_team_offense_stats(
     data point available.
     """
     result: dict[str, Any] = {**TEAM_OFF_DEFAULTS, **TEAM_REC_DEFAULTS}
+    season = game_date.year
 
     try:
         cutoff = (game_date - timedelta(days=60)).isoformat()
@@ -431,9 +489,26 @@ def _compute_team_offense_stats(
     except Exception as e:
         print(f"[WARN] Team offense/record query failed for team_id={str(team_uuid)[:8]}: {e}")
 
-    # Batting aggregate features (OPS/K%/BB%/BA) — no per-game batting stats in v1 schema
-    print(f"[WARN] Batting aggregate stats (OPS/K%/BB%/BA) defaulting — "
-          f"no batting_stats table in schema for team_id={str(team_uuid)[:8]}")
+    # --- Batting aggregate features from team_batting_stats ---
+    try:
+        batting_resp = supabase.table("team_batting_stats").select(
+            "avg, obp, slg, ops, k_rate, bb_rate, hr_rate, ops_last_14d"
+        ).eq("team_id", team_uuid).eq("season", season).limit(1).execute()
+
+        batting_rows = batting_resp.data or []
+        if batting_rows:
+            b = batting_rows[0]
+            if b.get("ops")         is not None: result["ops_season"]       = float(b["ops"])
+            if b.get("ops_last_14d") is not None: result["ops_last_14d"]   = float(b["ops_last_14d"])
+            if b.get("k_rate")      is not None: result["k_rate_season"]    = float(b["k_rate"])
+            if b.get("bb_rate")     is not None: result["bb_rate_season"]   = float(b["bb_rate"])
+            if b.get("avg")         is not None: result["batting_avg_season"] = float(b["avg"])
+        else:
+            print(f"[WARN] Batting aggregate stats not in team_batting_stats for "
+                  f"team_id={team_uuid[:8]} season={season} — defaulting to league avg")
+
+    except Exception as e:
+        print(f"[WARN] team_batting_stats query failed for team_id={str(team_uuid)[:8]}: {e}")
 
     return result
 
@@ -686,12 +761,109 @@ def _compute_opener_ttop(team_abbr: str, sp_uuid: str | None) -> dict[str, Any]:
 # Platoon / lineup features (imputed — no confirmed lineup in v1)
 # ---------------------------------------------------------------------------
 
-def _platoon_features() -> dict[str, Any]:
-    return {
+def _compute_umpire_features(
+    game_id: str,
+    supabase,
+) -> dict[str, Any]:
+    """
+    Query umpire_assignments for HP umpire stats.
+    Falls back to career-average defaults when the assignment is not yet recorded
+    (pre-T-90min) or when UmpScorecards stats are null.
+    """
+    result = {
+        "ump_k_rate_career": UMP_K_RATE_CAREER_DEFAULT,
+        "ump_run_factor":    UMP_RUN_FACTOR_DEFAULT,
+        "ump_assigned":      UMP_ASSIGNED_DEFAULT,
+    }
+
+    if not game_id:
+        return result
+
+    try:
+        resp = supabase.table("umpire_assignments").select(
+            "ump_k_rate, ump_bb_rate, ump_strike_zone_size"
+        ).eq("game_id", game_id).limit(1).execute()
+
+        rows = resp.data or []
+        if rows:
+            s = rows[0]
+            result["ump_assigned"] = 1
+            if s.get("ump_k_rate") is not None:
+                result["ump_k_rate_career"] = float(s["ump_k_rate"])
+            if s.get("ump_strike_zone_size") is not None:
+                result["ump_run_factor"] = float(s["ump_strike_zone_size"])
+        else:
+            print(f"[WARN] umpire_assignments: no row for game_id={game_id[:8]} "
+                  "— umpire not yet assigned, defaulting to league avg")
+
+    except Exception as e:
+        print(f"[WARN] umpire_assignments query failed for game_id={game_id[:8]}: {e}")
+
+    return result
+
+
+def _compute_platoon_features(
+    game_id: str,
+    home_team_id: str,
+    away_team_id: str,
+    home_sp_throws: int,
+    away_sp_throws: int,
+    supabase,
+) -> dict[str, Any]:
+    """
+    Compute platoon advantage from lineup_entries.
+
+    Platoon advantage = fraction of lineup batting with the favourable hand
+    vs the opposing SP's throwing hand (R pitcher → LH batters have advantage).
+    Encoded as a float in [0, 1]; 0.5 = neutral.
+
+    Falls back to 0 (neutral) when no lineup data is available.
+    """
+    result = {
         "home_platoon_advantage": 0,
         "away_platoon_advantage": 0,
         "home_lineup_confirmed": 0,
     }
+
+    if not game_id:
+        return result
+
+    try:
+        resp = supabase.table("lineup_entries").select(
+            "team_id, batting_order, bat_side, confirmed"
+        ).eq("game_id", game_id).execute()
+
+        rows = resp.data or []
+        if not rows:
+            return result
+
+        def platoon_score(entries: list[dict], opp_throws: int) -> float:
+            """opp_throws: 1=R, 0=L. Returns fraction of known batters with handedness advantage."""
+            # vs RHP: L/S batters have advantage; vs LHP: R/S batters have advantage
+            favorable_side = "L" if opp_throws == 1 else "R"
+            scored = [
+                r for r in entries
+                if r.get("bat_side") in (favorable_side, "S")
+            ]
+            total = [r for r in entries if r.get("bat_side") in ("L", "R", "S")]
+            if not total:
+                return 0.0
+            return round(len(scored) / len(total), 3)
+
+        home_entries = [r for r in rows if r.get("team_id") == home_team_id]
+        away_entries = [r for r in rows if r.get("team_id") == away_team_id]
+
+        if home_entries:
+            result["home_platoon_advantage"] = platoon_score(home_entries, away_sp_throws)
+            result["home_lineup_confirmed"] = 1 if any(r.get("confirmed") for r in home_entries) else 0
+
+        if away_entries:
+            result["away_platoon_advantage"] = platoon_score(away_entries, home_sp_throws)
+
+    except Exception as e:
+        print(f"[WARN] lineup_entries query failed for game_id={game_id[:8]}: {e}")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -821,8 +993,18 @@ async def build_feature_vector(game_id: str, market: str) -> dict[str, Any]:
     # News
     news = _compute_news_features(game_id, sb)
 
-    # Platoon / lineup
-    platoon = _platoon_features()
+    # Umpire features from umpire_assignments table
+    umpire = _compute_umpire_features(game_id, sb)
+
+    # Platoon / lineup features from lineup_entries table
+    platoon = _compute_platoon_features(
+        game_id,
+        home_team_id or "",
+        away_team_id or "",
+        home_sp_raw["throws"],
+        away_sp_raw["throws"],
+        sb,
+    )
 
     # -----------------------------------------------------------------------
     # Step 3: Assemble into the 90-feature dict matching the B2 contract
@@ -919,11 +1101,11 @@ async def build_feature_vector(game_id: str, market: str) -> dict[str, Any]:
         "away_team_days_rest":          away_team_stats["days_rest"],
         "away_travel_tz_change":        travel["away_travel_tz_change"],
         "away_travel_eastward_penalty": travel["away_travel_eastward_penalty"],
-        # --- Umpire (3 features — imputed, no assignment table in v1) ---
-        "ump_k_rate_career":    UMP_K_RATE_CAREER_DEFAULT,
-        "ump_run_factor":       UMP_RUN_FACTOR_DEFAULT,
-        "ump_assigned":         UMP_ASSIGNED_DEFAULT,
-        # --- Platoon / lineup (3 features — imputed) ---
+        # --- Umpire (3 features — from umpire_assignments table) ---
+        "ump_k_rate_career":    umpire["ump_k_rate_career"],
+        "ump_run_factor":       umpire["ump_run_factor"],
+        "ump_assigned":         umpire["ump_assigned"],
+        # --- Platoon / lineup (3 features — from lineup_entries table) ---
         "home_platoon_advantage":  platoon["home_platoon_advantage"],
         "away_platoon_advantage":  platoon["away_platoon_advantage"],
         "home_lineup_confirmed":   platoon["home_lineup_confirmed"],
