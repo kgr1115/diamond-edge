@@ -3,6 +3,7 @@ import { syncSchedule } from '@/lib/ingestion/mlb-stats/schedule';
 import { runOddsPoll } from '@/lib/ingestion/odds/poll';
 import { cacheInvalidate, CacheKeys } from '@/lib/redis/cache';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { runNewsPoll } from '@/app/api/cron/news-poll/route';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -11,10 +12,15 @@ export const maxDuration = 60;
  * Vercel Cron handler: GET /api/cron/schedule-sync
  * Scheduled: 10am ET daily (14:00 UTC).
  *
- * For Vercel Hobby's 2-cron limit, this endpoint does double duty: first syncs
- * today + tomorrow's MLB schedule from MLB Stats API, then pulls fresh odds
- * from The Odds API for the games just synced. The subsequent pick-pipeline
- * cron (12pm ET) reads from both tables.
+ * For Vercel Hobby's 2-cron limit, this endpoint does triple duty:
+ * 1. Syncs today + tomorrow's MLB schedule from MLB Stats API.
+ * 2. Pulls fresh odds from The Odds API for the games just synced.
+ * 3. Pulls RSS news sources (MLB.com, ESPN, RotoBaller) for today's slate.
+ *
+ * The subsequent pick-pipeline cron (12pm ET) reads from all three tables.
+ *
+ * Bluesky polling (5-min cadence) is handled separately by a Supabase Edge
+ * Function triggered via pg_cron — see ADR-002 §Recommended cron strategy.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // Verify cron secret
@@ -81,8 +87,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Step 3: pull RSS news sources for today's slate.
+  // Bluesky is handled by the Supabase Edge Function (higher-frequency, pg_cron scheduled).
+  console.info(JSON.stringify({ level: 'info', event: 'cron_news_poll_start' }));
+  const newsResponse = await runNewsPoll();
+  const newsResult = await newsResponse.json();
+
   const durationMs = Date.now() - startMs;
-  const hadErrors = scheduleResult.errors.length > 0 || oddsResult.errors.length > 0;
+  const hadErrors =
+    scheduleResult.errors.length > 0 ||
+    oddsResult.errors.length > 0 ||
+    (newsResult.errors?.length ?? 0) > 0;
 
   const logPayload = {
     level: hadErrors ? 'warn' : 'info',
@@ -90,6 +105,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     durationMs,
     schedule: scheduleResult,
     odds: oddsResult,
+    news: newsResult,
   };
   console.info(JSON.stringify(logPayload));
 
@@ -97,6 +113,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ok: !hadErrors,
     schedule: scheduleResult,
     odds: oddsResult,
+    news: newsResult,
     durationMs,
   });
 }
