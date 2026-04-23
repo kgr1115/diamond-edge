@@ -224,7 +224,7 @@ function mapGameStatus(status: MlbScheduleGame['status']): GameStatus {
 // ---------------------------------------------------------------------------
 
 interface ParsedWeather {
-  condition: string;
+  condition: string | null;
   temp_f: number | null;
   wind_mph: number | null;
   wind_dir: string | null;
@@ -242,7 +242,7 @@ function parseWeather(game: MlbScheduleGame): ParsedWeather | null {
   const wind_dir = windMatch ? (windMatch[2]?.trim() || null) : null;
 
   return {
-    condition: w.condition.toLowerCase(),
+    condition: w.condition?.toLowerCase() ?? null,
     temp_f: isNaN(temp_f ?? NaN) ? null : temp_f,
     wind_mph: isNaN(wind_mph ?? NaN) ? null : wind_mph,
     wind_dir,
