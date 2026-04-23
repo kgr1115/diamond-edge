@@ -348,6 +348,21 @@ export interface Database {
           result: PickResult;
           generated_at: string;
           created_at: string;
+          // migration 0010 — visibility gate
+          visibility: 'shadow' | 'live';
+          market_novig_prior: number | null;
+          model_delta: number | null;
+          news_signals_applied: boolean;
+          news_signals_id: string | null;
+          market_prior_id: string | null;
+          // migration 0013 — SHAP feature attributions
+          feature_attributions: Array<{
+            feature_name: string;
+            feature_value: number | string;
+            shap_value: number;
+            direction: 'positive' | 'negative';
+            label: string;
+          }> | null;
         };
         Insert: {
           id?: string;
@@ -366,6 +381,19 @@ export interface Database {
           result?: PickResult;
           generated_at?: string;
           created_at?: string;
+          visibility?: 'shadow' | 'live';
+          market_novig_prior?: number | null;
+          model_delta?: number | null;
+          news_signals_applied?: boolean;
+          news_signals_id?: string | null;
+          market_prior_id?: string | null;
+          feature_attributions?: Array<{
+            feature_name: string;
+            feature_value: number | string;
+            shap_value: number;
+            direction: 'positive' | 'negative';
+            label: string;
+          }> | null;
         };
         Update: {
           id?: string;
@@ -384,6 +412,19 @@ export interface Database {
           result?: PickResult;
           generated_at?: string;
           created_at?: string;
+          visibility?: 'shadow' | 'live';
+          market_novig_prior?: number | null;
+          model_delta?: number | null;
+          news_signals_applied?: boolean;
+          news_signals_id?: string | null;
+          market_prior_id?: string | null;
+          feature_attributions?: Array<{
+            feature_name: string;
+            feature_value: number | string;
+            shap_value: number;
+            direction: 'positive' | 'negative';
+            label: string;
+          }> | null;
         };
         Relationships: [
           {
@@ -586,6 +627,13 @@ export interface Database {
             columns: ['user_id'];
             isOneToOne: false;
             referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'bankroll_entries_sportsbook_id_fkey';
+            columns: ['sportsbook_id'];
+            isOneToOne: false;
+            referencedRelation: 'sportsbooks';
             referencedColumns: ['id'];
           }
         ];
