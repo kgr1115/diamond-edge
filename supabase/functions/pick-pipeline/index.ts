@@ -28,7 +28,8 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { buildFeatureVector } from './feature-builder.ts';
+// feature-builder.ts is deprecated — feature engineering moved to worker/app/features.py
+// import { buildFeatureVector } from './feature-builder.ts';
 import { callPredict } from './worker-client.ts';
 import { getOrGenerateRationale } from './rationale.ts';
 import { invalidatePicksCache } from './redis.ts';
@@ -121,8 +122,8 @@ async function runPipeline(): Promise<Response> {
       venue_name, venue_state,
       weather_condition, weather_temp_f, weather_wind_mph, weather_wind_dir,
       probable_home_pitcher_id, probable_away_pitcher_id,
-      home_team:home_team_id ( id, name, abbreviation, wins:0, losses:0 ),
-      away_team:away_team_id ( id, name, abbreviation, wins:0, losses:0 )
+      home_team:home_team_id ( id, name, abbreviation ),
+      away_team:away_team_id ( id, name, abbreviation )
     `)
     .eq('game_date', today)
     .in('status', ['scheduled', 'live']);
@@ -212,32 +213,38 @@ async function runPipeline(): Promise<Response> {
   });
 
   // ---------------------------------------------------------------------------
-  // Stage 4: Assemble feature vectors + call /predict for each game
+  // Stage 4: Call /predict for each game
+  //
+  // Feature engineering has moved to the worker (worker/app/features.py).
+  // The worker queries Supabase with its own service-role key, builds the full
+  // 90-feature vector, and runs inference.  The Edge Function sends only
+  // { game_id, markets } — no features dict.
+  //
+  // The odds/news stages above are still logged for diagnostic visibility but
+  // are no longer needed as inputs to the worker call.
   // ---------------------------------------------------------------------------
   const allCandidates: PickCandidate[] = [];
 
   for (const game of games) {
     const gameOdds = oddsByGame[game.id] ?? [];
     const gameSignals = signalsByGame[game.id] ?? [];
-    const features = buildFeatureVector(game, gameOdds, gameSignals);
     const workerCallStart = Date.now();
 
-    // Log when a game has no odds — this is a diagnostic signal for why
-    // the worker returns 0 candidates (it can't compute EV without prices).
+    // Log when a game has no odds in Edge Function — the worker will also log
+    // this when it queries odds from Supabase.  Not a skip condition anymore:
+    // the worker may have fresher odds than the Edge Function fetched above.
     if (gameOdds.length === 0) {
-      log('worker_call_no_odds', {
-        ok: false,
+      log('worker_call_no_odds_in_edge', {
+        ok: true,
         game_id: game.id,
-        note: 'skipping /predict — no odds rows for this game; ev_filter will see 0 candidates',
+        note: 'no odds rows visible to Edge Function; worker will query Supabase directly',
       });
-      continue;
     }
 
     try {
       const candidates = await callPredict({
         game_id: game.id,
         markets: ['moneyline', 'run_line', 'total'],
-        features: features as Record<string, number | string | null>,
       });
 
       allCandidates.push(...candidates);

@@ -1,22 +1,17 @@
 /**
- * Phase 2 simplified feature set for the pick pipeline.
+ * DEPRECATED — feature engineering moved to worker/app/features.py.
  *
- * IMPORTANT: This is a simplified feature set using only data available in the
- * current DB schema (games, odds, teams, players). Full Statcast features
- * (ERA, WHIP, FIP, xFIP, wRC+, exit velocity, etc.) require the TASK-004
- * data pipeline to be fully operational with real API keys and training data.
+ * This file is retained for one release cycle so any code that imports
+ * buildFeatureVector receives a clear error rather than a silent failure.
  *
- * The ML worker will return empty candidates until model training completes on
- * real Statcast data — this is EXPECTED in staging. Flag this gap to the
- * orchestrator when staging validation begins.
+ * The worker (Fly.io) now queries Supabase directly using its service-role key,
+ * builds the full 90-feature vector matching the B2 model contract, and runs
+ * inference.  The Edge Function sends only { game_id, markets } to /predict.
  *
- * Full Statcast integration: TASK-004 + ML model training (post-Phase 2).
- *
- * Phase 5 (ADR-002): news_signals rows are aggregated into numeric features
- * and appended to the feature vector. The worker's _build_feature_vector()
- * fills missing keys with 0.0, so adding these features is backward-compatible
- * — v2 model artifacts simply ignore them; the next retrain learns them.
+ * To remove this file: delete after confirming no remaining imports.
+ * The import in index.ts is already commented out.
  */
+console.warn('[DEPRECATED] feature-builder.ts — buildFeatureVector has moved to worker/app/features.py');
 
 import type { GameRow, OddsRow } from './types.ts';
 

@@ -38,11 +38,15 @@ export interface PickCandidate {
   generated_at: string;
 }
 
-/** Input to the Fly.io /predict endpoint. */
+/** Input to the Fly.io /predict endpoint.
+ *
+ * Feature engineering has moved to the worker (worker/app/features.py).
+ * The worker queries Supabase directly using SUPABASE_SERVICE_ROLE_KEY.
+ * The Edge Function no longer builds or sends a features dict.
+ */
 export interface PredictRequest {
   game_id: string;
   markets: ('moneyline' | 'run_line' | 'total')[];
-  features: Record<string, number | string | null>;
 }
 
 /** Response from Fly.io /predict endpoint. */

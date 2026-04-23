@@ -36,6 +36,9 @@ function getWorkerApiKey(): string {
 /**
  * Call the Fly.io worker /predict endpoint.
  *
+ * Worker builds its own feature vector from game_id by querying Supabase
+ * directly.  The Edge Function sends only { game_id, markets }.
+ *
  * Returns an array of PickCandidates for the given game and markets.
  * On timeout or non-2xx: throws — caller is responsible for logging and
  * skipping this game (not aborting the entire pipeline).
