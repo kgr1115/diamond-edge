@@ -92,6 +92,26 @@ Root cause was NOT market-ordering (market keys were always correct). It was **i
 
 Moneyline @ 8% EV went from +131.8% (phantom) → **+17.9%** (still too high). Run line + totals unchanged (their fields were clean). Data engineer's diagnosis: residual moneyline inflation is overfitting via non-walk-forward CV. ML engineer v4 dispatched to audit training protocol + rebuild with walk-forward CV + causal rolling windows. Focus is moneyline only — run line and totals need separate architectural rewrite (deviation-from-base-rate).
 
+### ML v4 walk-forward CV — VERDICT: NO ALPHA
+
+Commits `da16ef0`, `fef6c11`, `80d88f4`. Walk-forward CV produced +17.8% @ 8% EV vs v3's +17.9% — 0.1pp delta. Overfitting disproven as the cause.
+
+Real diagnosis: model outputs ~50% for every game (mean 0.510, std 0.083 — under-differentiated). At 8% EV threshold, 64% of picks are underdogs at avg +184, winning at base rate 43.6% not model's predicted 49%. ROI comes from payout asymmetry alone, not alpha. Mean CLV +0.036% — essentially zero. Model has no edge vs closing line.
+
+### Strategic pivot — Kyle chose B2 + B3 (2026-04-23)
+
+Market-blend architecture (MKT-01) + late-news LLM (LINEUP-01, free-stack version).
+
+Architect ADR-002 committed (`d85c1a0`): delta model as regression (`y = outcome - market_novig_prior`), Supabase pg_cron for intraday refresh (no Vercel Pro), 3 new tables (news_events, news_signals, market_priors), picks extensions.
+
+**Scope decisions locked:**
+- RotoWire DROPPED — no public API. Bluesky API (beat writers have migrated) + MLB.com RSS + ESPN unofficial + RotoBaller RSS + MLB Stats API. Total additional cost: **$0/mo**.
+- Historical odds RE-BACKFILL approved with 3 snapshots/day (morning + afternoon + existing evening). ~32K credits of 80K remaining. Morning = opening prior proxy for B2 delta training.
+
+**Phase 2 in flight (2026-04-23):**
+- Data engineer: odds re-backfill (morning + afternoon snapshots for 2022–2024)
+- Data engineer: free-stack news ingestion (Bluesky + RSS + new Supabase tables from ADR-002)
+
 ---
 
 ## Decisions awaiting you — RE-PRIORITIZED AFTER BIAS-FIX FINDINGS
