@@ -230,7 +230,7 @@ LGBM_PARAMS = {
 
 
 # ---------------------------------------------------------------------------
-# EV computation
+# EV computation + vig removal
 # ---------------------------------------------------------------------------
 def compute_ev(model_prob: float, american_odds: int) -> float:
     if american_odds > 0:
@@ -238,6 +238,45 @@ def compute_ev(model_prob: float, american_odds: int) -> float:
     else:
         net_win = 100.0 / abs(american_odds)
     return model_prob * net_win - (1.0 - model_prob) * 1.0
+
+
+def remove_vig(
+    primary_odds: float,
+    opposing_odds: float,
+) -> tuple[float, float, float]:
+    """
+    Compute no-vig (fair-value) probabilities from a two-sided market.
+
+    Approach:
+      1. Compute raw implied probs for each side.
+      2. margin = sum_raw_implied - 1  (book overround, typically 4-6% for DK/FD).
+      3. novig_side = raw_implied_side / (1 + margin).
+
+    Returns (novig_primary, novig_opposing, margin).
+
+    Edge case guards:
+    - Missing/NaN either side: return (0.5, 0.5, 0.0).
+    - Margin > 15%: broken data (e.g. far-OT odds); return neutral.
+    - Margin <= 0.5%: clamp to 0.5% (near-arb artifacts).
+    """
+    if pd.isna(primary_odds) or pd.isna(opposing_odds):
+        return 0.5, 0.5, 0.0
+
+    o = float(primary_odds)
+    p_raw = 100.0 / (100.0 + o) if o > 0 else abs(o) / (abs(o) + 100.0)
+
+    o2 = float(opposing_odds)
+    q_raw = 100.0 / (100.0 + o2) if o2 > 0 else abs(o2) / (abs(o2) + 100.0)
+
+    margin = p_raw + q_raw - 1.0
+
+    if margin > 0.15:
+        return 0.5, 0.5, 0.0
+
+    if margin < 0.005:
+        margin = 0.005
+
+    return p_raw / (1.0 + margin), q_raw / (1.0 + margin), margin
 
 
 def kelly_fraction(ev: float, american_odds: int, fraction: float = 0.25) -> float:
