@@ -25,6 +25,17 @@ const QUERY_SCHEMA = z.object({
 // Types
 // ---------------------------------------------------------------------------
 
+interface ShapAttribution {
+  feature: string;
+  value: number;
+  direction: 'positive' | 'negative';
+}
+
+interface OddsSnapshot {
+  label: string;
+  price: number;
+}
+
 interface PickRow {
   id: string;
   pick_date: string;
@@ -38,6 +49,13 @@ interface PickRow {
   model_probability: number | null;
   expected_value: number | null;
   rationale_id: string | null;
+  feature_attributions: Array<{
+    feature_name: string;
+    feature_value: number | string;
+    shap_value: number;
+    direction: 'positive' | 'negative';
+    label: string;
+  }> | null;
   games: {
     id: string;
     game_time_utc: string | null;
@@ -68,6 +86,16 @@ interface PickResponse {
   model_probability?: number;
   expected_value?: number;
   rationale_preview?: string;
+  shap_attributions?: ShapAttribution[];
+  line_snapshots?: OddsSnapshot[];
+}
+
+interface PicksMeta {
+  pipeline_ran: boolean;
+  games_analyzed: number;
+  below_threshold: number;
+  ev_threshold: number;
+  confidence_threshold: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +114,25 @@ function rationalePreview(text: string): string {
   return sentences.slice(0, 2).join(' ').trim();
 }
 
+/** Normalise pipeline feature_attributions shape → slim API shape for the UI. */
+function normalizeShapAttributions(
+  raw: PickRow['feature_attributions'],
+): ShapAttribution[] | undefined {
+  if (!raw || raw.length === 0) return undefined;
+  return raw.map((a) => ({
+    feature: a.label ?? a.feature_name,
+    value: a.shap_value,
+    direction: a.direction,
+  }));
+}
+
 /** Apply column masking based on caller's tier. Returns a clean, serializable object. */
-function maskPick(row: PickRow, tier: UserTier, bookName: string | null): PickResponse {
+function maskPick(
+  row: PickRow,
+  tier: UserTier,
+  bookName: string | null,
+  lineSnapshots: OddsSnapshot[] | undefined,
+): PickResponse {
   const level = entitlementLevel(tier);
 
   const base: PickResponse = {
@@ -114,11 +159,14 @@ function maskPick(row: PickRow, tier: UserTier, bookName: string | null): PickRe
     if (row.rationale_cache?.rationale_text) {
       base.rationale_preview = rationalePreview(row.rationale_cache.rationale_text);
     }
+    if (lineSnapshots && lineSnapshots.length >= 2) base.line_snapshots = lineSnapshots;
   }
 
   // Elite-only fields (level >= 2)
   if (level >= 2) {
     if (row.expected_value !== null) base.expected_value = row.expected_value;
+    const shap = normalizeShapAttributions(row.feature_attributions);
+    if (shap) base.shap_attributions = shap;
   }
 
   return base;
@@ -195,7 +243,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (!hasFilters) {
     cacheKey = CacheKeys.picksToday(pickDate, userTier);
-    const cached = await cacheGet<{ date: string; picks: PickResponse[]; total: number; user_tier: UserTier }>(cacheKey);
+    const cached = await cacheGet<{ date: string; picks: PickResponse[]; total: number; user_tier: UserTier; meta: PicksMeta }>(cacheKey);
     if (cached) {
       console.info({ event: 'picks_today_cache_hit', date: pickDate, tier: userTier });
       return NextResponse.json(cached, { status: 200 });
@@ -221,6 +269,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       model_probability,
       expected_value,
       rationale_id,
+      feature_attributions,
       games!inner (
         id,
         game_time_utc,
@@ -232,6 +281,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       rationale_cache:rationale_id ( rationale_text )
     `)
     .eq('pick_date', pickDate)
+    .eq('visibility', 'live')
     .order('confidence_tier', { ascending: false });
 
   // For anon/free users, only show free-tier picks
@@ -262,10 +312,103 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 5. Apply tier masking and shape response
+  // 5a. Fetch line snapshots for each pick's game (3 most recent odds snapshots per game).
+  // Only fetched for Pro+ tiers — free/anon users don't receive line movement data.
+  const entLevel = entitlementLevel(userTier);
+  const lineSnapshotsByGameId = new Map<string, OddsSnapshot[]>();
+
+  if (entLevel >= 1 && picks && picks.length > 0) {
+    const uniqueGameIds = [...new Set(picks.map((p) => p.games?.id).filter(Boolean))] as string[];
+
+    if (uniqueGameIds.length > 0) {
+      const { data: oddsRows } = await serviceClient
+        .from('odds')
+        .select('game_id, market, home_price, away_price, over_price, under_price, snapshotted_at')
+        .in('game_id', uniqueGameIds)
+        .order('snapshotted_at', { ascending: false });
+
+      if (oddsRows) {
+        // Group by game_id, pick the 3 most recent distinct snapshots (already ordered desc)
+        const LABELS = ['Close', 'PM', 'AM'];
+        const seenByGame = new Map<string, number>();
+
+        for (const row of oddsRows as Array<{
+          game_id: string;
+          market: MarketType;
+          home_price: number | null;
+          away_price: number | null;
+          over_price: number | null;
+          under_price: number | null;
+          snapshotted_at: string;
+        }>) {
+          const count = seenByGame.get(row.game_id) ?? 0;
+          if (count >= 3) continue;
+
+          // Use home_price as the representative line for the sparkline
+          const price = row.home_price ?? row.over_price ?? row.away_price ?? row.under_price;
+          if (price === null) continue;
+
+          if (!lineSnapshotsByGameId.has(row.game_id)) {
+            lineSnapshotsByGameId.set(row.game_id, []);
+          }
+          lineSnapshotsByGameId.get(row.game_id)!.push({
+            label: LABELS[count] ?? `T-${count}`,
+            price,
+          });
+          seenByGame.set(row.game_id, count + 1);
+        }
+
+        // Reverse each array so they read chronologically (AM → PM → Close)
+        for (const [gameId, snapshots] of lineSnapshotsByGameId) {
+          lineSnapshotsByGameId.set(gameId, snapshots.reverse());
+        }
+      }
+    }
+  }
+
+  // 5b. Compute meta diagnostic (3 cheap count queries — always returned, no tier gate).
+  // pipeline_ran = today has games in DB AND most recent odds snapshot is < 12h old.
+  const metaStart = Date.now();
+  const [gamesCountResult, shadowCountResult, oddsRecencyResult] = await Promise.all([
+    serviceClient
+      .from('games')
+      .select('id', { count: 'exact', head: true })
+      .eq('game_date', pickDate),
+    serviceClient
+      .from('picks')
+      .select('id', { count: 'exact', head: true })
+      .eq('pick_date', pickDate)
+      .eq('visibility', 'shadow'),
+    serviceClient
+      .from('odds')
+      .select('snapshotted_at')
+      .order('snapshotted_at', { ascending: false })
+      .limit(1),
+  ]);
+
+  const gamesAnalyzed = gamesCountResult.count ?? 0;
+  const belowThreshold = shadowCountResult.count ?? 0;
+  const lastSnapshot = (oddsRecencyResult.data ?? [])[0]?.snapshotted_at as string | undefined;
+  const snapshotAgeHours = lastSnapshot
+    ? (Date.now() - new Date(lastSnapshot).getTime()) / 3_600_000
+    : Infinity;
+  const pipelineRan = gamesAnalyzed > 0 && snapshotAgeHours < 12;
+
+  const meta: PicksMeta = {
+    pipeline_ran: pipelineRan,
+    games_analyzed: gamesAnalyzed,
+    below_threshold: belowThreshold,
+    ev_threshold: 0.08,
+    confidence_threshold: 5,
+  };
+
+  console.info({ event: 'picks_today_meta', date: pickDate, pipeline_ran: pipelineRan, games_analyzed: gamesAnalyzed, below_threshold: belowThreshold, ms: Date.now() - metaStart });
+
+  // 5c. Apply tier masking and shape response
   const maskedPicks: PickResponse[] = (picks ?? []).map((row) => {
     const bookName = row.sportsbooks?.name ?? null;
-    return maskPick(row, userTier, bookName);
+    const lineSnapshots = lineSnapshotsByGameId.get(row.games?.id ?? '') ?? undefined;
+    return maskPick(row, userTier, bookName, lineSnapshots);
   });
 
   const response = {
@@ -273,6 +416,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     picks: maskedPicks,
     total: maskedPicks.length,
     user_tier: userTier,
+    meta,
   };
 
   // 6. Populate cache (only for unfiltered full-slate requests)
