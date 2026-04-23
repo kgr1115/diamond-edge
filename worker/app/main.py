@@ -80,9 +80,9 @@ MARKET_ARTIFACT_PATHS = {
 }
 
 MARKET_VERSIONS = {
-    "moneyline": "moneyline-v1.0.0",
-    "run_line": "run_line-v1.0.0",
-    "totals": "totals-v1.0.0",
+    "moneyline": "moneyline-v2.0.0",
+    "run_line": "run_line-v2.0.0",
+    "totals": "totals-v2.0.0",
 }
 
 # Global model registry: {market: {model, calibrator, features, explainer}}
@@ -103,10 +103,17 @@ def _load_models() -> None:
                 artifact = pickle.load(f)
 
             model = artifact["model"]
-            calibrator = artifact["calibrator"]
             features = artifact["features"]
 
-            # Build SHAP explainer if available
+            # v2 artifact: calibrated_model is a CalibratedClassifierCV that provides
+            # predict_proba directly. v1 artifact: calibrator is an IsotonicRegression
+            # that maps raw_prob → calibrated_prob.
+            calibrated_model = artifact.get("calibrated_model")
+            calibrator = artifact.get("calibrator")
+            prob_clip_lo = float(artifact.get("prob_clip_lo", 0.001))
+            prob_clip_hi = float(artifact.get("prob_clip_hi", 0.999))
+
+            # Build SHAP explainer if available (always use base LightGBM model)
             explainer = None
             if _SHAP_AVAILABLE:
                 try:
@@ -116,7 +123,10 @@ def _load_models() -> None:
 
             _REGISTRY[market] = {
                 "model": model,
+                "calibrated_model": calibrated_model,
                 "calibrator": calibrator,
+                "prob_clip_lo": prob_clip_lo,
+                "prob_clip_hi": prob_clip_hi,
                 "features": features,
                 "explainer": explainer,
             }
@@ -312,17 +322,25 @@ def run_inference(
 
     reg = _REGISTRY[market]
     model = reg["model"]
-    calibrator = reg["calibrator"]
+    calibrated_model = reg.get("calibrated_model")
+    calibrator = reg.get("calibrator")
+    prob_clip_lo = reg.get("prob_clip_lo", 0.001)
+    prob_clip_hi = reg.get("prob_clip_hi", 0.999)
     feature_names = reg["features"]
     explainer = reg["explainer"]
 
     # Build feature vector
     x = _build_feature_vector(feature_names, features)
 
-    # Raw prediction → calibration
-    raw_prob = float(model.predict_proba(x)[0, 1])
-    cal_prob = float(calibrator.predict([raw_prob])[0])
-    cal_prob = float(np.clip(cal_prob, 0.001, 0.999))
+    # v2: CalibratedClassifierCV provides calibrated probs directly.
+    # v1 fallback: use raw LightGBM + IsotonicRegression calibrator.
+    if calibrated_model is not None:
+        cal_prob = float(calibrated_model.predict_proba(x)[0, 1])
+    else:
+        raw_prob = float(model.predict_proba(x)[0, 1])
+        cal_prob = float(calibrator.predict([raw_prob])[0])
+
+    cal_prob = float(np.clip(cal_prob, prob_clip_lo, prob_clip_hi))
 
     # Determine pick sides and best odds
     candidates = []
