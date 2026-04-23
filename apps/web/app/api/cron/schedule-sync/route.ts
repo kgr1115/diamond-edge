@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncSchedule } from '@/lib/ingestion/mlb-stats/schedule';
+import { runOddsPoll } from '@/lib/ingestion/odds/poll';
 import { cacheInvalidate, CacheKeys } from '@/lib/redis/cache';
+import { createServiceRoleClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
-export const maxDuration = 10;
+export const maxDuration = 60;
 
 /**
  * Vercel Cron handler: GET /api/cron/schedule-sync
- * Scheduled: 6am ET + 1pm ET daily.
+ * Scheduled: 10am ET daily (14:00 UTC).
  *
- * Syncs today + tomorrow's schedule so picks pipeline and odds matching
- * always have fresh game rows in the DB.
+ * For Vercel Hobby's 2-cron limit, this endpoint does double duty: first syncs
+ * today + tomorrow's MLB schedule from MLB Stats API, then pulls fresh odds
+ * from The Odds API for the games just synced. The subsequent pick-pipeline
+ * cron (12pm ET) reads from both tables.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // Verify cron secret
@@ -41,10 +45,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const dates = [todayUTC, tomorrowUTC];
 
-  const result = await syncSchedule(dates);
+  const scheduleResult = await syncSchedule(dates);
 
   // Invalidate schedule cache for synced dates
-  if (result.gamesUpserted > 0) {
+  if (scheduleResult.gamesUpserted > 0) {
     const cacheKeys = dates.map(d => CacheKeys.scheduleDate(d));
     await cacheInvalidate(...cacheKeys);
     console.info(
@@ -56,19 +60,43 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // Step 2: pull fresh odds for any games just synced.
+  console.info(JSON.stringify({ level: 'info', event: 'cron_odds_refresh_start' }));
+  const oddsResult = await runOddsPoll();
+
+  if (oddsResult.rowsInserted > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const tier of ['anon', 'free', 'pro', 'elite']) {
+      await cacheInvalidate(CacheKeys.picksToday(today, tier));
+    }
+    const supabase = createServiceRoleClient();
+    const { data: games } = await supabase
+      .from('games')
+      .select('id')
+      .eq('game_date', today)
+      .in('status', ['scheduled', 'live']);
+    if (games?.length) {
+      const oddsKeys = games.map(g => CacheKeys.oddsGame(g.id));
+      await cacheInvalidate(...oddsKeys);
+    }
+  }
+
   const durationMs = Date.now() - startMs;
+  const hadErrors = scheduleResult.errors.length > 0 || oddsResult.errors.length > 0;
 
   const logPayload = {
-    level: result.errors.length > 0 ? 'warn' : 'info',
+    level: hadErrors ? 'warn' : 'info',
     event: 'cron_schedule_sync_complete',
     durationMs,
-    ...result,
+    schedule: scheduleResult,
+    odds: oddsResult,
   };
   console.info(JSON.stringify(logPayload));
 
   return NextResponse.json({
-    ok: result.errors.length === 0,
-    ...result,
+    ok: !hadErrors,
+    schedule: scheduleResult,
+    odds: oddsResult,
     durationMs,
   });
 }
