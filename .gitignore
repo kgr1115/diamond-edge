@@ -29,6 +29,8 @@ data/
 # Tooling caches
 .cache/
 *.log
+playwright-report/
+test-results/
 
 # IDE
 .vscode/
