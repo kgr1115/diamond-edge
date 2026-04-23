@@ -9,6 +9,13 @@ Join hazard: Odds API uses full team names; MLB Stats API uses gamePk/abbreviati
 Resolution: team_map.ODDS_NAME_TO_ABBR normalizes all names to 3-letter codes.
 Games in the same snapshot file with the same home+away+date are de-duped
 by taking the closest snapshot to game time.
+
+Corruption guard: the snapshot is taken at 03:00 UTC (≈23:00 EDT), which means
+games that started at 7-8 PM ET are still in progress. The API returns in-game
+live h2h odds for those (h2h-only market, prices like -10000 or +4000). These
+are not pre-game closing lines and must be rejected. Any h2h outcome where
+abs(price) > 500 is treated as an in-game price and discarded (pre-game MLB
+moneylines never exceed ±500 for a real match-up).
 """
 
 from __future__ import annotations
@@ -66,11 +73,17 @@ def _parse_bookmaker_markets(
 
             if mk == "h2h":
                 for o in outcomes:
+                    price = o.get("price")
+                    # abs(price) > 500 indicates an in-game live line captured mid-game
+                    # (API snapshot at 03:00 UTC catches late-starting games still in progress).
+                    # Pre-game MLB moneylines are always within ±500; reject in-game noise.
+                    if price is not None and abs(price) > 500:
+                        continue
                     abbr = odds_name_to_abbr(o["name"])
                     if abbr == home_team_abbr:
-                        result[f"{prefix}_ml_home"] = o.get("price")
+                        result[f"{prefix}_ml_home"] = price
                     elif abbr == away_team_abbr:
-                        result[f"{prefix}_ml_away"] = o.get("price")
+                        result[f"{prefix}_ml_away"] = price
 
             elif mk == "spreads":
                 for o in outcomes:
@@ -90,7 +103,7 @@ def _parse_bookmaker_markets(
                         result[f"{prefix}_over_point"] = o.get("point")
                     elif side == "under":
                         result[f"{prefix}_under_price"] = o.get("price")
-                        if f"{prefix}_over_point" is None:
+                        if result[f"{prefix}_over_point"] is None:
                             result[f"{prefix}_over_point"] = o.get("point")
 
     return result
