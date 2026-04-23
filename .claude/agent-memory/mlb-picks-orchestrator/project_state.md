@@ -4,11 +4,31 @@ description: Current backlog, in-progress work, blockers, critical path, and ope
 type: project
 ---
 
-Last updated: 2026-04-22 (OPERATING MODE PIVOT — personal use, SaaS dormant)
+Last updated: 2026-04-23 (App deployed, Kyle signed in as Elite, ML training + edge research spawned)
 
-## Status: Personal-use v1. Phase 2 complete, TASK-011 QA complete. TASK-012 now "free-tier provisioning" — gated on Kyle creating external accounts.
+## Status: DEPLOYED. Kyle can log into https://diamond-edge-beryl.vercel.app — Elite tier, age-verified, geo-check passes. Slate shows zero-state pending ML model. ML training + edge-research agents running in background.
 
 **Operating mode locked:** Personal-use v1. See `project_operating_mode.md` for full implications. Legal/commercial pre-launch blockers all SKIPPED.
+
+## Deployment infrastructure (all provisioned, free tier)
+
+- **Vercel Hobby**: `diamond-edge-beryl.vercel.app` (production). GitHub: `github.com/kgr1115/diamond-edge` (private, branch `main`)
+- **Supabase Free**: project ref `wdxqqoafigbnwfqturmv`, 13 tables + RLS applied via `scripts/run-migrations/run.mjs`. Sportsbooks (DK, FD) + 26 blocked states seeded.
+- **Upstash Redis Free**: `famous-bunny-77949.upstash.io`
+- **Anthropic API**: configured, not yet used in production
+- **The Odds API $59 plan**: 19,170 / 100,000 credits used (backfill). 80K remaining.
+- **Fly.io**: account linked, FLY_API_TOKEN stored, **worker not yet deployed**.
+- **Cron schedule**: 10am ET schedule-sync+odds, 12pm ET pick-pipeline (both in UTC as `0 14 * * *` / `0 16 * * *`)
+
+## Gotchas encountered during provisioning (for future sessions)
+
+- `vercel.json` CANNOT have `rootDirectory` — set via Vercel UI. Config file must live at `apps/web/vercel.json` (not repo root).
+- Vercel Hobby caps crons at **2**. schedule-sync was extended to also run odds-refresh inline.
+- Supabase Free tier's `db.<ref>.supabase.co` direct hostname is IPv6-only — residential networks can't reach it. Use the **session pooler** hostname instead: `aws-1-us-east-1.pooler.supabase.com:5432`.
+- Supabase Site URL must be set to the prod URL; default `localhost:3000` breaks email links.
+- Vercel dashboard UI truncated JWT pastes on long values — values got cut mid-token, causing "invalid API key" errors. Fix: paste via Vercel REST API or CLI with TTY. PowerShell/bash piping to `vercel env add` SAVED EMPTY STRINGS in this session's environment (CLI appears to need real TTY stdin).
+- `GEO_ALLOW_STATES` env var was empty → every user got geo-blocked. Fixed by baking default ALLOW list into middleware code as fallback (`apps/web/middleware.ts` now has hardcoded default).
+- Server-side page fetch used `NEXT_PUBLIC_APP_URL` with `localhost:3000` fallback — broke on Vercel. Fixed with VERCEL_URL fallback + explicit env var.
 
 ## Done
 
@@ -40,7 +60,8 @@ Last updated: 2026-04-22 (OPERATING MODE PIVOT — personal use, SaaS dormant)
 
 ## In Progress
 
-- (none — awaiting user direction on TASK-012 infra provisioning and ML model training)
+- **ML model training (background agent)** — training LightGBM models for moneyline/run line/totals; building FastAPI Fly.io worker skeleton; running 2024 holdout backtest against the $59 backfill. Does NOT deploy to Fly.io (gated on Kyle's confirmation per Auto Mode). Started 2026-04-23.
+- **MLB edge research (background agent)** — researching professional gambler strategies, unexplored MLB market inefficiencies, and out-of-the-box edges. Producing `docs/research/mlb-edge-research.md` for the ML engineer to iterate with post-baseline. Kyle specifically asked for depth on pro strategies and contrarian angles. Started 2026-04-23.
 
 ## Recent Completion
 
