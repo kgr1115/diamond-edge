@@ -1,0 +1,35 @@
+# Env files — NEVER commit these
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (worker/)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node at repo root (if ever added)
+node_modules/
+
+# Local-only data (historical backfills, model artifacts, experiment outputs)
+data/
+/models/*/artifacts/
+/models/*/checkpoints/
+
+# Tooling caches
+.cache/
+*.log
+
+# IDE
+.vscode/
+.idea/
