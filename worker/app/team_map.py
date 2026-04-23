@@ -80,6 +80,9 @@ MLB_STATS_TEAM_ID: dict[str, int] = {
 
 ABBR_TO_FULL_NAME: dict[str, str] = {v: k for k, v in ODDS_NAME_TO_ABBR.items() if k not in ("Cleveland Indians", "Athletics")}
 
+# Reverse lookup: MLB Stats API team ID → abbreviation
+MLB_ID_TO_ABBR: dict[int, str] = {v: k for k, v in MLB_STATS_TEAM_ID.items()}
+
 # Park center-field bearing in compass degrees (from home plate toward CF).
 # Used to compute dot product with wind direction → weather_wind_to_cf feature.
 # Source: stadium orientation references; static until teams move.
