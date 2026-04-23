@@ -487,68 +487,117 @@ def plot_reliability_diagram(
 # ---------------------------------------------------------------------------
 # ROI simulation (flat + Kelly)
 # ---------------------------------------------------------------------------
+def _flat_pnl_for_bet(odds_int: int, won: bool) -> float:
+    """Return flat-$100 P&L for a single bet."""
+    if odds_int > 0:
+        profit_if_win = float(odds_int)
+    else:
+        profit_if_win = 100.0 * 100.0 / abs(odds_int)
+    return profit_if_win if won else -100.0
+
+
+def _kelly_pnl_for_bet(ev: float, odds_int: int, bankroll: float,
+                        fraction: float, won: bool) -> tuple[float, float]:
+    """Return (stake, kelly_pnl) for a single Kelly bet. Caps stake at 10% of bankroll."""
+    kf = kelly_fraction(ev, odds_int, fraction)
+    stake = min(bankroll * kf, bankroll * 0.10)  # BANKROLL-03 cap
+    if odds_int > 0:
+        kprofit = stake * odds_int / 100.0
+    else:
+        kprofit = stake * 100.0 / abs(odds_int)
+    return stake, (kprofit if won else -stake)
+
+
 def simulate_roi(
     model_probs: np.ndarray,
     y_true: np.ndarray,
-    best_odds: np.ndarray,
+    primary_odds: np.ndarray,
     ev_threshold: float = 0.02,
     kelly_fraction_param: float = 0.25,
+    opposing_odds: np.ndarray | None = None,
 ) -> dict:
     """
     Simulate ROI for picks above ev_threshold.
-    Also simulates 0.25 Kelly staking.
+
+    model_probs — calibrated P(primary side wins), e.g. P(home win) or P(over)
+    y_true      — 1 if primary side won, 0 otherwise
+    primary_odds — best American odds available for the primary side (DK/FD max)
+    opposing_odds — best American odds for the opposing side (away / under).
+                    When provided the simulator evaluates BOTH sides per game
+                    and bets whichever has the higher EV above threshold
+                    (skips game if neither side clears the threshold).
+                    Without this, only the primary side is evaluated — which
+                    was the original home-side-only bias.
+
+    Returns flat ($100/pick) and 0.25-Kelly ROI dicts.
     """
     results = {
         "flat": {"n": 0, "wagered": 0.0, "profit": 0.0, "roi": 0.0, "wins": 0, "max_drawdown": 0.0},
         "kelly025": {"n": 0, "wagered": 0.0, "profit": 0.0, "roi": 0.0, "wins": 0, "max_drawdown": 0.0},
     }
 
-    BANKROLL = 1000.0  # notional starting bankroll for Kelly simulation
-
-    flat_pnl = []
-    kelly_pnl = []
+    BANKROLL = 1000.0
+    flat_pnl: list[float] = []
+    kelly_pnl: list[float] = []
     kelly_bank = BANKROLL
 
-    for prob, outcome, odds in zip(model_probs, y_true, best_odds):
-        if pd.isna(prob) or pd.isna(outcome) or pd.isna(odds):
-            continue
-        ev = compute_ev(float(prob), int(odds))
-        if ev < ev_threshold:
+    iter_cols = zip(model_probs, y_true, primary_odds)
+    opp = opposing_odds if opposing_odds is not None else np.full(len(primary_odds), np.nan)
+
+    for (prob, outcome, p_odds), o_odds in zip(iter_cols, opp):
+        if pd.isna(prob) or pd.isna(outcome) or pd.isna(p_odds):
             continue
 
-        # Flat $100 simulation
-        if int(odds) > 0:
-            profit_if_win = int(odds)
-        else:
-            profit_if_win = int(100 * 100 / abs(int(odds)))
+        prob = float(prob)
+        p_odds_int = int(p_odds)
 
-        if int(outcome) == 1:
-            flat_pnl.append(profit_if_win)
-            results["flat"]["wins"] += 1
+        # Primary-side EV: model prob vs primary-side odds
+        ev_primary = compute_ev(prob, p_odds_int)
+
+        # Opposing-side EV: (1 - model_prob) vs opposing odds
+        ev_opposing = -999.0
+        o_odds_int: int | None = None
+        if not pd.isna(o_odds):
+            o_odds_int = int(o_odds)
+            ev_opposing = compute_ev(1.0 - prob, o_odds_int)
+
+        # Choose which side to bet (if any)
+        bet_primary = ev_primary >= ev_threshold
+        bet_opposing = (o_odds_int is not None) and (ev_opposing >= ev_threshold)
+
+        if not bet_primary and not bet_opposing:
+            continue
+
+        # If both sides clear threshold, take the higher-EV side
+        if bet_primary and bet_opposing:
+            bet_primary = ev_primary >= ev_opposing
+
+        if bet_primary:
+            bet_odds = p_odds_int
+            bet_ev = ev_primary
+            won = int(outcome) == 1
         else:
-            flat_pnl.append(-100)
+            bet_odds = o_odds_int  # type: ignore[assignment]
+            bet_ev = ev_opposing
+            won = int(outcome) == 0  # opposing side wins when primary side loses
+
+        # Flat $100
+        flat_result = _flat_pnl_for_bet(bet_odds, won)
+        flat_pnl.append(flat_result)
         results["flat"]["wagered"] += 100
         results["flat"]["n"] += 1
+        if won:
+            results["flat"]["wins"] += 1
 
-        # 0.25 Kelly simulation
-        kf = kelly_fraction(ev, int(odds), kelly_fraction_param)
-        stake = kelly_bank * kf
-        stake = min(stake, kelly_bank * 0.10)  # BANKROLL-03: cap at 10%/day (per pick here)
-
-        if int(odds) > 0:
-            kprofit = stake * int(odds) / 100.0
-        else:
-            kprofit = stake * 100.0 / abs(int(odds))
-
-        if int(outcome) == 1:
-            kelly_pnl.append(kprofit)
-            kelly_bank += kprofit
-            results["kelly025"]["wins"] += 1
-        else:
-            kelly_pnl.append(-stake)
-            kelly_bank -= stake
+        # 0.25 Kelly
+        stake, kresult = _kelly_pnl_for_bet(bet_ev, bet_odds, kelly_bank,
+                                             kelly_fraction_param, won)
+        kelly_pnl.append(kresult)
+        kelly_bank += kresult
         results["kelly025"]["wagered"] += stake
         results["kelly025"]["n"] += 1
+        if won:
+            results["kelly025"]["wins"] += 1
 
     # Flat stats
     if flat_pnl:
@@ -557,7 +606,6 @@ def simulate_roi(
         results["flat"]["roi"] = round(
             results["flat"]["profit"] / results["flat"]["wagered"] * 100, 2
         ) if results["flat"]["wagered"] > 0 else 0.0
-        # Max drawdown
         running_max = np.maximum.accumulate(cum)
         drawdowns = running_max - cum
         results["flat"]["max_drawdown"] = float(drawdowns.max()) if len(drawdowns) > 0 else 0.0
@@ -686,32 +734,48 @@ def train_market(
     print(f"  Max calibration deviation: {max_dev:.3f} (target < 0.05)")
     print(f"  Reliability diagram: {diag_path}")
 
-    # Best odds for EV simulation
-    best_odds_col = {
+    # Best odds for EV simulation — both primary and opposing sides
+    # Primary: the side aligned with model_prob (home win / over)
+    # Opposing: the other side (away win / under); needed to avoid home-side-only bias
+    primary_odds_cols = {
         "moneyline": ("dk_ml_home", "fd_ml_home"),
         "run_line": ("dk_rl_home_price", "fd_rl_home_price"),
         "totals": ("dk_over_price", "fd_over_price"),
     }[market]
+    opposing_odds_cols = {
+        "moneyline": ("dk_ml_away", "fd_ml_away"),
+        "run_line": ("dk_rl_away_price", "fd_rl_away_price"),
+        "totals": ("dk_under_price", "fd_under_price"),
+    }[market]
 
-    def get_best_odds(df_sub: pd.DataFrame) -> np.ndarray:
-        c1, c2 = best_odds_col
-        v1 = df_sub.get(c1, pd.Series([-110] * len(df_sub))).fillna(-110).values
-        v2 = df_sub.get(c2, pd.Series([-110] * len(df_sub))).fillna(-110).values
+    def get_best_odds(df_sub: pd.DataFrame, cols: tuple[str, str],
+                      default: int = -110) -> np.ndarray:
+        c1, c2 = cols
+        v1 = df_sub.get(c1, pd.Series([default] * len(df_sub))).fillna(default).values
+        v2 = df_sub.get(c2, pd.Series([default] * len(df_sub))).fillna(default).values
+        # For negative (favourite) odds the larger value is better for the bettor;
+        # np.maximum picks the less-negative (best) available price.
         return np.maximum(v1, v2)
 
-    holdout_odds = get_best_odds(holdout)
+    holdout_primary_odds = get_best_odds(holdout, primary_odds_cols)
+    holdout_opposing_odds = get_best_odds(holdout, opposing_odds_cols)
 
     # ROI simulation at multiple EV thresholds
     roi_stats = {}
     for ev_thr in [0.02, 0.04, 0.06]:
         roi_stats[f"ev_thr_{int(ev_thr*100)}pct"] = simulate_roi(
-            cal_hold, y_hold, holdout_odds, ev_threshold=ev_thr
+            cal_hold, y_hold, holdout_primary_odds,
+            ev_threshold=ev_thr,
+            opposing_odds=holdout_opposing_odds,
         )
 
-    # Pick frequency per tier
+    # Pick frequency per tier — use the better EV across both sides
     evs = np.array([
-        compute_ev(float(p), int(o))
-        for p, o in zip(cal_hold, holdout_odds)
+        max(
+            compute_ev(float(p), int(po)),
+            compute_ev(1.0 - float(p), int(oo)),
+        )
+        for p, po, oo in zip(cal_hold, holdout_primary_odds, holdout_opposing_odds)
     ])
     tiers = np.array([
         assign_confidence_tier(ev) for ev in evs

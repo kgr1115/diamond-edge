@@ -1,6 +1,7 @@
 {
-  "backtest_date": "2026-04-23T08:02:41.091861+00:00",
+  "backtest_date": "2026-04-23T08:32:41.004864+00:00",
   "holdout_season": 2024,
+  "bias_fix_applied": "bidirectional EV (both home/away or over/under evaluated per game)",
   "markets": {
     "moneyline": {
       "market": "moneyline",
@@ -114,72 +115,72 @@
       "roi_simulation": {
         "ev_thr_2pct": {
           "flat": {
-            "n": 860,
-            "wagered": 86000.0,
-            "profit": 92737.0,
-            "roi": 107.83,
-            "wins": 406,
-            "max_drawdown": 1650.0
+            "n": 1899,
+            "wagered": 189900.0,
+            "profit": 162438.21951334318,
+            "roi": 85.54,
+            "wins": 878,
+            "max_drawdown": 2363.077171699071
           },
           "kelly025": {
-            "n": 860,
-            "wagered": 9.54489064550535e+23,
-            "profit": 6.525064585806489e+23,
-            "roi": 68.36,
-            "wins": 406,
-            "max_drawdown": 2.608478172263329e+23
+            "n": 1899,
+            "wagered": 8.143642763543405e+38,
+            "profit": 6.526926075756287e+38,
+            "roi": 80.15,
+            "wins": 878,
+            "max_drawdown": 2.2509240136658074e+38
           }
         },
         "ev_thr_4pct": {
           "flat": {
-            "n": 799,
-            "wagered": 79900.0,
-            "profit": 94397.0,
-            "roi": 118.14,
-            "wins": 381,
-            "max_drawdown": 1610.0
+            "n": 1475,
+            "wagered": 147500.0,
+            "profit": 166222.02618896725,
+            "roi": 112.69,
+            "wins": 678,
+            "max_drawdown": 2579.6458616010877
           },
           "kelly025": {
-            "n": 799,
-            "wagered": 1.059708861492738e+24,
-            "profit": 7.262849531058969e+23,
-            "roi": 68.54,
-            "wins": 381,
-            "max_drawdown": 2.9034171571895216e+23
+            "n": 1475,
+            "wagered": 1.0977402135160449e+39,
+            "profit": 9.143226249351696e+38,
+            "roi": 83.29,
+            "wins": 678,
+            "max_drawdown": 3.2390221737482057e+38
           }
         },
         "ev_thr_6pct": {
           "flat": {
-            "n": 666,
-            "wagered": 66600.0,
-            "profit": 95203.0,
-            "roi": 142.95,
-            "wins": 316,
-            "max_drawdown": 1400.0
+            "n": 1293,
+            "wagered": 129300.0,
+            "profit": 167242.19994902925,
+            "roi": 129.34,
+            "wins": 591,
+            "max_drawdown": 2161.09090909091
           },
           "kelly025": {
-            "n": 666,
-            "wagered": 1.1205908260328979e+24,
-            "profit": 8.126593429034341e+23,
-            "roi": 72.52,
-            "wins": 316,
-            "max_drawdown": 3.08439991113411e+23
+            "n": 1293,
+            "wagered": 1.218829478984976e+39,
+            "profit": 1.0458456578496561e+39,
+            "roi": 85.81,
+            "wins": 591,
+            "max_drawdown": 3.5798482482377786e+38
           }
         }
       },
       "tier_pick_counts": {
-        "tier_1": 973,
-        "tier_2": 860,
-        "tier_3": 799,
-        "tier_4": 666,
-        "tier_5": 573
+        "tier_1": 2071,
+        "tier_2": 1899,
+        "tier_3": 1475,
+        "tier_4": 1293,
+        "tier_5": 1082
       },
       "win_rates_by_tier": {
-        "tier_1_win_rate": 0.48672566371681414,
-        "tier_2_win_rate": 0.4098360655737705,
-        "tier_3_win_rate": 0.48872180451127817,
-        "tier_4_win_rate": 0.45161290322580644,
-        "tier_5_win_rate": 0.4781849912739965
+        "tier_1_win_rate": 0.5174418604651163,
+        "tier_2_win_rate": 0.5023584905660378,
+        "tier_3_win_rate": 0.5054945054945055,
+        "tier_4_win_rate": 0.4834123222748815,
+        "tier_5_win_rate": 0.5231053604436229
       },
       "research_features_added": [
         "home_is_opener",
@@ -202,7 +203,9 @@
         "TTOP computed from IP proxy not true pitch count \u2014 rough approximation",
         "Opener detection uses 5-start avg IP heuristic, not beat-news signal",
         "Model trained on 2022 only (1 season) \u2014 add 2023 in v1.1 with walk-forward CV"
-      ]
+      ],
+      "backtest_rerun_at": "2026-04-23T08:32:40.919121+00:00",
+      "backtest_bias_fix": "bidirectional EV \u2014 evaluates both primary and opposing side per game"
     },
     "run_line": {
       "market": "run_line",
@@ -332,72 +335,72 @@
       "roi_simulation": {
         "ev_thr_2pct": {
           "flat": {
-            "n": 269,
-            "wagered": 26900.0,
-            "profit": 4394.0,
-            "roi": 16.33,
-            "wins": 119,
-            "max_drawdown": 1455.0
+            "n": 2298,
+            "wagered": 229800.0,
+            "profit": 89385.5864074823,
+            "roi": 38.9,
+            "wins": 1466,
+            "max_drawdown": 947.8869778869921
           },
           "kelly025": {
-            "n": 269,
-            "wagered": 7871.666864917246,
-            "profit": 356.2647483089464,
-            "roi": 4.53,
-            "wins": 119,
-            "max_drawdown": 437.41913907973014
+            "n": 2298,
+            "wagered": 2.5213464461588277e+33,
+            "profit": 1.384520000920581e+33,
+            "roi": 54.91,
+            "wins": 1466,
+            "max_drawdown": 1.4667197891478454e+32
           }
         },
         "ev_thr_4pct": {
           "flat": {
-            "n": 237,
-            "wagered": 23700.0,
-            "profit": 4295.0,
-            "roi": 18.12,
-            "wins": 104,
-            "max_drawdown": 1269.0
+            "n": 2178,
+            "wagered": 217800.0,
+            "profit": 89210.16750436214,
+            "roi": 40.96,
+            "wins": 1398,
+            "max_drawdown": 1038.796068796073
           },
           "kelly025": {
-            "n": 237,
-            "wagered": 7913.128600340787,
-            "profit": 362.61145365182904,
-            "roi": 4.58,
-            "wins": 104,
-            "max_drawdown": 452.73225552072824
+            "n": 2178,
+            "wagered": 2.4558171151974365e+33,
+            "profit": 1.3826394274702802e+33,
+            "roi": 56.3,
+            "wins": 1398,
+            "max_drawdown": 1.4471923599190656e+32
           }
         },
         "ev_thr_6pct": {
           "flat": {
-            "n": 218,
-            "wagered": 21800.0,
-            "profit": 3962.0,
-            "roi": 18.17,
-            "wins": 94,
-            "max_drawdown": 1069.0
+            "n": 2115,
+            "wagered": 211500.0,
+            "profit": 88888.34291963419,
+            "roi": 42.03,
+            "wins": 1361,
+            "max_drawdown": 909.0909090909117
           },
           "kelly025": {
-            "n": 218,
-            "wagered": 7738.52544687951,
-            "profit": 298.8570218445153,
-            "roi": 3.86,
-            "wins": 94,
-            "max_drawdown": 449.28982890642357
+            "n": 2115,
+            "wagered": 2.3579327172069843e+33,
+            "profit": 1.3270103288112334e+33,
+            "roi": 56.28,
+            "wins": 1361,
+            "max_drawdown": 1.3889660393259555e+32
           }
         }
       },
       "tier_pick_counts": {
-        "tier_1": 291,
-        "tier_2": 269,
-        "tier_3": 237,
-        "tier_4": 218,
-        "tier_5": 200
+        "tier_1": 2346,
+        "tier_2": 2298,
+        "tier_3": 2178,
+        "tier_4": 2115,
+        "tier_5": 2019
       },
       "win_rates_by_tier": {
-        "tier_1_win_rate": 0.4090909090909091,
-        "tier_2_win_rate": 0.46875,
-        "tier_3_win_rate": 0.5263157894736842,
-        "tier_4_win_rate": 0.3888888888888889,
-        "tier_5_win_rate": 0.435
+        "tier_1_win_rate": 0.4375,
+        "tier_2_win_rate": 0.44166666666666665,
+        "tier_3_win_rate": 0.4444444444444444,
+        "tier_4_win_rate": 0.4166666666666667,
+        "tier_5_win_rate": 0.337295690936107
       },
       "research_features_added": [
         "home_is_opener",
@@ -420,7 +423,9 @@
         "TTOP computed from IP proxy not true pitch count \u2014 rough approximation",
         "Opener detection uses 5-start avg IP heuristic, not beat-news signal",
         "Model trained on 2022 only (1 season) \u2014 add 2023 in v1.1 with walk-forward CV"
-      ]
+      ],
+      "backtest_rerun_at": "2026-04-23T08:32:40.956430+00:00",
+      "backtest_bias_fix": "bidirectional EV \u2014 evaluates both primary and opposing side per game"
     },
     "totals": {
       "market": "totals",
@@ -528,72 +533,72 @@
       "roi_simulation": {
         "ev_thr_2pct": {
           "flat": {
-            "n": 885,
-            "wagered": 88500.0,
-            "profit": 15808.0,
-            "roi": 17.86,
-            "wins": 485,
-            "max_drawdown": 2126.0
+            "n": 1263,
+            "wagered": 126300.0,
+            "profit": 22656.99469848294,
+            "roi": 17.94,
+            "wins": 711,
+            "max_drawdown": 2041.9333254581761
           },
           "kelly025": {
-            "n": 885,
-            "wagered": 346930116.621085,
-            "profit": 80921908.12735313,
-            "roi": 23.33,
-            "wins": 485,
-            "max_drawdown": 28140535.14753221
+            "n": 1263,
+            "wagered": 11820901337.492174,
+            "profit": 3657497352.750544,
+            "roi": 30.94,
+            "wins": 711,
+            "max_drawdown": 946671978.0858309
           }
         },
         "ev_thr_4pct": {
           "flat": {
-            "n": 673,
-            "wagered": 67300.0,
-            "profit": 15985.0,
-            "roi": 23.75,
-            "wins": 379,
-            "max_drawdown": 1400.0
+            "n": 924,
+            "wagered": 92400.0,
+            "profit": 23512.62382813982,
+            "roi": 25.45,
+            "wins": 542,
+            "max_drawdown": 1331.068166746485
           },
           "kelly025": {
-            "n": 673,
-            "wagered": 325307523.51989436,
-            "profit": 82198878.48247789,
-            "roi": 25.27,
-            "wins": 379,
-            "max_drawdown": 28195923.957841918
+            "n": 924,
+            "wagered": 11883956567.540884,
+            "profit": 3974355887.6612864,
+            "roi": 33.44,
+            "wins": 542,
+            "max_drawdown": 1027162241.563308
           }
         },
         "ev_thr_6pct": {
           "flat": {
-            "n": 552,
-            "wagered": 55200.0,
-            "profit": 17407.0,
-            "roi": 31.53,
-            "wins": 325,
-            "max_drawdown": 1379.0
+            "n": 746,
+            "wagered": 74600.0,
+            "profit": 23817.523827950707,
+            "roi": 31.93,
+            "wins": 453,
+            "max_drawdown": 996.4123730396423
           },
           "kelly025": {
-            "n": 552,
-            "wagered": 340706082.6650352,
-            "profit": 100636406.17949042,
-            "roi": 29.54,
-            "wins": 325,
-            "max_drawdown": 33514609.5923813
+            "n": 746,
+            "wagered": 11008982100.269165,
+            "profit": 4166593039.482283,
+            "roi": 37.85,
+            "wins": 453,
+            "max_drawdown": 1045639749.9858496
           }
         }
       },
       "tier_pick_counts": {
-        "tier_1": 1223,
-        "tier_2": 885,
-        "tier_3": 673,
-        "tier_4": 552,
-        "tier_5": 500
+        "tier_1": 1630,
+        "tier_2": 1263,
+        "tier_3": 924,
+        "tier_4": 746,
+        "tier_5": 636
       },
       "win_rates_by_tier": {
-        "tier_1_win_rate": 0.4556213017751479,
-        "tier_2_win_rate": 0.5,
-        "tier_3_win_rate": 0.4462809917355372,
-        "tier_4_win_rate": 0.5961538461538461,
-        "tier_5_win_rate": 0.588
+        "tier_1_win_rate": 0.4659400544959128,
+        "tier_2_win_rate": 0.49262536873156343,
+        "tier_3_win_rate": 0.42696629213483145,
+        "tier_4_win_rate": 0.5181818181818182,
+        "tier_5_win_rate": 0.5251572327044025
       },
       "research_features_added": [
         "home_is_opener",
@@ -616,7 +621,9 @@
         "TTOP computed from IP proxy not true pitch count \u2014 rough approximation",
         "Opener detection uses 5-start avg IP heuristic, not beat-news signal",
         "Model trained on 2022 only (1 season) \u2014 add 2023 in v1.1 with walk-forward CV"
-      ]
+      ],
+      "backtest_rerun_at": "2026-04-23T08:32:41.003545+00:00",
+      "backtest_bias_fix": "bidirectional EV \u2014 evaluates both primary and opposing side per game"
     }
   }
 }

@@ -538,10 +538,18 @@ def add_market_features(schedule: pd.DataFrame, odds_df: pd.DataFrame) -> pd.Dat
     schedule["dk_rl_home_point"] = -1.5
     schedule["fd_rl_home_price"] = -110
     schedule["fd_rl_home_point"] = -1.5
+    # Away run-line prices: needed for bidirectional EV computation in ROI simulator
+    schedule["dk_rl_away_price"] = -110
+    schedule["dk_rl_away_point"] = 1.5
+    schedule["fd_rl_away_price"] = -110
+    schedule["fd_rl_away_point"] = 1.5
     schedule["dk_over_price"] = -110
     schedule["dk_over_point"] = 8.5
     schedule["fd_over_price"] = -110
     schedule["fd_over_point"] = 8.5
+    # Under price: needed for bidirectional EV computation in ROI simulator
+    schedule["dk_under_price"] = -110
+    schedule["fd_under_price"] = -110
 
     if odds_df.empty:
         return schedule
@@ -585,11 +593,14 @@ def add_market_features(schedule: pd.DataFrame, odds_df: pd.DataFrame) -> pd.Dat
         total_col = "dk_over_point_odds"
     merged["posted_total_line"] = merged[total_col].fillna(8.5)
 
-    # Copy odds columns back to schedule
+    # Copy odds columns back to schedule.
+    # Away RL and under prices are EV-computation-only; not model features.
     odds_passthrough_cols = [
         "dk_ml_home", "fd_ml_home", "dk_ml_away", "fd_ml_away",
         "dk_rl_home_price", "dk_rl_home_point", "fd_rl_home_price", "fd_rl_home_point",
+        "dk_rl_away_price", "dk_rl_away_point", "fd_rl_away_price", "fd_rl_away_point",
         "dk_over_price", "dk_over_point", "fd_over_price", "fd_over_point",
+        "dk_under_price", "fd_under_price",
     ]
 
     for c in odds_passthrough_cols:

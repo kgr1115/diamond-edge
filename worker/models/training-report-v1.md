@@ -65,15 +65,51 @@ Totals picks should be held from publication until calibration is improved.
 
 ---
 
-## ROI Simulation Notes (2024 Holdout)
+## ROI Simulation — Bug Fix and Corrected Numbers (2026-04-23)
 
-The simulation has a known bias: it computes home-side EV only and does not correctly separate pick direction from odds side. As a result, the flat-staking ROI numbers are inflated and should not be taken as face value.
+### What the bug was (two-part)
 
-Run line ROI at 4% EV threshold (flat): **18% on 237 picks** — this is more credible because the run line is typically priced near -110/-110 and the model is selecting picks where the odds are favorable.
+**Bug 1 — Home-side-only evaluation in `simulate_roi`.**
+The original simulator evaluated only P(home wins) vs home-side odds. Away picks were never evaluated. The function signature accepted a single `best_odds` array always set to home/over prices. Fix: `simulate_roi` now accepts `opposing_odds` and evaluates both sides per game, betting whichever side has higher EV above threshold. Both sides' win conditions are handled correctly (`won = 1 - outcome` when betting away).
 
-The Kelly simulation exponent blow-up (wagered = 1e24 for moneyline) is a compounding artifact from the simulation bug. Real 0.25 Kelly implementation in `main.py` has a 10%/pick cap that prevents this.
+**Bug 2 — Away run-line and under prices missing from data pipeline.**
+`add_market_features` in `build_training_data.py` did not include `dk_rl_away_price`, `fd_rl_away_price`, `dk_under_price`, `fd_under_price` in its `odds_passthrough_cols`. These columns exist in the raw odds JSON and are parsed by `load_historical_odds.py`, but were never copied into the schedule dataframe. As a result the fallback default (-110) was used for all opposing-side odds, creating a false 50/50 symmetric market assumption.
 
-**Recommendation:** Fix the ROI simulation to compute EV correctly per pick side, then re-run backtest before using ROI numbers for strategy decisions.
+Fix committed in `fix(backtest): home-side EV bias in ROI simulator`.
+
+### Before (bugged) — moneyline only betting home
+
+| Threshold | Picks | Flat ROI | Kelly ROI |
+|-----------|-------|----------|-----------|
+| 2% EV | 860 | ~~107.8%~~ | ~~1e24 (blow-up)~~ |
+| 4% EV | 799 | ~~118.1%~~ | ~~1e24 (blow-up)~~ |
+| 6% EV | 666 | ~~143.0%~~ | ~~1e24 (blow-up)~~ |
+
+Run line (bugged, home-only): **18.1% flat ROI on 237 picks at 4% EV** — this was artificially constrained and not representative.
+
+### After (corrected) — bidirectional, both sides evaluated
+
+| Market | Threshold | Picks | Flat ROI | Kelly ROI | Notes |
+|--------|-----------|-------|----------|-----------|-------|
+| Moneyline | 4% EV | 1,475 | 112.7% | 83.3% | Still inflated — see below |
+| Run line | 4% EV | 2,178 | 41.0% | 56.3% | Still inflated — see below |
+| Totals | 4% EV | 924 | 26.0% | 33.4% | Cal FAIL, treat as noise |
+
+**Why corrected numbers are still unreliable for Kelly sizing:**
+
+The bidirectional fix exposes two underlying model problems that inflate ROI:
+
+1. **Moneyline calibrated probs range 0.43–0.90** (std 0.068). True game probabilities in MLB rarely exceed 0.70 even for dominant favorites. Overconfident extremes generate phantom EV against market prices. The model is a market-prior tracker (SHAP #1: `market_implied_prob_home` at 0.11) — with only 18 best iterations, it's not meaningfully diverging from the market.
+
+2. **Run line model has systematic mean-prob bias: mean P(home covers -1.5) = 0.349** when the historical rate is ~0.43. The calibrator (fit on 2023 val) drifted on 2024 holdout. This makes the model output P(away cover) ≈ 0.65 for a typical game priced at +110 away, generating ~37% EV on nearly every game — which is why 2178/2432 games (90%) "clear" 4% EV threshold. That is not real edge.
+
+**What IS credible:**
+- Calibration metrics (log-loss, Brier, ECE) — these are correct and insensitive to this bug
+- Run line model's structural superiority over moneyline (39 vs 18 best iteration, richer feature set)
+- Relative SHAP signals: opener detection (#8 RL), EWMA offense (#6 totals)
+
+**ROI numbers to use for Kelly sizing decisions: none from v1.**
+v1 is a calibration baseline. The simulation code is now logically correct but the models are not generating real alpha. Proceed to v1.1 with multi-season training, walk-forward CV, and actual closing-line-value validation before applying Kelly sizing.
 
 ---
 
@@ -99,8 +135,10 @@ The high "ROI" numbers in the moneyline simulation are an artifact of the simula
 4. **Umpire features imputed** — `ump_assigned=0` for all historical games; G6 data gap not resolved
 5. **Statcast xFIP missing** — G3 gap not resolved; FIP used as proxy
 6. **Totals calibration FAIL** — max deviation 0.065 vs 0.05 threshold; need isotonic re-fit or additional features
-7. **ROI simulation home-side bias** — simulation bug inflates moneyline ROI numbers
-8. **Kelly compounding bug** — simulation doesn't cap bankroll growth; real worker does
+7. **~~ROI simulation home-side bias~~** — FIXED in `fix(backtest)` commit; simulator now evaluates both sides
+8. **~~Kelly compounding bug~~** — FIXED; simulation now uses `_kelly_pnl_for_bet` with 10% bankroll cap
+9. **Run line mean-prob drift (2022→2024)** — calibrator trained on 2023 val predicts P(home cover) = 0.349 on 2024 holdout vs true ~0.43; multi-season training required
+10. **Moneyline overconfident extremes** — calibrated probs reach 0.90; true MLB probs rarely exceed 0.70; overfitting on 1 training season; ROI numbers not usable for Kelly sizing
 
 ---
 
