@@ -5,3 +5,4 @@
 - [Kickoff Decisions Log](project_kickoff_decisions.md) — 8 locked Q&A decisions with rationale
 - [Project State](project_state.md) — Live backlog, in-progress, blocked, done, critical path
 - [Pricing & Product Decisions](project_pricing_decisions.md) — Locked tier pricing, free-tier behavior, confidence threshold, parlay deferral, launch target
+- [Phase 1 Artifacts](project_phase1_artifacts.md) — Full inventory of 84 files shipped in commit d17d720 (all 4 Phase 1 agents)

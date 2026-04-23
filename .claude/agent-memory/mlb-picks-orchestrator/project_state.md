@@ -4,9 +4,9 @@ description: Current backlog, in-progress work, blockers, critical path, and ope
 type: project
 ---
 
-Last updated: 2026-04-22 (Phase 1 agents actively spawned — session 2)
+Last updated: 2026-04-22 (Phase 2 tasks spawned — session 3)
 
-## Status: Phase 1 active. Four agents running in parallel. User confirmed all 5 product decisions ("go with the recommendations").
+## Status: Phase 2 active. Four agents running in parallel.
 
 ## Done
 
@@ -15,18 +15,14 @@ Last updated: 2026-04-22 (Phase 1 agents actively spawned — session 2)
 - CLAUDE.md written (project source of truth)
 - 9 specialist agent definitions created (.claude/agents/)
 - Git repo initialized at C:\Projects\Baseball_Edge (commit d3255d2)
-- TASK-001 (Architect) COMPLETE:
-  - ADR-001: repo folder structure (Next.js + Fly.io worker + Supabase)
-  - docs/schema/schema-v1.md: 11-table Postgres schema with full RLS policies
-  - docs/api/api-contracts-v1.md: 13 typed API routes
-  - docs/schema/caching-strategy.md: 7 Redis resources with justified TTLs
-  - docs/api/ml-output-contract.md: PickCandidate schema + pipeline seam
-- TASK-002 (Compliance) COMPLETE:
-  - docs/compliance/state-matrix.md: 51-state DK+FD matrix; 25 ALLOW jurisdictions
-  - docs/compliance/geo-block-spec.md: IP geo strategy, frontend+backend handoff
-  - docs/compliance/copy/responsible-gambling.md: 5 surfaces, real NCPG resources
-  - docs/compliance/age-gate-spec.md: DOB flow, failure behavior, audit log
-  - docs/compliance/launch-checklist.md: 9-category pre-launch checklist, all attorney items
+- Phase 0 artifacts committed (commit 285091e): architecture, schema, API contracts, compliance
+- Phase 1 COMPLETE (commit d17d720, 84 files):
+  - TASK-001 (Architect): ADR-001, schema-v1.md, api-contracts-v1.md, caching-strategy.md, ml-output-contract.md
+  - TASK-002 (Compliance): state-matrix.md (25 ALLOW states), geo-block-spec.md, responsible-gambling.md, age-gate-spec.md, launch-checklist.md
+  - TASK-003 (Backend): Next.js 15 scaffold, 7 Supabase migrations, middleware, age-gate route, picks/today route, Stripe webhook route, Redis cache lib, TypeScript types
+  - TASK-004 (Data Engineer): Odds API client/transform/poll, MLB Stats API (schedule/rosters/box-scores), Open-Meteo weather, cron handlers, rate-limit budget
+  - TASK-005 (ML Engineer): Feature specs (moneyline/run-line/totals), backtest harness, calibration spec, Fly.io runtime decision, PickCandidate Python schema
+  - TASK-006 (DevOps): vercel.json (4 crons), GitHub Actions CI + migrations workflows, fly.toml, 3 runbooks, cost projection, secrets manifest
 - 5 user product decisions locked (2026-04-22):
   - Free tier: NO LLM call (side + confidence only)
   - Minimum confidence: Tier 3+ (EV > 4%), ~3-6 picks/day
@@ -34,12 +30,12 @@ Last updated: 2026-04-22 (Phase 1 agents actively spawned — session 2)
   - Parlays: deferred to v1.1
   - Soft launch: UNCONFIRMED — working assumption 2026-06-03
 
-## In Progress
+## In Progress (Phase 2)
 
-- TASK-003 (mlb-backend): Scaffold Next.js 15 app, Supabase migrations, auth + age-gate + geo-block middleware
-- TASK-004 (mlb-data-engineer): The Odds API integration design, MLB Stats API ingestion, caching layer
-- TASK-005 (mlb-ml-engineer): Feature engineering scope, model selection (ML/totals/run-line), inference runtime decision
-- TASK-006 (mlb-devops): Provision Vercel + Supabase + Upstash, CI/CD skeleton, secrets management
+- TASK-007 (mlb-ai-reasoning): Prompt design, cost model, eval harness — brief at docs/briefs/TASK-007-ai-reasoning.md
+- TASK-008 (mlb-frontend): Slate view, pick detail, bankroll dashboard, subscription paywall — brief at docs/briefs/TASK-008-frontend.md
+- TASK-009 (mlb-backend focused): Stripe checkout + portal routes, product seeding — brief at docs/briefs/TASK-009-stripe-billing.md
+- TASK-010-pre (mlb-backend + ml-engineer coordination): Pick pipeline Edge Function — brief at docs/briefs/TASK-010-pre-pick-pipeline.md
 
 ## Blocked
 
@@ -47,33 +43,36 @@ Last updated: 2026-04-22 (Phase 1 agents actively spawned — session 2)
 - LLC formation — HARD PRE-LAUNCH BLOCKER (not a build blocker)
 - Attorney review of all compliance docs — HARD PRE-LAUNCH BLOCKER
 - Soft launch date — UNCONFIRMED (working assumption: 2026-06-03)
-- Fly.io worker vs. Edge Function for ML inference — TASK-005 must resolve this (unblocks TASK-006)
+- Full Statcast feature integration — Pick pipeline Phase 2 uses simplified features; full Statcast requires TASK-004 data pipeline to be fully operational with real API keys
+- ML model training — No trained model artifact yet; Fly.io worker will return empty candidates until training completes (staging blocker, not a code blocker)
+
+## Phase 3 (not yet spawned — after Phase 2 completes)
+
+- TASK-011 (QA): E2E tests, pick pipeline validation, golden-path tests, staging gate
+- TASK-012 (DevOps): Real Vercel/Supabase/Upstash/Fly projects provisioned, secrets wired, monitoring live
 
 ## Critical Path (ordered)
 
 1. [DONE] Architect: data model, API contracts, folder structure
 2. [DONE] Compliance: legal launch states (25 ALLOW states)
-3. [IN PROGRESS] TASK-003: Backend scaffold + Supabase migrations + auth middleware
-4. [IN PROGRESS] TASK-004: Data ingestion layer (odds + MLB stats)
-5. [IN PROGRESS] TASK-005: ML feature scope + model selection + runtime decision
-6. [IN PROGRESS] TASK-006: DevOps provisioning + CI/CD
-7. NEXT (Phase 2): TASK-007 — AI Reasoning (reads TASK-005 output + ml-output-contract.md)
-8. NEXT (Phase 2): TASK-008 — Frontend slate view + pick detail + subscription flow (reads TASK-003 routes)
-9. NEXT (Phase 2): TASK-009 — Stripe billing integration (reads pricing decisions + TASK-003 backend)
-10. Final: TASK-010 — QA end-to-end + pick pipeline validation
-11. Launch — after attorney review, trademark clearance, LLC formation
-
-## Phase 2 Dependencies (not yet delegated)
-
-- TASK-007 (AI Reasoning): needs TASK-005 complete (inference runtime locked)
-- TASK-008 (Frontend): needs TASK-003 complete (API routes stable)
-- TASK-009 (Stripe billing): needs TASK-003 complete (auth + profiles table stable); pricing confirmed
-- TASK-010 (QA): needs TASK-003 + TASK-004 + TASK-005 + TASK-007 + TASK-008 + TASK-009
+3. [DONE] TASK-003: Backend scaffold + Supabase migrations + auth middleware
+4. [DONE] TASK-004: Data ingestion layer (odds + MLB stats)
+5. [DONE] TASK-005: ML feature scope + model selection + runtime decision (Fly.io confirmed)
+6. [DONE] TASK-006: DevOps provisioning + CI/CD
+7. [IN PROGRESS] TASK-007 — AI Reasoning
+8. [IN PROGRESS] TASK-008 — Frontend slate + pick detail + billing UI
+9. [IN PROGRESS] TASK-009 — Stripe billing routes
+10. [IN PROGRESS] TASK-010-pre — Pick pipeline Edge Function
+11. [NEXT PHASE] TASK-011 — QA end-to-end + pick pipeline validation
+12. [NEXT PHASE] TASK-012 — DevOps: real infra provisioned
+13. Launch — after attorney review, trademark clearance, LLC formation
 
 ## Open Questions for User (decisions needed)
 
-1. **Soft launch date:** Working assumption is 2026-06-03 (~6 weeks). Confirm or adjust — guides sprint pressure.
-2. **LLC formation timing:** Is Kyle forming it now in parallel with build? Hard blocker before first paid subscription.
+1. **Soft launch date:** Working assumption is 2026-06-03 (~6 weeks from 2026-04-22). Confirm or adjust.
+2. **LLC formation timing:** Forming in parallel with build? Hard blocker before first paid subscription.
+3. **Trademark clearance:** USPTO check against "Diamond Edge Technology LLC" — status unknown. Must complete before launch.
+4. **Marketing plan:** No marketing strategy defined yet. Not a build blocker but a launch blocker.
 
 ## Key Architecture / Product Decisions (locked)
 
@@ -89,3 +88,6 @@ Last updated: 2026-04-22 (Phase 1 agents actively spawned — session 2)
 - Free tier: NO LLM call — side + confidence only
 - Minimum confidence: Tier 3+ (EV > 4%), ~3-6 picks/day published
 - Pricing: Free (no card) / Pro $19/mo / Elite $39/mo
+- Required tier mapping: confidence_tier >= 5 → elite; confidence_tier 3-4 → pro; below 3 → not published
+- Rationale tier routing: Haiku 4.5 for Pro, Sonnet 4.6 for Elite (locked, from kickoff decision #8)
+- Pick pipeline: Supabase Edge Function orchestrates; Fly.io worker does ML inference + rationale proxy
