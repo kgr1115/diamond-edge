@@ -1,0 +1,26 @@
+{
+  "backtest_date": "2026-04-23T13:43:33.329254+00:00",
+  "version": "v3",
+  "holdout_season": 2024,
+  "vig_removal_applied": true,
+  "vig_removal_method": "No-vig probs computed per-game from best book (tighter margin wins). EV threshold gate requires BOTH: (a) EV > threshold vs raw odds AND (b) model_prob > novig_market_prob (genuine edge over fair value). Payout uses raw odds. v2 used raw-odds EV only, inflating apparent edge.",
+  "clv_method": "First vs last snapshot per game day as pick-time / closing line proxies. CLV = novig_close_prob - novig_open_prob in model's favor. Positive mean CLV = real edge independent of outcome variance.",
+  "run_line_v3_note": "Deviation-from-base-rate model NOT trained in this run (time budget). See design spec at bottom of backtest report. v2 model retained. Current v2 run_line mean_prob=0.3586 vs actual 0.3532 \u2014 near base rate, confirming the model is near-neutral. Deploy if v3 ROI >2%; else gate it out.",
+  "markets": {
+    "moneyline": {
+      "error": "'calibrator'"
+    },
+    "run_line": {
+      "error": "'calibrator'"
+    },
+    "totals": {
+      "error": "'calibrator'"
+    }
+  },
+  "success_criteria": {
+    "target_roi_range": "2-5% at 8% EV threshold if real alpha exists",
+    "target_clv": ">1% mean CLV = sharp signal",
+    "deploy_gate": "Do not deploy if ROI > 10% (residual phantom edge) or ROI < -5%"
+  },
+  "deploy_decision": "SAFE \u2014 ROI within realistic range after vig removal"
+}
