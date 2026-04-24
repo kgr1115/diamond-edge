@@ -86,7 +86,19 @@ export interface PicksMeta {
   below_threshold: number;
   ev_threshold: number;
   confidence_threshold: number;
+  /** ISO timestamp of the most recent row in `odds`. Null if none found. */
+  last_odds_snapshot_at: string | null;
+  /** True when snapshot age exceeds ODDS_STALE_MIN. */
+  odds_stale: boolean;
 }
+
+// Freshness thresholds (minutes). Single source of truth — do not duplicate
+// in UI components. Odds-poll runs daily at 10:00 ET via schedule-sync, so a
+// 90-minute staleness window gives one full cron cycle of tolerance during
+// game-day hours. Amber is early warning, red is escalate-now.
+export const ODDS_STALE_MIN = 90;
+export const ODDS_AMBER_MIN = 60;
+export const ODDS_RED_MIN = 180;
 
 export interface PicksSlateResponse {
   date: string;
@@ -365,10 +377,14 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
   const gamesAnalyzed = gamesCountResult.count ?? 0;
   const belowThreshold = shadowCountResult.count ?? 0;
   const lastSnapshot = (oddsRecencyResult.data ?? [])[0]?.snapshotted_at as string | undefined;
-  const snapshotAgeHours = lastSnapshot
-    ? (Date.now() - new Date(lastSnapshot).getTime()) / 3_600_000
-    : Infinity;
+  const snapshotAgeMs = lastSnapshot ? Date.now() - new Date(lastSnapshot).getTime() : Infinity;
+  const snapshotAgeHours = snapshotAgeMs / 3_600_000;
   const pipelineRan = gamesAnalyzed > 0 && snapshotAgeHours < 12;
+
+  // Clock-drift guard: a future snapshot (client clock skew in theory, server
+  // clock skew in practice) must not panic the UI — treat as fresh.
+  const snapshotAgeMinNonNegative = Math.max(0, snapshotAgeMs / 60_000);
+  const oddsStale = lastSnapshot !== undefined && snapshotAgeMinNonNegative >= ODDS_STALE_MIN;
 
   const meta: PicksMeta = {
     pipeline_ran: pipelineRan,
@@ -376,6 +392,8 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
     below_threshold: belowThreshold,
     ev_threshold: 0.08,
     confidence_threshold: 5,
+    last_odds_snapshot_at: lastSnapshot ?? null,
+    odds_stale: oddsStale,
   };
 
   console.info({

@@ -22,6 +22,23 @@ export function RefreshOddsButton({ userTier }: Props) {
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
 
+  if (userTier === 'pro') {
+    // Visible but disabled so Pro users discover the capability without
+    // implying they can use it. Copy stays informational — no false
+    // entitlement claim, no "click to upgrade" trickery.
+    return (
+      <button
+        type="button"
+        disabled
+        title="Manual odds refresh is an Elite feature."
+        aria-label="Manual odds refresh is an Elite feature."
+        className="text-xs px-3 py-1.5 rounded border border-gray-800 bg-gray-900/60 text-gray-600 cursor-not-allowed"
+      >
+        Refresh odds (Elite)
+      </button>
+    );
+  }
+
   if (userTier !== 'elite') return null;
 
   async function handleClick() {

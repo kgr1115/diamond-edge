@@ -63,6 +63,7 @@ All page and component files under `apps/web/app/` and `apps/web/components/`. C
 - Error state: "Unable to load picks. Please refresh." — do not expose error detail to users.
 - Slim responsible-gambling banner at top (Surface 1 short version from compliance doc).
 - Sticky footer disclaimer (Surface 1 footer version).
+- Freshness badge in the header row ("Odds updated Xm ago") driven by `PicksMeta.last_odds_snapshot_at`; color thresholds live in `lib/picks/load-slate.ts` (`ODDS_AMBER_MIN`, `ODDS_RED_MIN`, `ODDS_STALE_MIN`). When `meta.odds_stale` is true, pick cards also surface a "Line may be stale" label under the price.
 
 **2. `/picks/[id]` — Pick Detail** (`apps/web/app/picks/[id]/page.tsx`)
 - Server Component. Fetches `/api/picks/[id]` server-side.
@@ -125,6 +126,7 @@ All page and component files under `apps/web/app/` and `apps/web/components/`. C
 
 **9. `apps/web/components/picks/pick-card.tsx`**
 - Reusable card for slate and detail views. Accepts a pick object (shaped per API response) and tier. Applies field-presence gating (not tier logic — just renders what's in the response).
+- Urgency badge next to game time: countdown pill ("in 2h 14m") for scheduled games (neutral > 2h, amber < 2h, red < 30m) and state pill ("Live" / "Final" / "PPD" / "Cancelled") for non-scheduled games. Non-scheduled cards render at `opacity-60` to signal the market is no longer bettable. Pure logic lives in `lib/picks/urgency.ts` (`resolveUrgency`) — single source of truth, unit-tested in `lib/picks/__tests__/urgency.test.ts`. The badge is informational only; no CTA copy anywhere on the card.
 
 **10. `apps/web/components/picks/confidence-badge.tsx`**
 - Renders confidence_tier (1–5) as a visual indicator (stars, diamonds, colored dots — your design call, but consistent with dark-mode-first theme).

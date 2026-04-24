@@ -5,7 +5,14 @@ import { RefreshOddsButton } from '@/components/picks/refresh-odds-button';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
 import { SlatePicksGrid } from '@/components/picks/slate-picks-grid';
 import type { Database } from '@/lib/types/database';
-import { loadPicksSlate, todayInET, type UserTier } from '@/lib/picks/load-slate';
+import {
+  loadPicksSlate,
+  todayInET,
+  ODDS_AMBER_MIN,
+  ODDS_RED_MIN,
+  type UserTier,
+  type PicksMeta,
+} from '@/lib/picks/load-slate';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +41,43 @@ async function getUserTierAndState(): Promise<{ tier: UserTier; geoState: string
     tier: (profile?.subscription_tier as UserTier) ?? 'free',
     geoState: profile?.geo_state ?? null,
   };
+}
+
+function formatRelativeAge(minutes: number): string {
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${Math.floor(minutes)}m ago`;
+  const hours = minutes / 60;
+  if (hours < 24) {
+    const h = Math.floor(hours);
+    const m = Math.floor(minutes - h * 60);
+    return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
+  }
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function FreshnessBadge({ meta }: { meta: PicksMeta }) {
+  if (!meta.last_odds_snapshot_at) return null;
+
+  const ageMs = Date.now() - new Date(meta.last_odds_snapshot_at).getTime();
+  // Clock-drift guard: a negative age means client/server clock skew. Treat
+  // as fresh (0) rather than rendering a red panic state.
+  const ageMin = Math.max(0, ageMs / 60_000);
+
+  const tone =
+    ageMin >= ODDS_RED_MIN
+      ? 'bg-red-950/60 border-red-900/70 text-red-300'
+      : ageMin >= ODDS_AMBER_MIN
+        ? 'bg-amber-950/60 border-amber-900/70 text-amber-300'
+        : 'bg-gray-900 border-gray-800 text-gray-400';
+
+  return (
+    <span
+      className={`text-xs px-2 py-0.5 rounded border font-medium ${tone}`}
+      title={`Odds last refreshed at ${new Date(meta.last_odds_snapshot_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })} ET`}
+    >
+      Odds updated {formatRelativeAge(ageMin)}
+    </span>
+  );
 }
 
 function TierBadge({ tier }: { tier: string }) {
@@ -110,17 +154,18 @@ async function PicksContent() {
 
   return (
     <>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-white">Today&apos;s Picks</h1>
           <p className="text-sm text-gray-400 mt-1">{today}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <TierBadge tier={data.user_tier} />
             <span className="text-sm text-gray-500">
               {data.total} {data.total === 1 ? 'pick' : 'picks'}
             </span>
+            {data.total > 0 && <FreshnessBadge meta={data.meta} />}
           </div>
           <RefreshOddsButton userTier={data.user_tier} />
         </div>

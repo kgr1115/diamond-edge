@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ConfidenceBadge } from './confidence-badge';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
+import { resolveUrgency, type UrgencyState, type UrgencyVariant } from '@/lib/picks/urgency';
 
 interface PickCardProps {
   pick: {
@@ -28,6 +29,8 @@ interface PickCardProps {
     has_note?: boolean;
   };
   userTier: 'anon' | 'free' | 'pro' | 'elite';
+  /** When true, the slate's latest odds snapshot is past the freshness threshold. */
+  oddsStale?: boolean;
 }
 
 function formatOdds(price: number): string {
@@ -46,6 +49,27 @@ function formatGameTime(utc: string | null): string {
     timeZone: 'America/New_York',
     timeZoneName: 'short',
   });
+}
+
+function UrgencyPill({ state }: { state: UrgencyState }) {
+  const styles: Record<UrgencyVariant, string> = {
+    'countdown-neutral': 'bg-gray-800 text-gray-400 border-gray-700',
+    'countdown-amber': 'bg-amber-950/60 text-amber-300 border-amber-800/60',
+    'countdown-red': 'bg-red-950/60 text-red-300 border-red-800/60',
+    'live': 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60',
+    'final': 'bg-gray-800 text-gray-400 border-gray-700',
+    'off': 'bg-gray-800 text-gray-400 border-gray-700',
+  };
+  const isCountdown = state.variant.startsWith('countdown-');
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border ${styles[state.variant]}`}
+      aria-label={isCountdown ? `Time to first pitch ${state.label}` : state.label}
+    >
+      {isCountdown && <span aria-hidden>⏱</span>}
+      {state.label}
+    </span>
+  );
 }
 
 function ResultBadge({ result }: { result: string }) {
@@ -121,21 +145,29 @@ function PickHeadline({ pick }: { pick: PickCardProps['pick'] }) {
   );
 }
 
-export function PickCard({ pick, userTier }: PickCardProps) {
+export function PickCard({ pick, userTier, oddsStale = false }: PickCardProps) {
   const isProEligible = userTier === 'pro' || userTier === 'elite';
   const hasProData = pick.best_line_price !== undefined;
   const showPaywall = !isProEligible && pick.required_tier !== 'free';
 
+  const urgency = resolveUrgency(pick.game.status, pick.game.game_time_utc, Date.now());
+  const cardDim = urgency?.dim ?? false;
+
   return (
     <Link href={`/picks/${pick.id}`} className="block group">
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors min-w-0">
+      <div
+        className={`bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors min-w-0 ${cardDim ? 'opacity-60' : ''}`}
+      >
         {/* Matchup + game time + result */}
         <div className="flex items-start justify-between gap-2 mb-3 flex-wrap">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-100 truncate">
               {pick.game.away_team.abbreviation} @ {pick.game.home_team.abbreviation}
             </p>
-            <p className="text-xs text-gray-500 mt-0.5">{formatGameTime(pick.game.game_time_utc)}</p>
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              <p className="text-xs text-gray-500">{formatGameTime(pick.game.game_time_utc)}</p>
+              {urgency && <UrgencyPill state={urgency} />}
+            </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {pick.has_note && (
@@ -164,6 +196,9 @@ export function PickCard({ pick, userTier }: PickCardProps) {
                 <span className="text-xs text-gray-500 font-sans ml-1.5">@ {pick.best_line_book}</span>
               )}
             </p>
+          )}
+          {hasProData && oddsStale && (
+            <p className="mt-1 text-xs text-amber-400 font-sans">Line may be stale</p>
           )}
         </div>
 
