@@ -253,9 +253,11 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
     query = query.eq('visibility', requestedVisibility);
   }
 
-  if (userTier === 'anon' || userTier === 'free') {
-    query = query.eq('required_tier', 'free');
-  }
+  // Free/anon viewers see live picks too — `maskPick` below strips tier-gated
+  // fields (price, rationale, EV, SHAP, line snapshots) and the PickCard renders
+  // an upgrade-to-Pro paywall nudge. Filtering by `required_tier='free'` here
+  // produced an empty slate because the pipeline only emits `pro`/`elite` picks
+  // by design (per TASK-010-pre), making the paywall UI unreachable.
 
   if (market) {
     query = query.eq('market', market);

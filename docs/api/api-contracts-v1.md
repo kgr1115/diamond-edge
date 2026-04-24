@@ -22,7 +22,7 @@
 
 ### Auth
 - Routes marked **Auth: required** expect a Supabase session JWT in the `Authorization: Bearer <token>` header.
-- Routes marked **Auth: optional** serve degraded content to unauthenticated users (free-tier picks only).
+- Routes marked **Auth: optional** serve degraded content to unauthenticated users — same live picks as pro/elite viewers, but with tier-gated fields (price, rationale, EV, SHAP, line snapshots) masked and a paywall teaser rendered in their place.
 - Service-role-only routes (cron, webhooks) are authenticated by a `CRON_SECRET` or Stripe signature — not user JWTs.
 
 ### Tier Gating
@@ -50,7 +50,7 @@ Redis key patterns and TTLs are specified per route. See `docs/schema/caching-st
 
 Today's pick slate. Tier-gated.
 
-**Auth:** Optional (anon gets free-tier picks only)
+**Auth:** Optional (anon/free see all live picks with tier-gated fields masked + paywall teaser)
 
 **Query params:**
 ```
