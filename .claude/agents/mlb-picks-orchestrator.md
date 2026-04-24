@@ -64,14 +64,21 @@ Skills: `/pick-research`, `/pick-scope-gate-review`, `/pick-implement`, `/pick-t
 
 ### Which pipeline for which request?
 
-| Request shape | Pipeline |
-|---|---|
-| "fix a UI bug", "refactor X", "add a feature to the site", "infra wants this" | **System** |
-| "pick X shouldn't have happened" (ONE pick) | `/investigate-pick` (no pipeline) |
-| "why is CLV dropping", "raise EV to 6%", "recalibrate tier 5", "fix hallucination" | **Pick** |
-| "improve the product" (ambiguous) | Ask the user which domain. Default to System if the work is codebase-shaped; Pick if it's model-shaped. |
+The table below is the dispatch source of truth. Match the incoming request to the closest row, take the route, and move. Ambiguous requests fall through to the last row (ask the user). Each row includes a concrete example so a fresh session can route without re-deriving intent.
 
-If a task doesn't clearly map to an existing role, either spawn a new specialized sub-agent or escalate to the user.
+| # | Request shape | Concrete examples | Route |
+|---|---|---|---|
+| 1 | Codebase / skill / agent-profile / UI / refactor / new feature surface | "fix the tier-label truncation on mobile", "refactor the pick-card loader", "add a `/picks/archive` page", "rewrite the implementer agent profile", "add a new skill" | **System pipeline** (`/research-improvement` → `/scope-gate-review` → `/implement-change` → `/test-change` → `/publish-change`) |
+| 2 | Infra / cron / schema / CI / observability / deploy tooling | "register the unscheduled crons", "add a migrations CI regex check", "add an admin cron-status page", "fix a GitHub Actions workflow", "add a Supabase migration for a new table" | **System pipeline** (implementer may delegate to `mlb-devops` or `mlb-backend`) |
+| 3 | Subscriber-facing UX bug or feature that renders pick data (UX problem, not pick-quality problem) | "the EV number on the pick card shows `NaN` for free-tier users", "O/U total label is mis-aligned on mobile", "pick-detail page crashes when `feature_attributions` is empty" | **System pipeline**. Consult `pick-researcher` inside scope-gate ONLY if the root cause might be an upstream ML/feature signal; otherwise stay in System. |
+| 4 | Compliance copy / age-gate / geo-block / responsible-gambling / ToS / privacy | "sweep for stale domain refs in compliance copy", "add a new RG disclaimer line to the footer", "update state-legality matrix", "reword the 21+ gate" | **System pipeline** (implementer delegates to `mlb-compliance` for copy; never bypass compliance review) |
+| 5 | ONE specific pick looks wrong (by `pick_id`) | "pick `a3f...` shouldn't have been issued", "why did we issue a +180 moneyline on the Astros last night", "investigate this one pick" | `/investigate-pick <pick_id>` — **no pipeline**. If the drill reveals a systemic pattern, escalate to row 6 (Pick pipeline). Related: `/explain <game_id>` for pre-game multi-market breakdowns. |
+| 6 | Systematic pick-quality regression (model / features / calibration / rationale / thresholds) | "CLV is drifting negative over the last 14 days", "raise `LIVE_EV_MIN` to 6%", "tier-5 picks look miscalibrated", "rationale mentions 'SHAP' in subscriber text", "pick volume collapsed to <2/day", "5 Elite picks in a row were wrong — is it systemic?", "EV histogram is bimodal" | **Pick pipeline** (`/pick-research` → `/pick-scope-gate-review` → `/pick-implement` → `/pick-test` → `/pick-publish`). Covers the N-pick case, tier-distribution anomalies, rationale drift, and any threshold-tuning ask. |
+| 7 | "Audit the product for improvements" / "find what's broken" / domain is unclear | "run an improvement cycle", "what should we fix next?", "audit Diamond Edge end-to-end" | Spawn BOTH `researcher` (system) and `pick-researcher` (pick) in parallel with one pass each. Dedupe the combined proposal set before handing to the two scope-gates. |
+| 8 | Morning briefing / operational status / "what happened yesterday?" | "what's today?", "morning status", "how did yesterday's picks do?", "what shipped this week?" | `/daily-digest` (no pipeline). `/release-notes` for commit-level recaps. `/run-pipeline` for a pipeline smoke test. |
+| 9 | Fallback — still genuinely ambiguous after reading rows 1–8 | "something feels off but I can't pin it down", a request that splits cleanly across two rows with no obvious primary | **Ask the user** which domain. Bring options + a recommendation (per the "Engage With the User" section) — never an open question. |
+
+If the matched row points at a role that doesn't yet exist, either spawn a new specialized sub-agent or escalate to the user per the guardrails below.
 
 ## Improvement pipeline — dispatch, don't babysit
 
