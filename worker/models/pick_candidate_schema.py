@@ -382,7 +382,51 @@ def select_best_line(
     return max(candidates, key=lambda x: x[0])
 
 
-def sort_attributions(attributions: list[FeatureAttribution]) -> list[FeatureAttribution]:
-    """Sort feature attributions by absolute SHAP value, descending. Top 7 returned."""
+# Near-zero SHAP filter — per pick-scope-gate proposal #6 (2026-04-24).
+# SHAP values below this magnitude are effectively noise (the degenerate B2
+# moneyline model produces many exact-zero SHAP values; the v4 classifier's
+# healthy top-50 features are all above this threshold).  Filtering upstream
+# (at pick-write time) rather than downstream (at rationale-render time)
+# keeps the picks table clean AND keeps the rationale cache hash stable,
+# since the hash is computed on the written feature_attributions array.
+SHAP_NEAR_ZERO_THRESHOLD = 1e-4
+
+# Minimum attributions kept even after filtering — matches Pro tier's
+# 2-citation floor in worker/app/rationale.py.  If the filter would leave
+# fewer than this, we fall back to the next-highest-by-magnitude features
+# so the rationale generator always has something to cite.  The
+# "insufficient grounding" case (when even the fallback is degenerate) is
+# the rationale generator's responsibility.
+MIN_ATTRIBUTIONS_FLOOR = 2
+
+
+def sort_attributions(
+    attributions: list[FeatureAttribution],
+    top_k: int = 7,
+    near_zero_threshold: float = SHAP_NEAR_ZERO_THRESHOLD,
+    min_floor: int = MIN_ATTRIBUTIONS_FLOOR,
+) -> list[FeatureAttribution]:
+    """
+    Sort feature attributions by |shap_value| desc, drop near-zero entries,
+    return up to top_k.
+
+    If the post-filter list has fewer than min_floor entries, the highest-
+    magnitude filtered-out entries are added back to reach min_floor
+    (preserving a stable, deterministic order).  Output is fully determined
+    by the input, so rationale cache hashing stays stable.
+    """
     sorted_attrs = sorted(attributions, key=lambda a: abs(a.shap_value), reverse=True)
-    return sorted_attrs[:7]
+    kept = [a for a in sorted_attrs if abs(a.shap_value) >= near_zero_threshold]
+
+    if len(kept) < min_floor:
+        needed = min_floor - len(kept)
+        dropped = [a for a in sorted_attrs if abs(a.shap_value) < near_zero_threshold]
+        kept = kept + dropped[:needed]
+        if kept:
+            print(
+                f"[WARN] near-zero SHAP filter: only {len(kept) - needed} "
+                f"attribution(s) above |{near_zero_threshold}|; "
+                f"falling back to next-highest magnitude to reach floor={min_floor}"
+            )
+
+    return kept[:top_k]

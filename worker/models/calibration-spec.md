@@ -265,12 +265,20 @@ assign_confidence_tier(ev, uncertainty) → confidence_tier ∈ {1,2,3,4,5}
         ↓
 Filter: confidence_tier >= 3 → PickCandidate published
         ↓
-feature_attributions (SHAP top 7) computed
+feature_attributions (SHAP top 7, |shap| ≥ 1e-4) computed
         ↓
 PickCandidate written to Fly.io /predict response
 ```
 
 The filter `confidence_tier >= 3` (EV > 4%) is a **locked decision** per TASK-005 brief. Do not relax this threshold for v1.
+
+### SHAP near-zero filter (pick-scope-gate proposal #6, 2026-04-24)
+
+Attributions with `|shap_value| < 1e-4` are dropped from `feature_attributions` before the top-7 truncation in `sort_attributions` (see `worker/models/pick_candidate_schema.py`). If fewer than 2 attributions survive (Pro tier's citation floor in `worker/app/rationale.py`), the next-highest-by-magnitude dropped entries are backfilled so the rationale generator always has the Pro-tier floor to cite, and a `[WARN] near-zero SHAP filter` log line is emitted.
+
+Rationale: the degenerate B2 moneyline model (`manifest_b2.json.shap_top10`) emits many exactly-zero SHAP values; without filtering, the rationale layer cites features the model has no opinion about. Filtering upstream (at pick-write time) rather than downstream (at rationale-render time) keeps the picks table clean AND preserves cache-hash stability for `rationale_cache.prompt_hash`.
+
+The threshold is stored as `SHAP_NEAR_ZERO_THRESHOLD = 1e-4` in `pick_candidate_schema.py`. The minimum backfill floor is `MIN_ATTRIBUTIONS_FLOOR = 2`, matching Pro's 2-citation rationale-eval rule. Applies to NEW picks only; historical rows are not retroactively filtered.
 
 ---
 
