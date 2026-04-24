@@ -646,11 +646,16 @@ def train_market_versioned(
         for k in roi_results
     )
 
-    # Save model artifact
+    # Save model artifact. `delta_source` tells the serving path how to
+    # derive the delta from model output:
+    #   regressor_raw            -> model.predict(x) returns delta directly
+    #   classifier_minus_prior   -> delta = model.predict_proba(x)[:, 1] - prior
     artifact = {
         "model": final_model,
         "features": available_features,
         "delta_clip": _DELTA_CLIP,
+        "delta_source": delta_source,
+        "prior_feature_name": prior_col,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "training_protocol": "walk_forward_b2_monthly_retrain",
     }
@@ -661,6 +666,7 @@ def train_market_versioned(
 
     metrics = {
         "market": market,
+        "delta_source": delta_source,
         "holdout_2024": {
             "n": len(holdout),
             "rmse_b2": round(rmse_hold, 4),
@@ -853,7 +859,31 @@ def should_promote(
     prior_ll = (prior_metrics.get("holdout_2024") or {}).get("log_loss_new_model")
 
     if prior_ll is None:
-        return True, "Prior model log_loss not recorded — promoting new model"
+        # Prior artifact exists but its metrics.json lacks log_loss_new_model —
+        # this happens when the prior was written by train_b2_delta.train_b2_market
+        # (the pre-monthly.py training path). Without a comparable log_loss we
+        # can't enforce the no-regression gate, so fall back to the null-prior
+        # policy: refuse auto-promote, require manual sign-off via promote.py.
+        # Pre-fix behavior here was "auto-promote because no prior log_loss" —
+        # that silently bypassed the gate and allowed moneyline-b2-v3 (the
+        # iter-1 passthrough) to ship without comparative evidence.
+        if not force_promote_no_prior:
+            return False, (
+                "Prior model log_loss not recorded (stale-schema prior) — "
+                "awaiting manual sign-off. Run `python -m worker.models.retrain.promote "
+                f"--market {market} --timestamp <ts>` to activate, "
+                "or re-invoke retrain with --force-promote-no-prior --yes."
+            )
+        if new_best_iter is not None and new_best_iter <= 1:
+            return False, (
+                f"Rejected even with --force-promote-no-prior: "
+                f"lgbm_best_iteration={new_best_iter} (<= 1) — model found no "
+                "useful split. This is the moneyline-b2-v3 failure mode."
+            )
+        return True, (
+            "Prior log_loss missing; promoted under explicit "
+            f"--force-promote-no-prior override (lgbm_best_iteration={new_best_iter})"
+        )
 
     clv_delta = new_clv - prior_clv
     ll_delta = new_ll - prior_ll  # positive = regression
@@ -1018,8 +1048,18 @@ def run_retrain(
         promote_decisions[market] = (promote, reason)
         log.info(f"  [{market}] Auto-promote: {'YES' if promote else 'NO'} — {reason}")
 
-        is_null_prior = prior_version is None or prior_metrics is None
-        if is_null_prior and not promote:
+        # Flag for manual sign-off when retrain refuses auto-promote because
+        # prior comparison was not possible — either no prior exists at all,
+        # or the prior's metrics.json lacks the log_loss field needed for the
+        # no-regression gate (stale-schema case, e.g., artifacts written by
+        # train_b2_delta.train_b2_market before monthly.py was introduced).
+        prior_log_loss = (prior_metrics or {}).get("holdout_2024", {}).get("log_loss_new_model")
+        unevaluable_prior = (
+            prior_version is None
+            or prior_metrics is None
+            or prior_log_loss is None
+        )
+        if unevaluable_prior and not promote:
             pending_signoff.append(market)
 
         if promote and not dry_run and model_obj is not None:

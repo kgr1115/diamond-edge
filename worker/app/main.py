@@ -184,11 +184,15 @@ def _load_models() -> None:
             model = artifact["model"]
             features = artifact["features"]
 
-            # B2 artifact: keys are model, features, delta_clip, trained_at.
+            # B2 artifact: keys are model, features, delta_clip, trained_at
+            # (plus delta_source added 2026-04-24 for moneyline classifier path).
             # v2 artifact: calibrated_model (CalibratedClassifierCV) or calibrator
-            # (IsotonicRegression). B2 uses LGBMRegressor — predict() returns delta,
-            # not probability. The prior is supplied per-game from market features.
+            # (IsotonicRegression). B2 can be either:
+            #   delta_source == "regressor_raw"           -> model.predict(x) = delta
+            #   delta_source == "classifier_minus_prior"  -> model.predict_proba()[:,1] - prior = delta
+            # Older B2 artifacts without delta_source default to regressor_raw.
             is_b2_regressor = artifact.get("delta_clip") is not None
+            delta_source = artifact.get("delta_source", "regressor_raw")
 
             calibrated_model = artifact.get("calibrated_model")
             calibrator = artifact.get("calibrator")
@@ -209,6 +213,7 @@ def _load_models() -> None:
                 "calibrated_model": calibrated_model,
                 "calibrator": calibrator,
                 "is_b2_regressor": is_b2_regressor,
+                "delta_source": delta_source,
                 "delta_clip": delta_clip,
                 "prob_clip_lo": prob_clip_lo,
                 "prob_clip_hi": prob_clip_hi,
@@ -424,6 +429,7 @@ def run_inference(
     calibrated_model = reg.get("calibrated_model")
     calibrator = reg.get("calibrator")
     is_b2_regressor = reg.get("is_b2_regressor", False)
+    delta_source = reg.get("delta_source", "regressor_raw")
     delta_clip = reg.get("delta_clip", 0.15)
     prob_clip_lo = reg.get("prob_clip_lo", 0.05)
     prob_clip_hi = reg.get("prob_clip_hi", 0.95)
@@ -434,20 +440,28 @@ def run_inference(
     x = _build_feature_vector(feature_names, features)
 
     if is_b2_regressor:
-        # B2 delta model: predict() returns delta (float), not probability.
-        # final_prob = clip(prior + clip(delta, ±delta_clip), 0.05, 0.95)
-        # Prior comes from market_implied_prob_home (or market_novig_home_morning).
-        # Fall back to 0.5 when prior is absent.
-        raw_delta = float(model.predict(x)[0])
-        clipped_delta = float(np.clip(raw_delta, -delta_clip, delta_clip))
-
-        # Prefer novig prior; fall back to vigged implied prob; then 0.5
+        # B2 delta model: derives delta then computes
+        # final_prob = clip(prior + clip(delta, ±delta_clip), 0.05, 0.95).
+        # Prior comes from market_novig_home_morning (preferred) or
+        # market_implied_prob_home; falls back to 0.5.
+        # Two delta_source modes:
+        #   "regressor_raw" — model.predict(x) returns delta (RL/totals).
+        #   "classifier_minus_prior" — model.predict_proba(x)[:,1] minus prior
+        #     gives delta (moneyline; binary classifier on home_win, added
+        #     2026-04-24 per pick-research Proposal 1).
         prior_val = (
             features.get("market_novig_home_morning")
             or features.get("market_implied_prob_home")
         )
         prior = float(prior_val) if prior_val is not None else 0.5
 
+        if delta_source == "classifier_minus_prior":
+            classifier_prob = float(model.predict_proba(x)[0, 1])
+            raw_delta = classifier_prob - prior
+        else:
+            raw_delta = float(model.predict(x)[0])
+
+        clipped_delta = float(np.clip(raw_delta, -delta_clip, delta_clip))
         cal_prob = float(np.clip(prior + clipped_delta, prob_clip_lo, prob_clip_hi))
     elif calibrated_model is not None:
         # v2 CalibratedClassifierCV

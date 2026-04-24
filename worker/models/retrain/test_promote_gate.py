@@ -196,6 +196,55 @@ class TestNonNullPriorGate:
         )
         assert promote is False
 
+    def test_stale_prior_schema_refuses_without_force(self):
+        """Prior metrics.json exists but lacks log_loss_new_model (stale schema
+        from train_b2_delta.train_b2_market writes). Must refuse auto-promote
+        and direct operator to promote.py — not fall through to 'promoting
+        anyway'. This plugged the moneyline-b2-v3 silent-promote loophole
+        (2026-04-24)."""
+        prior_stale = {
+            "market": "moneyline",
+            "result_summary": {"lgbm_best_iteration": 1},
+            # No holdout_2024.log_loss_new_model key — the pre-monthly.py schema.
+        }
+        new = _metrics(log_loss=0.67, clv_pct=-0.3, best_iter=80)
+
+        promote, reason = should_promote(
+            "moneyline", new, prior_version=_prior_version(), prior_metrics=prior_stale,
+        )
+        assert promote is False
+        assert "awaiting manual sign-off" in reason.lower()
+        assert "promote" in reason.lower()
+
+    def test_stale_prior_schema_force_promotes_healthy_model(self):
+        """Operator can still opt-in to promotion on stale-schema prior via
+        --force-promote-no-prior, as long as the new model isn't itself
+        degenerate (best_iter <= 1)."""
+        prior_stale = {"market": "moneyline"}
+        new = _metrics(log_loss=0.67, clv_pct=-0.3, best_iter=80)
+
+        promote, _ = should_promote(
+            "moneyline", new, prior_version=_prior_version(), prior_metrics=prior_stale,
+            force_promote_no_prior=True,
+        )
+        assert promote is True
+
+    def test_stale_prior_schema_force_rejects_iter_one_model(self):
+        """Even with --force-promote-no-prior, a degenerate new model
+        (best_iter <= 1) must be rejected on stale-prior. Prevents the
+        moneyline-b2-v3 failure mode from recurring."""
+        prior_stale = {"market": "moneyline"}
+        new_bad = _metrics(log_loss=0.68, clv_pct=-0.3, best_iter=1,
+                           nonzero_delta_rate_02=0.0, delta_std=0.003)
+
+        promote, reason = should_promote(
+            "moneyline", new_bad, prior_version=_prior_version(), prior_metrics=prior_stale,
+            force_promote_no_prior=True,
+        )
+        assert promote is False
+        # The variance-collapse guardrail fires first and cites all three signals.
+        assert "lgbm_best_iteration=1" in reason
+
 
 # ---------------------------------------------------------------------------
 # check_variance_collapse — P7 guardrail (2026-04-24)

@@ -65,6 +65,8 @@ H2_2023_CUTOFF = "2023-07-01"
 DELTA_CLIP = 0.15
 
 # LightGBM params for regression (MSE objective; calibration via isotonic on H2-2023)
+# Used for run_line and totals B2 delta regressors (both achieve healthy iteration
+# counts: RL ~87, totals ~37 on 2024 holdout per pick-research-2026-04-24).
 LGBM_PARAMS_B2 = {
     "objective": "regression",
     "metric": "rmse",
@@ -78,6 +80,42 @@ LGBM_PARAMS_B2 = {
     "bagging_freq": 5,
     "reg_alpha": 0.1,
     "reg_lambda": 3.0,
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbose": -1,
+}
+
+# Moneyline-specific classifier params (pick-research 2026-04-24 Proposal 1).
+# Rationale: the regression-on-delta target (y_delta_ml = outcome - prior) is
+# essentially Bernoulli noise with mean ~0 at the morning-snapshot feature
+# slice — every regression-loss config early-stops at iter 1 because the
+# residual has no RMSE signal over the global mean. Switching to binary
+# classification on the absolute outcome (home_win) gives LightGBM a true
+# learning signal; the delta is then computed at serve-time as
+#   delta = classifier_prob(home_win) - market_novig_home_morning
+# which preserves the B2 serving contract (delta-clip pipeline unchanged).
+#
+# Selected via HP sweep on 2024 holdout (2026-04-24):
+#   best_iteration = 144, nonzero_delta_rate_02 = 0.675, delta_std = 0.051
+#   log_loss       = 0.6758 (matches market prior baseline — non-regression)
+#   ECE            = 0.0249 (delta vs prior +0.0049, inside ≤+0.02 gate)
+#   CLV            = -0.25%  (vs prior B2 -1.026% — improvement of +0.776pp)
+# Deeper trees (num_leaves=31, max_depth=5) plus heavier leaf-size regularization
+# (min_child_samples=100) give the model room to fit real signal without
+# overfitting the Bernoulli target.
+LGBM_PARAMS_B2_MONEYLINE_CLS = {
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "n_estimators": 2000,
+    "learning_rate": 0.01,
+    "num_leaves": 31,
+    "max_depth": 5,
+    "min_child_samples": 100,
+    "feature_fraction": 0.6,
+    "bagging_fraction": 0.7,
+    "bagging_freq": 5,
+    "reg_alpha": 1.0,
+    "reg_lambda": 5.0,
     "random_state": 42,
     "n_jobs": -1,
     "verbose": -1,
@@ -474,6 +512,40 @@ def _train_lgbm_regressor(
         X_tr, y_tr,
         eval_set=[(X_es, y_es)],
         callbacks=[lgb.early_stopping(60, verbose=False), lgb.log_evaluation(-1)],
+    )
+    print(f"  [{label}] Best iteration: {model.best_iteration_} ({time.time()-t0:.1f}s)")
+    return model
+
+
+def _train_lgbm_classifier_b2_moneyline(
+    X_train: np.ndarray,
+    y_binary_train: np.ndarray,
+    label: str,
+    es_frac: float = 0.10,
+    min_es: int = 100,
+) -> lgb.LGBMClassifier:
+    """
+    Train a binary classifier for moneyline B2. Used only by moneyline because
+    regression-on-delta collapses to iter-1 early-stop on that target (per
+    pick-research 2026-04-24 Proposal 1).
+
+    The classifier predicts P(home_win) directly; callers must convert to
+    delta = predict_proba()[:, 1] - market_novig_home_morning at inference.
+    """
+    n = len(X_train)
+    n_es = max(min_es, int(n * es_frac))
+    X_es = X_train[-n_es:]
+    y_es = y_binary_train[-n_es:]
+    X_tr = X_train[:-n_es]
+    y_tr = y_binary_train[:-n_es]
+
+    print(f"  [{label}] Train: {len(X_tr)} | ES val: {len(X_es)} (temporal last {es_frac*100:.0f}%)...")
+    t0 = time.time()
+    model = lgb.LGBMClassifier(**LGBM_PARAMS_B2_MONEYLINE_CLS)
+    model.fit(
+        X_tr, y_tr,
+        eval_set=[(X_es, y_es)],
+        callbacks=[lgb.early_stopping(150, verbose=False), lgb.log_evaluation(-1)],
     )
     print(f"  [{label}] Best iteration: {model.best_iteration_} ({time.time()-t0:.1f}s)")
     return model
