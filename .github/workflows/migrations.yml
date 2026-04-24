@@ -38,15 +38,18 @@ jobs:
           version: latest
 
       - name: Validate migration file naming
-        # Migration files must be numbered sequentially: YYYYMMDDHHMMSS_description.sql
+        # Migration files may use either of two sequencing conventions:
+        #   - NNNN_description.sql (4-digit sequence — current repo style through 0014_*)
+        #   - YYYYMMDDHHMMSS_description.sql (14-digit timestamp — Supabase CLI default)
+        # Description is lowercase alnum + underscore. Both prefixes coexist in history.
         run: |
           echo "Checking migration file naming conventions..."
           invalid=0
           for f in supabase/migrations/*.sql; do
             basename=$(basename "$f")
-            if ! echo "$basename" | grep -qE '^[0-9]{14}_[a-z0-9_]+\.sql$'; then
+            if ! echo "$basename" | grep -qE '^([0-9]{4}|[0-9]{14})_[a-z0-9_]+\.sql$'; then
               echo "ERROR: Invalid migration filename: $basename"
-              echo "  Expected format: YYYYMMDDHHMMSS_description.sql (lowercase, underscores)"
+              echo "  Expected format: NNNN_description.sql or YYYYMMDDHHMMSS_description.sql (lowercase, underscores)"
               invalid=1
             fi
           done
