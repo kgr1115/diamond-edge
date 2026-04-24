@@ -2,8 +2,24 @@
 
 **Model:** Game total run probability
 **Target:** `P(total runs > posted line)` — binary, calibrated
-**Date:** 2026-04-22
+**Date:** 2026-04-22 (revised 2026-04-24)
 **Author:** mlb-ml-engineer
+
+---
+
+## Zero-Variance Drop (2026-04-24)
+
+Per `pick-research-2026-04-24.md` Proposal 2 and `pick-scope-gate-2026-04-24.md` (APPROVED), the training pipeline now drops any feature whose `train_std == 0.0` before fitting LightGBM. The drop is dynamic — see `worker/models/pipelines/train_b2_delta.drop_zero_variance_features`. Features currently dropped on the totals training run:
+
+- **SP confirmation flags (always 1 in training):** `home_sp_is_confirmed`, `away_sp_is_confirmed`
+- **Weather (imputed constants):** `weather_temp_f`, `weather_temp_deviation_from_avg`, `weather_wind_mph`, `weather_wind_to_cf`, `weather_wind_factor`
+- **Umpire (imputed league-average):** `ump_k_rate_career`, `ump_run_factor`, `ump_assigned`
+- **Park historical totals (imputed 0.5 / 8.5):** `park_historical_ou_over_rate`, `park_avg_total_scored`
+- **Team over rates (imputed 0.5):** `home_team_ou_over_rate_season`, `away_team_ou_over_rate_season`
+- **Game metadata (imputed 0):** `game_is_doubleheader`, `total_line_move_direction`
+- **News features (training-serving skew; imputed 0 historically):** `late_scratch_count`, `late_scratch_war_impact_sum`, `lineup_change_count`, `injury_update_severity_max`, `opener_announced`, `weather_note_flag`
+
+Note that `weather_is_dome` is NOT dropped — it varies with `park_is_dome` across parks. These features are KEPT in the declared spec below so they re-enter the training matrix automatically once their ingesters ship live data.
 
 ---
 

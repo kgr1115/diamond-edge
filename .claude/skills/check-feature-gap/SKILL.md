@@ -1,11 +1,11 @@
 ---
 name: check-feature-gap
-description: Audit Diamond Edge's ML worker feature population — which of the 90 features are actively pulled from data vs defaulting to league averages. Use when picks look off or when adding new data sources. Invoked via /check-feature-gap or when Kyle says "which features are live?", "what's populated?".
+description: Audit Diamond Edge's ML worker feature population — which of the model's declared features are actively pulled from data vs defaulting to league averages. Use when picks look off or when adding new data sources. Invoked via /check-feature-gap or when Kyle says "which features are live?", "what's populated?".
 ---
 
 # Check Feature Gap
 
-Identifies the gap between declared features (90 total) and those actually populated from real data vs defaulting to league-average imputation.
+Identifies the gap between the active model's declared features (post zero-variance drop; exact count is per-market, reported by the worker) and those actually populated from real data vs defaulting to league-average imputation.
 
 ## Instructions
 
@@ -60,7 +60,7 @@ The ML engineer's return reports showed the mapping:
 | SP handedness | 4 | `players.throws` | live |
 | **Total** | **96** (some overlap) | | |
 
-Note: worker reports 90 after deduplication; exact map lives in `worker/app/features.py`.
+Note: worker reports the active-model declared feature count (post zero-variance drop — see `drop_zero_variance_features` in `worker/models/pipelines/train_b2_delta.py`); exact superset map lives in `worker/app/features.py`.
 
 ## Output format
 
@@ -68,7 +68,7 @@ Note: worker reports 90 after deduplication; exact map lives in `worker/app/feat
 Feature gap audit — {timestamp}
 
 Worker health:
-  Live feature count: N/90 ({pct}%)
+  Live feature count: N/<declared> ({pct}%)
   Models loaded: {list}
 
 By category:

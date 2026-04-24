@@ -2,7 +2,7 @@
 
 **Model:** Moneyline win probability
 **Target:** `P(home team wins)` — binary, calibrated
-**Date:** 2026-04-22
+**Date:** 2026-04-22 (revised 2026-04-24)
 **Author:** mlb-ml-engineer
 
 ---
@@ -13,6 +13,21 @@ Every feature below is evaluated against this standard:
 > **"Is this value observable without knowledge of the game's outcome, by a bettor placing a wager no earlier than game-day morning and no later than confirmed lineup posting (~60 min before first pitch)?"**
 
 Features that fail this test are excluded. Features that become more accurate closer to first pitch (e.g., confirmed lineups) are noted — they require the pipeline to wait for lineup confirmation before final prediction.
+
+---
+
+## Zero-Variance Drop (2026-04-24)
+
+Per `pick-research-2026-04-24.md` Proposal 2 and `pick-scope-gate-2026-04-24.md` (APPROVED), the training pipeline now drops any feature whose `train_std == 0.0` before fitting LightGBM. The drop is computed dynamically in `train_b2_delta.drop_zero_variance_features` at train time; the declared set below remains the authoritative serving feature contract. Features currently dropped because the underlying data sources (weather ingester, umpire ingester, lineup/handedness confirmation, news_signals, xWOBA/LOB%) are still data-gap stubs imputed to constants in 2022–H1 2023:
+
+- **Handedness flags (always 1 in training):** `home_sp_is_confirmed`, `home_sp_throws`, `away_sp_is_confirmed`, `away_sp_throws`
+- **Weather (imputed 72 °F / 5 mph / 0 wind-to-CF / 0 wind_factor):** `weather_temp_f`, `weather_wind_mph`, `weather_wind_to_cf`, `weather_wind_factor`
+- **Umpire (imputed league-average):** `ump_k_rate_career`, `ump_run_factor`, `ump_assigned`
+- **Platoon / lineup (imputed 0.5 / 1):** `home_platoon_advantage`, `away_platoon_advantage`, `home_lineup_confirmed`
+- **H2H / market movement (imputed 0.5 / 0):** `h2h_home_wins_pct_season`, `line_move_direction`
+- **News features (training-serving skew; imputed 0 across historical parquet):** `late_scratch_count`, `late_scratch_war_impact_sum`, `lineup_change_count`, `injury_update_severity_max`, `opener_announced`, `weather_note_flag`
+
+These features are KEPT in the declared spec below so they re-enter the training matrix automatically once their ingesters ship live data (weather / umpire / lineup / news). Re-enablement happens on the first retrain where `train_std > 0`.
 
 ---
 

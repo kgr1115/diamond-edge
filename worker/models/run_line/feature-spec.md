@@ -2,7 +2,7 @@
 
 **Model:** Run line cover probability
 **Target:** `P(home team covers −1.5 run line)` — binary, calibrated
-**Date:** 2026-04-22
+**Date:** 2026-04-22 (revised 2026-04-24)
 **Author:** mlb-ml-engineer
 
 ---
@@ -21,6 +21,18 @@ The run line in MLB is almost always set at ±1.5 runs. The home team covers −
 ## Leak Audit Protocol
 
 Identical to `moneyline/feature-spec.md`. All features must be available at bet placement time. No outcome data from today's game is used.
+
+---
+
+## Zero-Variance Drop (2026-04-24)
+
+Per `pick-research-2026-04-24.md` Proposal 2 and `pick-scope-gate-2026-04-24.md` (APPROVED), the training pipeline now drops any feature whose `train_std == 0.0` before fitting LightGBM. The drop is dynamic — see `worker/models/pipelines/train_b2_delta.drop_zero_variance_features`. Features currently dropped on the run-line training run (union of the moneyline zero-var set plus run-line-specific constants):
+
+- **Inherited from moneyline:** `home_sp_is_confirmed`, `home_sp_throws`, `away_sp_is_confirmed`, `away_sp_throws`, `weather_temp_f`, `weather_wind_mph`, `weather_wind_to_cf`, `weather_wind_factor`, `ump_k_rate_career`, `ump_run_factor`, `ump_assigned`, `home_platoon_advantage`, `away_platoon_advantage`, `home_lineup_confirmed`, `h2h_home_wins_pct_season`, `line_move_direction`
+- **Run-line-specific (bullpen save rate imputed 0.65 in 2022–H1 2023):** `home_bp_save_rate_season`, `away_bp_save_rate_season`
+- **News features (training-serving skew; imputed 0 historically):** `late_scratch_count`, `late_scratch_war_impact_sum`, `lineup_change_count`, `injury_update_severity_max`, `opener_announced`, `weather_note_flag`
+
+These features are KEPT in the declared spec below so they re-enter the training matrix automatically once their ingesters ship live data. Re-enablement happens on the first retrain where `train_std > 0`.
 
 ---
 

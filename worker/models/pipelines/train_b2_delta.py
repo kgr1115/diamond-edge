@@ -111,6 +111,56 @@ def get_b2_moneyline_features() -> list[str]:
     return base
 
 
+# Features that the declared feature set MUST retain even if training std == 0,
+# because they are genuinely variable at serving time and dropping them would
+# create training-serving skew in the opposite direction. Currently empty:
+# per pick-research-2026-04-24 + pick-scope-gate, every train_std==0 feature
+# in the current drift_audit is also a serving-side constant or defaulted
+# imputation (weather/ump/platoon ingesters are data gaps, not live signals).
+# See: worker/models/backtest/reports/drift_audit.json
+ZERO_VAR_DROP_EXEMPTIONS: frozenset[str] = frozenset()
+
+
+def drop_zero_variance_features(
+    X_train: pd.DataFrame | np.ndarray,
+    feature_cols: list[str],
+) -> tuple[list[str], list[str]]:
+    """
+    Drop columns with train_std == 0.0 (constants) from the feature matrix.
+
+    Returns (kept_features, dropped_features). Order of kept_features is preserved
+    relative to feature_cols. Called pre-fit so LightGBM never sees zero-variance
+    columns that would otherwise waste feature_fraction column-sampling slots
+    and contribute to early-stopping at iteration 1 (per pick-research 2026-04-24
+    Proposal 2).
+
+    Exemptions: features in ZERO_VAR_DROP_EXEMPTIONS are kept regardless of
+    train_std (e.g., if a feature is known to be variable at serving but
+    constant in historical training).
+    """
+    if isinstance(X_train, pd.DataFrame):
+        stds = X_train.std(axis=0, numeric_only=True)
+        std_by_col = {col: float(stds.get(col, 0.0)) for col in feature_cols}
+    else:
+        arr = np.asarray(X_train)
+        if arr.ndim != 2 or arr.shape[1] != len(feature_cols):
+            raise ValueError(
+                f"X_train ndarray shape {arr.shape} does not match "
+                f"feature_cols length {len(feature_cols)}"
+            )
+        col_stds = arr.std(axis=0)
+        std_by_col = {col: float(col_stds[i]) for i, col in enumerate(feature_cols)}
+
+    kept: list[str] = []
+    dropped: list[str] = []
+    for col in feature_cols:
+        if std_by_col.get(col, 0.0) == 0.0 and col not in ZERO_VAR_DROP_EXEMPTIONS:
+            dropped.append(col)
+        else:
+            kept.append(col)
+    return kept, dropped
+
+
 # ---------------------------------------------------------------------------
 # Vig removal + novig helpers (self-contained; same logic as run_backtest_v3)
 # ---------------------------------------------------------------------------
@@ -485,6 +535,16 @@ def train_b2_market(
                 ds[col] = 0.0
         available_features = feature_cols
 
+    # Drop zero-variance columns from the training matrix (pick-research
+    # 2026-04-24 Proposal 2 — prevents feature_fraction bags from being
+    # contaminated with constants that contributed to the iter-1 early-stop).
+    declared_features = list(available_features)
+    available_features, dropped_zero_var = drop_zero_variance_features(
+        train_final[declared_features].fillna(0), declared_features,
+    )
+    if dropped_zero_var:
+        print(f"  Dropped {len(dropped_zero_var)} zero-variance features: {dropped_zero_var}")
+
     def to_xy(subset: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         return (
             subset[available_features].fillna(0).values,
@@ -710,6 +770,8 @@ def train_b2_market(
         "shap_top10": list(shap_importance.items())[:10],
         "features": available_features,
         "n_features": len(available_features),
+        "declared_features": declared_features,
+        "dropped_zero_var_features": dropped_zero_var,
         "lgbm_best_iteration": int(final_model.best_iteration_),
         "lgbm_params": LGBM_PARAMS_B2,
         "delta_clip_bound": DELTA_CLIP,

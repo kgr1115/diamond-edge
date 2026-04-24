@@ -2,8 +2,8 @@
 features.py — Worker-side feature vector builder for Diamond Edge inference.
 
 Replaces the Edge Function's placeholder feature-builder.ts (15 fields → 0.0
-defaults) with a full 90-feature vector matching exactly what the B2 delta
-models were trained on.
+defaults) with a full superset feature vector matching exactly what the B2
+delta models were trained on.
 
 Queries Supabase directly via the service-role key (SUPABASE_SERVICE_ROLE_KEY
 env var, already set in Fly secrets).  All lookups are read-only; no writes.
@@ -12,7 +12,14 @@ Feature contract:  worker/models/moneyline/artifacts/manifest_b2.json
                    worker/models/run_line/artifacts/manifest_b2.json
                    worker/models/totals/artifacts/manifest_b2.json
 
-The 90 features fall into six categories:
+This file emits a SUPERSET of features. Each market's active model (per
+current_version.json) declares the pruned subset it actually consumes; main.py
+iterates over the artifact's declared feature list, so superset keys that
+aren't in the active model are silently ignored at inference. Zero-variance
+features are dropped at train time via train_b2_delta.drop_zero_variance_features
+(see worker/models/moneyline/feature-spec.md §Zero-Variance Drop for details).
+
+The emitted features fall into six categories:
   1.  SP stats      — ERA / FIP / K9 / BB9 / HR9 / WHIP / days rest / IP / flags
   2.  Bullpen       — ERA / WHIP / IP load last 2d/3d/7d
   3.  Team offense  — OPS / runs/g / K% / BB% / BA / EWMA runs / win pcts / Pythagorean
@@ -899,14 +906,17 @@ def _compute_h2h_win_pct(
 
 async def build_feature_vector(game_id: str, market: str) -> dict[str, Any]:
     """
-    Build the full 90-feature vector for a game × market combination.
+    Build the full superset feature vector for a game × market combination.
 
     Queries Supabase directly using the service-role key.  Returns a dict
-    with every key the trained B2 model expects.  Missing values are returned
-    as None; main.py _build_feature_vector() maps None → 0.0 with a [WARN] log.
+    with every key any trained B2 model might expect.  Missing values are
+    returned as None; main.py _build_feature_vector() maps None → 0.0 with
+    a [WARN] log. The active model's pruned feature list (baked into the
+    artifact pickle) determines which of these superset keys are actually
+    consumed at inference.
 
     The `market` argument is accepted for future per-market feature divergence
-    but all three models currently share the same 90-feature contract.
+    but all three models currently share the same superset contract.
     """
     import asyncio
 
@@ -1007,7 +1017,7 @@ async def build_feature_vector(game_id: str, market: str) -> dict[str, Any]:
     )
 
     # -----------------------------------------------------------------------
-    # Step 3: Assemble into the 90-feature dict matching the B2 contract
+    # Step 3: Assemble into the superset feature dict matching the B2 contract
     # -----------------------------------------------------------------------
     fv: dict[str, Any] = {
         # --- Home SP (14 features) ---

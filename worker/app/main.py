@@ -645,7 +645,8 @@ async def predict(request: Request) -> JSONResponse:
     for m in markets:
         normalized.append("totals" if m == "total" else m)
 
-    # Build feature vector once for all markets (same 90 features across all three)
+    # Build feature vector once for all markets (superset; each market's
+    # active model declares the pruned subset it actually consumes).
     try:
         features = await _build_features_from_supabase(game_id, normalized[0] if normalized else "moneyline")
     except Exception as e:

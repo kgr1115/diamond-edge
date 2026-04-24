@@ -416,6 +416,7 @@ def train_market_versioned(
         simulate_roi_delta,
         plot_reliability_b2,
         _remove_vig,
+        drop_zero_variance_features,
         DELTA_CLIP as _DELTA_CLIP,
     )
 
@@ -449,6 +450,19 @@ def train_market_versioned(
             for ds in [valid, train_final, h2_2023, holdout]:
                 ds[col] = 0.0
         available_features = feature_cols
+
+    # Drop zero-variance columns from the training matrix (pick-research
+    # 2026-04-24 Proposal 2 — prevents feature_fraction bags from being
+    # contaminated with constants that contributed to the iter-1 early-stop).
+    declared_features = list(available_features)
+    available_features, dropped_zero_var = drop_zero_variance_features(
+        train_final[declared_features].fillna(0), declared_features,
+    )
+    if dropped_zero_var:
+        log.info(
+            f"  [{market}] Dropped {len(dropped_zero_var)} zero-variance features: "
+            f"{dropped_zero_var}"
+        )
 
     def to_xy(subset: pd.DataFrame):
         return (
@@ -560,6 +574,8 @@ def train_market_versioned(
         "features": available_features,
         "n_features": len(available_features),
         "missing_features_imputed": missing_features,
+        "declared_features": declared_features,
+        "dropped_zero_var_features": dropped_zero_var,
         "lgbm_best_iteration": int(final_model.best_iteration_),
     }
     return metrics, final_model
