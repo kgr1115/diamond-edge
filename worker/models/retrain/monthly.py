@@ -13,8 +13,20 @@ Auto-promote logic (per task spec):
       new log_loss < prior log_loss (no regression)
   - Otherwise keep prior model; report is still written for visibility.
 
+Null-prior policy (added 2026-04-24 per pick-scope-gate proposal #4):
+  - If there is no prior (no current_version.json OR no metrics.json at the
+    pointed-to artifact dir), the NEW artifact is still written to v<ts>/ for
+    inspection but current_version.json is NOT updated. The summary flags
+    "first-train, awaiting sign-off; run promote.py to activate".
+  - Explicit override: pass --force-promote-no-prior AND --yes. Even with the
+    override, promotion is refused if lgbm_best_iteration == 1 (the
+    "LightGBM found no split" signal).
+  - Use worker/models/retrain/promote.py to promote a specific artifact
+    after operator review.
+
 Run:
-  python -m worker.models.retrain.monthly [--dry-run] [--promote-only]
+  python -m worker.models.retrain.monthly [--dry-run] [--offline]
+                                          [--force-promote-no-prior] [--yes]
 
 Output:
   worker/models/<market>/artifacts/v<timestamp>/model.pkl + manifest.json
@@ -643,12 +655,22 @@ def should_promote(
     new_metrics: dict,
     prior_version: dict | None,
     prior_metrics: dict | None,
+    force_promote_no_prior: bool = False,
 ) -> tuple[bool, str]:
     """
     Auto-promote decision per task spec:
       Promote if: delta_CLV > +0.1 AND log_loss didn't regress.
 
     Returns (should_promote: bool, reason: str).
+
+    Null-prior behavior (changed 2026-04-24 per pick-scope-gate proposal #4;
+    see docs/improvement-pipeline/pick-scope-gate-2026-04-24.md):
+      - Default: do NOT auto-promote. Retrain writes the artifact non-destructively
+        to v<ts>/ and leaves current_version.json untouched. Operator runs
+        worker/models/retrain/promote.py to promote after reviewing metrics.
+      - force_promote_no_prior=True: permits promotion on null-prior, EXCEPT when
+        lgbm_best_iteration == 1 (LightGBM found no split — this is the bug that
+        shipped moneyline-b2-v3 on 2026-04-23; never promote by automation).
 
     Rationale for thresholds:
       - +0.1% CLV delta: B2 backtested at ~0.0% CLV (mixed signal). Any measured
@@ -659,13 +681,29 @@ def should_promote(
     """
     new_clv = (new_metrics.get("clv") or {}).get("mean_clv_pct") or 0.0
     new_ll = (new_metrics.get("holdout_2024") or {}).get("log_loss_new_model")
+    new_best_iter = new_metrics.get("lgbm_best_iteration")
 
     if new_ll is None:
         return False, "New model log_loss not available (training error)"
 
     if prior_version is None or prior_metrics is None:
-        # No prior version exists — always promote the first version
-        return True, "No prior version exists — first retrain, auto-promoting"
+        if not force_promote_no_prior:
+            return False, (
+                "No prior version — first-train, awaiting manual sign-off. "
+                "Run `python -m worker.models.retrain.promote "
+                f"--market {market} --timestamp <ts>` to activate, "
+                "or re-invoke retrain with --force-promote-no-prior --yes."
+            )
+        if new_best_iter is not None and new_best_iter <= 1:
+            return False, (
+                f"Rejected even with --force-promote-no-prior: "
+                f"lgbm_best_iteration={new_best_iter} (<= 1) — model found no "
+                "useful split. This is the moneyline-b2-v3 failure mode."
+            )
+        return True, (
+            "No prior version — promoted under explicit --force-promote-no-prior "
+            f"override (lgbm_best_iteration={new_best_iter})"
+        )
 
     prior_clv = (prior_metrics.get("clv") or {}).get("mean_clv_pct") or 0.0
     prior_ll = (prior_metrics.get("holdout_2024") or {}).get("log_loss_new_model")
@@ -694,12 +732,20 @@ def should_promote(
 # Main retrain loop
 # ---------------------------------------------------------------------------
 
-def run_retrain(dry_run: bool = False, offline: bool = False) -> dict:
+def run_retrain(
+    dry_run: bool = False,
+    offline: bool = False,
+    force_promote_no_prior: bool = False,
+    assume_yes: bool = False,
+) -> dict:
     """
     Full monthly retrain run. Returns summary dict.
 
     dry_run=True: trains and evaluates but does NOT write current_version.json.
     offline=True: skips all Supabase calls; uses existing parquet only (local dev/CI).
+    force_promote_no_prior=True: allows auto-promote on null-prior (still refuses
+      if lgbm_best_iteration <= 1). Ignored unless assume_yes=True as well.
+    assume_yes=True: skips the interactive confirm for --force-promote-no-prior.
     """
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     log.info(f"=== Diamond Edge Monthly Retrain ===")
@@ -768,6 +814,14 @@ def run_retrain(dry_run: bool = False, offline: bool = False) -> dict:
     all_new_metrics: dict = {}
     all_prior_metrics: dict = {}
     promote_decisions: dict = {}
+    pending_signoff: list[str] = []
+
+    effective_force = force_promote_no_prior and assume_yes
+    if force_promote_no_prior and not assume_yes:
+        log.warning(
+            "--force-promote-no-prior passed without --yes — treating as dry "
+            "(null-prior markets will be flagged pending manual sign-off)."
+        )
 
     for cfg in MARKET_CONFIGS:
         market = cfg["market"]
@@ -810,9 +864,19 @@ def run_retrain(dry_run: bool = False, offline: bool = False) -> dict:
             json.dump(new_metrics, f, indent=2, default=str)
 
         # Auto-promote decision
-        promote, reason = should_promote(market, new_metrics, prior_version, prior_metrics)
+        promote, reason = should_promote(
+            market,
+            new_metrics,
+            prior_version,
+            prior_metrics,
+            force_promote_no_prior=effective_force,
+        )
         promote_decisions[market] = (promote, reason)
         log.info(f"  [{market}] Auto-promote: {'YES' if promote else 'NO'} — {reason}")
+
+        is_null_prior = prior_version is None or prior_metrics is None
+        if is_null_prior and not promote:
+            pending_signoff.append(market)
 
         if promote and not dry_run and model_obj is not None:
             _promote_version(market, ts, new_metrics)
@@ -845,6 +909,16 @@ def run_retrain(dry_run: bool = False, offline: bool = False) -> dict:
             "min_clv_delta_pct": PROMOTE_MIN_CLV_DELTA_PCT,
             "max_log_loss_regression": PROMOTE_MAX_LOGLOSS_REGRESSION,
         },
+        "pending_manual_signoff": {
+            "markets": pending_signoff,
+            "note": (
+                "first-train, awaiting sign-off; run `python -m "
+                "worker.models.retrain.promote --market <market> --timestamp "
+                f"{ts}` after reviewing metrics.json to activate."
+            ) if pending_signoff else "none",
+        },
+        "force_promote_no_prior": force_promote_no_prior,
+        "assume_yes": assume_yes,
     }
 
     report_dir = REPORTS_DIR / ts
@@ -860,6 +934,17 @@ def run_retrain(dry_run: bool = False, offline: bool = False) -> dict:
         clv = (all_new_metrics.get(market, {}).get("clv") or {}).get("mean_clv_pct") or "N/A"
         roi = all_new_metrics.get(market, {}).get("best_roi_pct") or "N/A"
         log.info(f"  {market}: CLV={clv}% | best ROI={roi}% | promote={promote} | {reason}")
+
+    if pending_signoff:
+        log.warning(
+            "PENDING MANUAL SIGN-OFF (%d market(s)): %s. Review %s and run "
+            "`python -m worker.models.retrain.promote --market <m> --timestamp %s` "
+            "to activate.",
+            len(pending_signoff),
+            ", ".join(pending_signoff),
+            report_path,
+            ts,
+        )
 
     return summary
 
@@ -883,9 +968,27 @@ def main() -> None:
             "For local dev / CI dry-runs without Supabase credentials."
         ),
     )
+    parser.add_argument(
+        "--force-promote-no-prior",
+        action="store_true",
+        help=(
+            "Permit auto-promote on null-prior markets. Still refuses if "
+            "lgbm_best_iteration <= 1. Requires --yes."
+        ),
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompts; required alongside --force-promote-no-prior.",
+    )
     args = parser.parse_args()
 
-    summary = run_retrain(dry_run=args.dry_run, offline=args.offline)
+    summary = run_retrain(
+        dry_run=args.dry_run,
+        offline=args.offline,
+        force_promote_no_prior=args.force_promote_no_prior,
+        assume_yes=args.yes,
+    )
 
     # Exit non-zero if any market had a training error
     errors = [
@@ -895,6 +998,14 @@ def main() -> None:
     if errors:
         log.error(f"Training errors in markets: {errors}")
         sys.exit(1)
+
+    # Exit code 2 signals "training OK but manual sign-off required" — distinct
+    # from training failure (exit 1) and clean-pass (exit 0). Callers that wrap
+    # the retrain (cron, CI) should surface this to operators.
+    pending = summary.get("pending_manual_signoff", {}).get("markets") or []
+    if pending:
+        log.warning(f"Exiting 2 — pending manual sign-off for markets: {pending}")
+        sys.exit(2)
 
 
 if __name__ == "__main__":
