@@ -2,7 +2,7 @@
  * Box score sync — updates completed games with final scores and status.
  *
  * Flow:
- * 1. Query games table for games in 'live' or 'scheduled' status from yesterday and today.
+ * 1. Query games table for games in 'live' or 'scheduled' status from the last 3 days.
  * 2. Fetch linescore from MLB Stats API for each game not yet 'final'.
  * 3. Update games table with current score, inning, and status.
  *
@@ -23,25 +23,32 @@ export interface BoxScoreSyncResult {
   errors: string[];
 }
 
+const LOOKBACK_DAYS = 3;
+
 /**
  * Update box scores for games that may have completed.
- * Looks at games from the past 2 days with non-final status.
+ * Looks at games from the past 3 days with non-final status — the extra
+ * lookback protects against multi-day grader outages (e.g., if the cron
+ * misses a run, the next run still catches games that finalized before
+ * yesterday). MLB Stats is free, so the marginal schedule-hydrate cost
+ * per grader invocation is negligible.
  */
 export async function syncBoxScores(): Promise<BoxScoreSyncResult> {
   const errors: string[] = [];
   const supabase = createServiceRoleClient();
 
-  // Look at yesterday and today for incomplete games
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const yesterday = new Date(now);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+  const dateWindow: string[] = [];
+  for (let dayOffset = 0; dayOffset < LOOKBACK_DAYS; dayOffset++) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - dayOffset);
+    dateWindow.push(d.toISOString().slice(0, 10));
+  }
 
   const { data: games, error: gamesError } = await supabase
     .from('games')
     .select('id, mlb_game_id, game_date, status')
-    .in('game_date', [yesterdayStr, today])
+    .in('game_date', dateWindow)
     .in('status', ['scheduled', 'live']);
 
   if (gamesError) {
