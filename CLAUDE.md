@@ -54,13 +54,13 @@ A paid, web-only MLB betting picks SaaS with tiered subscriptions. Users get sta
 
 All specialist agents live in `.claude/agents/`. Orchestration is owned by `mlb-picks-orchestrator`. Specialists do not delegate to each other directly — they return to the orchestrator, which routes.
 
-- `mlb-architect` — system design, data models, API contracts, ADRs
-- `mlb-data-engineer` — MLB Stats API, Statcast, The Odds API, caching, rate limits
+- `mlb-architect` — schemas, cross-service contracts, ADRs (design artifacts, not code)
+- `mlb-data-engineer` — ingestion pipelines, cron schedules, Upstash cache (Odds API, MLB Stats, Statcast, weather)
 - `mlb-ml-engineer` — features, win-probability/EV model, backtesting, calibration
 - `mlb-ai-reasoning` — LLM prompt design, rationale generation, grounding, cost
-- `mlb-backend` — Supabase schema, API routes, Stripe, background jobs
+- `mlb-backend` — Next.js API routes, Supabase migrations + RLS, Edge Functions, Stripe, Auth
 - `mlb-frontend` — Next.js UI: slate, pick detail, dashboards, subscription flow
-- `mlb-devops` — Vercel/Supabase/Upstash infra, CI/CD, monitoring, cost dashboards
+- `mlb-devops` — runtime config, CI/CD, secrets, monitoring, cost dashboard, DNS/SSL
 - `mlb-compliance` — state legality matrix, disclaimers, ToS, privacy, responsible gambling
 - `mlb-qa` — E2E tests, pick-pipeline validation, regression checks, staging gate
 

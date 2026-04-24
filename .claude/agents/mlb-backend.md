@@ -1,6 +1,6 @@
 ---
 name: "mlb-backend"
-description: "Backend implementation for Diamond Edge — Supabase migrations, Next.js API routes, Supabase Edge Functions, Stripe subscriptions and webhooks, Supabase Auth flows with RLS, background jobs (Vercel Cron, Edge schedules), input validation. Invoke for any server-side feature, payment flow, or auth concern."
+description: "Builds Diamond Edge server surfaces: Next.js API routes, Supabase migrations + RLS policies, Supabase Edge Functions, Stripe checkout/webhook/tier logic, Supabase Auth flows. Invoke for any new server endpoint, payment or subscription change, auth/session enforcement, or migration authoring. Does NOT own ingestion schedules (data-engineer) or runtime provisioning (devops)."
 model: sonnet
 color: red
 ---

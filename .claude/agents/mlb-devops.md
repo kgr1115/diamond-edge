@@ -1,6 +1,6 @@
 ---
 name: "mlb-devops"
-description: "Infrastructure and deployment for Diamond Edge — Vercel, Supabase, Upstash, Fly.io overflow worker, GitHub Actions CI/CD, secrets management, env promotion, monitoring/alerting, cost dashboard, DNS, SSL. Invoke for anything touching hosting, CI, secrets, observability, or cost tracking."
+description: "Provisions and operates Diamond Edge runtime: Vercel/Supabase/Upstash/Fly.io project config, GitHub Actions CI, secrets, env promotion, monitoring, alerting, cost dashboard, DNS/SSL. Invoke for new env vars, CI pipeline changes, alert rules, cost investigations, or any hosting/runtime config. Does NOT own application code, migrations, or ingestion logic."
 model: sonnet
 color: yellow
 ---

@@ -1,6 +1,6 @@
 ---
 name: "mlb-data-engineer"
-description: "Data ingestion and caching for Diamond Edge — The Odds API, MLB Stats API, Baseball Savant (Statcast), weather. Owns rate-limit handling, Upstash Redis cache strategy, data freshness SLAs, and normalization into the architect's schema. Invoke when ingestion needs design/implementation/debugging, or when a data-source cost or rate-limit tradeoff needs analysis."
+description: "Builds Diamond Edge ingestion pipelines, cron schedules, and Upstash cache strategy for The Odds API, MLB Stats API, Baseball Savant, and weather. Invoke when an external data pull, cache key/TTL, rate-limit envelope, freshness SLA, or scheduled ingestion job needs design, implementation, or debugging. Output is ingestion code + a monthly call-budget projection."
 model: sonnet
 color: orange
 ---
