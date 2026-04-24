@@ -2,26 +2,21 @@
  * Inline sparkline for line movement across odds snapshots.
  * Three snapshots (morning / afternoon / evening) → tiny SVG path.
  * Server Component — no interactivity needed.
+ *
+ * Pure direction/probability logic lives in lib/picks/line-movement.ts so
+ * it can be unit-tested without a JSX jest transform.
  */
 
-interface OddsSnapshot {
-  label: string; // 'AM' | 'PM' | 'Close'
-  price: number; // American odds
-}
+import {
+  computeLineDirection,
+  formatOdds,
+  pickSideImpliedProb,
+  type OddsSnapshot,
+} from '@/lib/picks/line-movement';
 
 interface LineMovementSparklineProps {
   snapshots: OddsSnapshot[];
   pickSide: 'home' | 'away' | 'over' | 'under' | string;
-}
-
-function formatOdds(price: number): string {
-  return price >= 0 ? `+${price}` : `${price}`;
-}
-
-/** Convert American odds to implied probability (raw, with vig). */
-function impliedProb(price: number): number {
-  if (price >= 100) return 100 / (100 + price);
-  return Math.abs(price) / (Math.abs(price) + 100);
 }
 
 const W = 72;
@@ -31,7 +26,7 @@ const PAD = 3;
 export function LineMovementSparkline({ snapshots, pickSide }: LineMovementSparklineProps) {
   if (snapshots.length < 2) return null;
 
-  const probs = snapshots.map((s) => impliedProb(s.price));
+  const probs = snapshots.map((s) => pickSideImpliedProb(s.price, pickSide));
   const minP = Math.min(...probs);
   const maxP = Math.max(...probs);
   const range = maxP - minP || 0.01;
@@ -42,15 +37,13 @@ export function LineMovementSparkline({ snapshots, pickSide }: LineMovementSpark
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
 
-  const first = snapshots[0].price;
-  const last = snapshots[snapshots.length - 1].price;
-  const moved = last - first;
-
-  // Positive moved toward pick side (line got shorter / prob rose) = favorable
-  const direction = moved > 0 ? 'shortened' : moved < 0 ? 'lengthened' : 'flat';
+  const direction = computeLineDirection(snapshots, pickSide);
   const arrowColor =
     direction === 'shortened' ? 'text-emerald-400' : direction === 'lengthened' ? 'text-red-400' : 'text-gray-500';
   const arrow = direction === 'shortened' ? '▲' : direction === 'lengthened' ? '▼' : '—';
+
+  const first = snapshots[0].price;
+  const last = snapshots[snapshots.length - 1].price;
 
   return (
     <div
