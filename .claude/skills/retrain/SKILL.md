@@ -1,6 +1,6 @@
 ---
 name: retrain
-description: Manually trigger the Diamond Edge monthly retrain job + auto-promote logic. Use when new data has accumulated (after large news/odds influxes) or when testing training changes. Invoked via /retrain or when Kyle says "retrain the model", "run the monthly retrain".
+description: "TRAIN new model artifacts on fresh data + evaluate via 2024 holdout + auto-promote if deterministic thresholds pass (CLV delta > +0.1% AND log-loss non-regression). Distinct from /backtest (which only reports metrics on already-trained artifacts). Use after large data backfills, feature changes, or on monthly cadence. Callable on demand; always `--dry-run` first inside pick-implement to avoid accidental promotion."
 ---
 
 # Retrain

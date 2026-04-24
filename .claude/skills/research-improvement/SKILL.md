@@ -20,6 +20,7 @@ Trace Diamond Edge's core subscriber flow in order. Identify friction at each st
 | Pick detail | Pick detail pages, rationale render, confidence/EV display |
 | Pick pipeline | `supabase/functions/pick-pipeline/**`, `worker/models/**`, `worker/api/**`, `worker/ingest/**` |
 | Schema | `supabase/migrations/**` |
+| Cron coverage | **`supabase/migrations/**` for `cron.schedule(...)` calls** (pg_cron catalog) **AND** `vercel.json` **AND** `apps/web/app/api/cron/**` route handlers. A handler without a schedule in EITHER catalog is unscheduled; a schedule without a handler is dead. A handler scheduled in BOTH catalogs double-invokes. Always inspect all three together before proposing cron-related changes. |
 | Cache / odds | `lib/odds/**`, Upstash Redis wrappers |
 | Bankroll UI | Bankroll dashboard, bet rows, delete-bet flow, ROI analytics |
 | Subscription / billing | Stripe webhook handlers, tier-gate middleware, checkout flow |

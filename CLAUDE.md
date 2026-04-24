@@ -64,19 +64,32 @@ All specialist agents live in `.claude/agents/`. Orchestration is owned by `mlb-
 - `mlb-compliance` — state legality matrix, disclaimers, ToS, privacy, responsible gambling
 - `mlb-qa` — E2E tests, pick-pipeline validation, regression checks, staging gate
 
-### Generic improvement pipeline (layered on top of the domain agents — adopted 2026-04-24 from `ai-pipeline-scaffold`)
+### Two improvement pipelines (layered on top of the domain agents — adopted 2026-04-24)
 
-A disciplined, systematic pipeline for codebase improvement work. Kicked off via `mlb-picks-orchestrator` ("run the improvement pipeline"). Flow: researcher → scope-gate → implementer → tester → publisher, with debugger on tester FAIL.
+**System-improvement pipeline** (codebase / infra / UX): `researcher → scope-gate → implementer → tester → publisher`, with `debugger` on tester FAIL, plus `skill-writer`.
 
 - `researcher` — audits the repo + external research; returns ≤10 prioritized proposals
-- `scope-gate` — binary APPROVED/DENIED against the locked stack + budget + compliance invariants. Distinct from `mlb-architect` (which designs systems); `scope-gate` applies fixed rules
-- `implementer` — writes the diff for an APPROVED proposal; may delegate to `mlb-*` domain specialists for deep work
+- `scope-gate` — binary APPROVED/DENIED against locked stack + budget + compliance. Distinct from `mlb-architect` (design); scope-gate applies fixed rules
+- `implementer` — writes the diff; may delegate to `mlb-*` specialists
 - `tester` — lightweight static + dynamic + edge-case gate; escalates to `mlb-qa` for heavyweight E2E
-- `debugger` — root-cause analysis on FAIL; distinct from `/investigate-pick` which drills into ONE pick
-- `publisher` — fixed commit recipe + secret/personal-data guard; push requires explicit authorization (Kyle granted standing authorization 2026-04-24)
-- `skill-writer` — produces new skills when a repeatable workflow emerges
+- `debugger` — root-cause on FAIL; distinct from `/investigate-pick` (single pick)
+- `publisher` — commit recipe + secret guard; push per Kyle's standing authorization (2026-04-24)
+- `skill-writer` — produces new skills
 
-Pipeline agents live in `.claude/agents/` alongside the domain specialists. Corresponding skills live in `.claude/skills/<name>/SKILL.md` (`research-improvement`, `scope-gate-review`, `implement-change`, `test-change`, `publish-change`, `debug`).
+Skills: `research-improvement`, `scope-gate-review`, `implement-change`, `test-change`, `publish-change`, `debug`.
+
+**Pick-improvement pipeline** (model / ROI / calibration / rationale): `pick-researcher → pick-scope-gate → pick-implementer → pick-tester → pick-publisher`, with `pick-debugger` on FAIL.
+
+- `pick-researcher` — audits ROI, calibration, feature coverage, rationale quality, threshold sensitivity via existing diagnostic skills; returns ≤10 evidence-backed proposals
+- `pick-scope-gate` — binary gate against locked pick constraints (EV/tier floors, sample-size minimums, feature-leakage rules, rationale grounding, ROI non-degradation). Distinct from `mlb-ml-engineer` (design)
+- `pick-implementer` — writes model/feature/prompt/threshold diff; delegates to `mlb-ml-engineer` / `mlb-ai-reasoning` / `mlb-backend` / `mlb-data-engineer`
+- `pick-tester` — EMPIRICAL gate: backtest (ROI ≥ −0.5%, CLV ≥ −0.1%, ECE ≤ +0.02), feature coverage, pipeline anomaly scan, calibration check, rationale eval
+- `pick-debugger` — root-cause on pick-quality FAIL; uses `/investigate-pick` / `/explain` for drills
+- `pick-publisher` — commit + push recipe with model-artifact size guard; deploys remain user-invoked (`/deploy-edge`, `/deploy-worker`)
+
+Skills: `pick-research`, `pick-scope-gate-review`, `pick-implement`, `pick-test`, `pick-publish`, `pick-debug`. Plus `calibration-check` (per-tier reliability + ECE vs backtest) and `rationale-eval` (factuality + disclaimer + architecture-keyword audit).
+
+All pipeline agents live in `.claude/agents/`; skills in `.claude/skills/<name>/SKILL.md`.
 
 ## User
 

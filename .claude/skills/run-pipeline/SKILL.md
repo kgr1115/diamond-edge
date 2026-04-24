@@ -1,6 +1,6 @@
 ---
 name: run-pipeline
-description: Diamond Edge pipeline test cycle — delete today's picks, trigger the Edge Function pick-pipeline, show raw pick values, flag anomalies. Use after ANY model/pipeline/feature change to verify output. Invoked manually via /run-pipeline or when Kyle says "rerun the pipeline", "regenerate picks", "test the pipeline".
+description: "Pipeline smoke-test cycle — delete today's picks, retrigger the Edge Function pick-pipeline, show raw pick values, flag anomalies (degenerate probabilities, EV > 25%, single-tier collapse). Heuristic scan — for formal invariant gating on a pick-quality change, use /pick-test instead. Invoked after model/pipeline/feature change or 'rerun the pipeline'."
 ---
 
 # Run Pipeline

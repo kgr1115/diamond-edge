@@ -1,6 +1,6 @@
 ---
 name: backtest
-description: Run a Diamond Edge full 2024-holdout backtest on the current model artifacts. Reports honest ROI + CLV per market. Use after model retrains, feature changes, or when Kyle asks "what's the real edge?", "run a backtest", /backtest.
+description: "REPORT current-model 2024-holdout metrics — ROI + CLV + ECE + log-loss per market against the artifacts pointed to by current_version.json. Read-only diagnostic; does NOT train or promote. Distinct from /retrain (which trains + auto-promotes). Used by pick-tester as the ROI-regression gate on any model/feature/threshold change, and by pick-researcher to establish baseline."
 ---
 
 # Backtest

@@ -1,6 +1,6 @@
 ---
 name: investigate-pick
-description: Deep-dive diagnostic on a single Diamond Edge pick. Shows game, odds, SHAP attributions, rationale, CLV (if graded), outcome. Use when Kyle asks "why did we pick X?", "show pick <uuid>", or /investigate-pick <pick_id>.
+description: "Deep-dive on ONE pick by UUID — game, odds, SHAP attributions, rationale text, CLV (if graded), outcome, PnL. Pick-level focus; strongest post-game when outcome + CLV are set. Distinct from /explain (multi-market game-level view, pre-game) and /pick-debug (systematic pick-quality issues). Invoked as /investigate-pick <pick_id>."
 ---
 
 # Investigate Pick

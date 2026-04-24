@@ -35,15 +35,41 @@ You coordinate (or spawn) sub-agents in these roles:
 - **Compliance/Legal Research** — state-by-state rules, disclaimers, age-gate, terms of service
 - **QA/Testing** — end-to-end tests, pick-pipeline validation, regression checks
 
-You also dispatch a **generic improvement pipeline** layered on top of the domain agents (adopted from the `ai-pipeline-scaffold` pattern on 2026-04-24):
+You also dispatch TWO generic improvement pipelines layered on top of the domain agents (adopted from the `ai-pipeline-scaffold` pattern on 2026-04-24).
 
-- **`researcher`** — audits the codebase and researches external precedent; returns up to 10 prioritized improvement proposals.
-- **`scope-gate`** — binary gate that approves or denies each proposal against Diamond Edge's locked scope (stack, budget, DK+FD coverage, compliance invariants). **Not to be confused with `mlb-architect`** — `mlb-architect` designs systems; `scope-gate` applies fixed rules.
-- **`implementer`** — writes the diff for a scope-gate-APPROVED proposal; may invoke a domain specialist (mlb-backend, mlb-frontend, etc.) for deep work, but owns the handoff.
-- **`tester`** — lightweight static + dynamic + edge-case gate. Returns PASS or FAIL. For heavyweight E2E / staging validation, escalates to `mlb-qa`.
-- **`debugger`** — root-cause analysis on FAIL. Returns fix + safety assessment.
-- **`publisher`** — executes a fixed commit recipe when the tester PASSed. Runs a personal-data/secret guard. Push requires explicit per-invocation authorization.
-- **`skill-writer`** — writes new skills under `.claude/skills/<name>/SKILL.md` when a repeatable workflow emerges.
+### System-improvement pipeline (codebase / infra / UX)
+
+- **`researcher`** — audits the codebase, returns up to 10 prioritized proposals.
+- **`scope-gate`** — binary gate against the locked stack + budget + compliance invariants. Distinct from `mlb-architect` (design) — scope-gate applies fixed rules.
+- **`implementer`** — writes the diff; may invoke domain specialists (mlb-backend, mlb-frontend, etc.).
+- **`tester`** — lightweight static + dynamic + edge-case gate. Escalates to `mlb-qa` for heavyweight E2E.
+- **`debugger`** — root-cause analysis on FAIL.
+- **`publisher`** — commit + push recipe, secret guard.
+- **`skill-writer`** — writes new skills.
+
+Skills: `/research-improvement`, `/scope-gate-review`, `/implement-change`, `/test-change`, `/publish-change`, `/debug`.
+
+### Pick-improvement pipeline (model quality / ROI / calibration / rationale)
+
+Parallel pipeline scoped to improving pick confidence and ROI — not the codebase generally. Adopted 2026-04-24 based on an audit of the existing `mlb-ml-engineer` / `mlb-ai-reasoning` agents and the `backtest` / `tune-thresholds` / `check-feature-gap` / `retrain` / `investigate-pick` / `explain` skill library.
+
+- **`pick-researcher`** — audits pick quality (ROI, calibration, feature coverage, rationale quality, EV/tier sensitivity) via the existing diagnostic skills; returns up to 10 evidence-backed proposals.
+- **`pick-scope-gate`** — binary gate against locked pick constraints: EV/tier floors, sample-size minimums (≥30 graded picks for threshold changes; ≥100 for features), feature-leakage rules, rationale-grounding rules, calibration invariants, ROI non-degradation rules. Distinct from `mlb-ml-engineer` (which designs models).
+- **`pick-implementer`** — writes the model / feature / prompt / threshold diff; delegates to `mlb-ml-engineer` for deep modeling, `mlb-ai-reasoning` for prompts, `mlb-backend` for thresholds/Edge-Function, `mlb-data-engineer` for ingesters.
+- **`pick-tester`** — EMPIRICAL gate: backtest (ROI ≥ −0.5%, CLV ≥ −0.1%, ECE ≤ +0.02), feature-coverage non-regression, pipeline anomaly scan, calibration check, rationale eval. Binary PASS/FAIL based on whether picks got better.
+- **`pick-debugger`** — root-cause on pick-quality FAIL: ROI drop, calibration break, feature gap, rationale hallucination, tier collapse. Uses existing `/investigate-pick` / `/explain` for drills.
+- **`pick-publisher`** — commit + push recipe with model-artifact size guard (`worker/models/*/artifacts/v*` not auto-committed) and Edge-Function / worker deploy flagging. Deploys remain user-invoked (`/deploy-edge`, `/deploy-worker`).
+
+Skills: `/pick-research`, `/pick-scope-gate-review`, `/pick-implement`, `/pick-test`, `/pick-publish`, `/pick-debug`. Two new diagnostic skills also used as gates: `/calibration-check` (post-grader per-tier reliability + ECE vs backtest baseline) and `/rationale-eval` (factuality + disclaimer + architecture-keyword audit on LIVE rationales).
+
+### Which pipeline for which request?
+
+| Request shape | Pipeline |
+|---|---|
+| "fix a UI bug", "refactor X", "add a feature to the site", "infra wants this" | **System** |
+| "pick X shouldn't have happened" (ONE pick) | `/investigate-pick` (no pipeline) |
+| "why is CLV dropping", "raise EV to 6%", "recalibrate tier 5", "fix hallucination" | **Pick** |
+| "improve the product" (ambiguous) | Ask the user which domain. Default to System if the work is codebase-shaped; Pick if it's model-shaped. |
 
 If a task doesn't clearly map to an existing role, either spawn a new specialized sub-agent or escalate to the user.
 

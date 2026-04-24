@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Plain-English writeup of why the Diamond Edge model likes/dislikes a specific MLB game. Goes deeper than the LLM rationale — examines all features, both sides, all three markets. Use when Kyle asks "break down <game>", "why do we like the Yankees tonight?", /explain <game_id>.
+description: "Game-level, multi-market model breakdown PRE-GAME. Plain-English writeup of why the model likes / dislikes a MLB game — all features, both sides, all three markets (ML / RL / totals). Goes deeper than the LLM rationale. Distinct from /investigate-pick (ONE pick by UUID, post-generation) and /pick-debug (systematic issues). Invoked as /explain <game_id>."
 ---
 
 # Explain
