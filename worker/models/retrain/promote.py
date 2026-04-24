@@ -14,7 +14,10 @@ Refuses if:
   - The target artifact dir does not exist.
   - metrics.json is missing (cannot record log_loss / CLV / ROI in the pointer).
   - The artifact's lgbm_best_iteration == 1 (sanity gate — moneyline-b2-v3 failure).
-    Override with --allow-degenerate (caller accepts responsibility).
+  - The artifact's metrics.json carries `variance_collapsed: true` (P7 guardrail,
+    2026-04-24) — retrain detected a degenerate delta distribution post-train.
+    Override with --allow-degenerate (caller accepts responsibility — covers both
+    the iter-1 and variance-collapsed refusals).
 
 Run:
   python -m worker.models.retrain.promote --market <name> --timestamp <ts>
@@ -90,6 +93,17 @@ def promote(
             "Pass --allow-degenerate to override (NOT recommended)."
         )
 
+    # P7 (2026-04-24) — refuse if retrain's variance-collapse guardrail fired.
+    # Symmetric with the iter-1 check above; both gates share --allow-degenerate.
+    if metrics.get("variance_collapsed") and not allow_degenerate:
+        reasons = metrics.get("variance_collapse_reasons") or []
+        detail = "; ".join(reasons) if reasons else "reasons not recorded"
+        raise ValueError(
+            f"Refusing to promote {market} v{timestamp}: retrain flagged "
+            f"variance_collapsed=true. Reasons: {detail}. Pass --allow-degenerate "
+            "to override (NOT recommended)."
+        )
+
     pointer = {
         "version": timestamp,
         "promoted_at": datetime.now(timezone.utc).isoformat(),
@@ -98,6 +112,7 @@ def promote(
         "best_roi_pct": metrics.get("best_roi_pct"),
         "clv_pct": (metrics.get("clv") or {}).get("mean_clv_pct"),
         "lgbm_best_iteration": best_iter,
+        "variance_collapsed": bool(metrics.get("variance_collapsed", False)),
         "promoted_by": "worker.models.retrain.promote",
     }
 

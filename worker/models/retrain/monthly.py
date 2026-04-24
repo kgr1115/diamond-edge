@@ -75,6 +75,80 @@ DELTA_CLIP = 0.15
 PROMOTE_MIN_CLV_DELTA_PCT = 0.1     # new model CLV must beat prior by at least +0.1%
 PROMOTE_MAX_LOGLOSS_REGRESSION = 0.0  # new log_loss must not exceed prior
 
+# Variance-collapse guardrail (pick cycle 1 Proposal #7, 2026-04-24).
+# Thresholds derived from the moneyline-b2-v1 failure on 2026-04-23, whose
+# holdout metrics were lgbm_best_iteration=1, nonzero_delta_rate_02=0.0,
+# delta_std=0.0027. Each threshold is set comfortably above the failing
+# values so a healthy model clears them with room to spare.
+#
+#   VARIANCE_COLLAPSE_MIN_BEST_ITER: B2's iter-1 was LightGBM finding zero
+#     useful splits. Any artifact with <=1 iterations is degenerate by
+#     definition — the model is returning the training-mean constant.
+#     P4 (promote.py --allow-degenerate, shipped 2026-04-24) already guards
+#     this at promote time; P7 moves the refusal upstream to retrain time.
+#   VARIANCE_COLLAPSE_MIN_NONZERO_DELTA_RATE: fraction of holdout predictions
+#     with |delta| > 0.02. B2 had 0.0 (pure passthrough of market prior).
+#     A healthy run_line model (B2) measured 0.884; totals measured 0.554.
+#     0.1 is well above the failing value and well below any observed healthy
+#     value, so it cleanly separates the two regimes.
+#   VARIANCE_COLLAPSE_MIN_DELTA_STD: standard deviation of the clipped
+#     holdout delta. B2 measured 0.0027 — deltas are packed inside a ±0.0054
+#     band around zero, so even a +8% EV pick is mostly the market prior
+#     (LIVE picks become market-equivalent). 0.005 is ~1.85x B2's failing
+#     value; healthy totals measured 0.0476 and healthy run_line 0.1358.
+VARIANCE_COLLAPSE_MIN_BEST_ITER = 1
+VARIANCE_COLLAPSE_MIN_NONZERO_DELTA_RATE = 0.1
+VARIANCE_COLLAPSE_MIN_DELTA_STD = 0.005
+
+
+def check_variance_collapse(metrics: dict) -> tuple[bool, list[str]]:
+    """
+    Inspect a per-market metrics dict for variance-collapse signals.
+
+    Returns (collapsed: bool, reasons: list[str]). `collapsed` is True if ANY
+    of the three signals fire. `reasons` lists each failing condition in a
+    human-readable form for logging and the retrain summary.
+
+    Guard layers (belt-and-suspenders vs P4's promote.py check):
+      - lgbm_best_iteration <= 1 — the B2 trap: LightGBM early-stopped at
+        iter 1 after finding no useful split. Already caught by
+        promote.py's existing refusal; included here so monthly.py flags
+        it BEFORE the promote-eligibility branch.
+      - nonzero_delta_rate_02 < 0.1 — nearly every delta is <=2% in
+        magnitude, so picks collapse to the market prior. B2 had 0.0.
+      - delta_std < 0.005 — deltas are packed tightly around zero. B2 had
+        0.0027, healthy markets measure 0.04-0.14.
+
+    Missing metrics (training errored, skipped market) are NOT treated as
+    a collapse — the caller already handles those via the "error"/"skipped"
+    branches and we don't want to double-flag.
+    """
+    reasons: list[str] = []
+    holdout = (metrics.get("holdout_2024") or {})
+
+    best_iter = metrics.get("lgbm_best_iteration")
+    if best_iter is not None and best_iter <= VARIANCE_COLLAPSE_MIN_BEST_ITER:
+        reasons.append(
+            f"lgbm_best_iteration={best_iter} <= {VARIANCE_COLLAPSE_MIN_BEST_ITER} "
+            "(LightGBM found no useful split — the moneyline-b2-v1 failure mode)"
+        )
+
+    nonzero_rate = holdout.get("nonzero_delta_rate_02")
+    if nonzero_rate is not None and nonzero_rate < VARIANCE_COLLAPSE_MIN_NONZERO_DELTA_RATE:
+        reasons.append(
+            f"nonzero_delta_rate_02={nonzero_rate} < {VARIANCE_COLLAPSE_MIN_NONZERO_DELTA_RATE} "
+            "(model is a market-prior passthrough — deltas below ±0.02 for nearly every game)"
+        )
+
+    delta_std = holdout.get("delta_std")
+    if delta_std is not None and delta_std < VARIANCE_COLLAPSE_MIN_DELTA_STD:
+        reasons.append(
+            f"delta_std={delta_std} < {VARIANCE_COLLAPSE_MIN_DELTA_STD} "
+            "(holdout delta distribution too tight to carry edge)"
+        )
+
+    return (len(reasons) > 0, reasons)
+
 
 # ---------------------------------------------------------------------------
 # Supabase pull helpers
@@ -410,8 +484,10 @@ def train_market_versioned(
     from sklearn.metrics import mean_absolute_error, mean_squared_error
     from worker.models.pipelines.train_b2_delta import (
         LGBM_PARAMS_B2,
+        LGBM_PARAMS_B2_MONEYLINE_CLS,
         H2_2023_CUTOFF,
         _train_lgbm_regressor,
+        _train_lgbm_classifier_b2_moneyline,
         compute_clv_delta,
         simulate_roi_delta,
         plot_reliability_b2,
@@ -419,6 +495,13 @@ def train_market_versioned(
         drop_zero_variance_features,
         DELTA_CLIP as _DELTA_CLIP,
     )
+
+    # Moneyline uses a binary classifier on the outcome (home_win) then
+    # derives delta = predict_proba - prior. Regression-on-delta collapses to
+    # iter-1 early-stop on moneyline (pick-research 2026-04-24 Proposal 1).
+    # RL and totals keep the regression-on-delta path (both produce healthy
+    # iteration counts — 87 and 37 on 2024 holdout).
+    use_classifier = (market == "moneyline")
 
     log.info(f"Training {market.upper()} B2 delta model...")
     version_dir.mkdir(parents=True, exist_ok=True)
@@ -475,14 +558,35 @@ def train_market_versioned(
     X_hold = holdout[available_features].fillna(0).values
 
     prior_hold = holdout[prior_col].astype(float).values
+    prior_train = train_final[prior_col].astype(float).values
 
-    final_model = _train_lgbm_regressor(X_train_final, y_train_final, f"{market}-final")
+    if use_classifier:
+        # Binary classifier on absolute outcome (home_win = round(prior + delta)).
+        # Delta is derived at inference as predict_proba() - prior (also below).
+        y_binary_train = np.clip((prior_train + y_train_final).round(), 0, 1).astype(int)
+        final_model = _train_lgbm_classifier_b2_moneyline(
+            X_train_final, y_binary_train, f"{market}-final",
+        )
+        # Convert classifier prob -> delta for the holdout metrics pipeline.
+        prob_hold = final_model.predict_proba(X_hold)[:, 1]
+        delta_hold = prob_hold - prior_hold
+        delta_source = "classifier_minus_prior"
+    else:
+        final_model = _train_lgbm_regressor(
+            X_train_final, y_train_final, f"{market}-final",
+        )
+        delta_hold = final_model.predict(X_hold)
+        delta_source = "regressor_raw"
 
-    delta_hold = final_model.predict(X_hold)
     clipped_delta_hold = np.clip(delta_hold, -_DELTA_CLIP, _DELTA_CLIP)
     final_probs = np.clip(prior_hold + clipped_delta_hold, 0.05, 0.95)
     y_binary_hold = np.clip((prior_hold + y_hold).round(), 0, 1).astype(float)
 
+    # RMSE is computed against the delta target for legacy comparability with
+    # the regressor baseline. For the classifier path `delta_hold` is
+    # predict_proba - prior, not the regressor output, but the RMSE here is
+    # incidental metadata — the viability gates are log_loss / CLV / nonzero
+    # rate / calibration deviation, not RMSE.
     rmse_hold = float(np.sqrt(mean_squared_error(y_hold, delta_hold)))
     rmse_prior = float(np.sqrt(mean_squared_error(y_hold, np.zeros(len(y_hold)))))
 
@@ -567,6 +671,7 @@ def train_market_versioned(
             "log_loss_delta": round(log_loss_new - log_loss_prior, 5),
             "max_calibration_deviation": round(max_cal_dev, 4),
             "nonzero_delta_rate_02": round(float((np.abs(clipped_delta_hold) > 0.02).mean()), 3),
+            "delta_std": round(float(np.std(clipped_delta_hold)), 4),
         },
         "clv": clv_result,
         "roi_simulation": roi_results,
@@ -578,6 +683,19 @@ def train_market_versioned(
         "dropped_zero_var_features": dropped_zero_var,
         "lgbm_best_iteration": int(final_model.best_iteration_),
     }
+
+    # Variance-collapse guardrail (P7, 2026-04-24). Stamp the flag + reasons
+    # on the metrics dict BEFORE the promote-eligibility check sees them.
+    collapsed, collapse_reasons = check_variance_collapse(metrics)
+    metrics["variance_collapsed"] = collapsed
+    metrics["variance_collapse_reasons"] = collapse_reasons
+    if collapsed:
+        log.warning(
+            "  [%s] VARIANCE COLLAPSE DETECTED — artifact written to %s for "
+            "inspection, but auto-promote is refused. Reasons: %s",
+            market, version_dir, "; ".join(collapse_reasons),
+        )
+
     return metrics, final_model
 
 
@@ -701,6 +819,16 @@ def should_promote(
 
     if new_ll is None:
         return False, "New model log_loss not available (training error)"
+
+    # Variance-collapse guardrail (P7, 2026-04-24) — refuse promote regardless
+    # of prior state or CLV/log-loss thresholds. Symmetric with promote.py's
+    # lgbm_best_iteration <= 1 refusal; generalizes via the summary flag so
+    # any of the three collapse signals (best_iter, nonzero_delta_rate,
+    # delta_std) short-circuits auto-promote.
+    if new_metrics.get("variance_collapsed"):
+        reasons = new_metrics.get("variance_collapse_reasons") or []
+        detail = "; ".join(reasons) if reasons else "flag set without reasons"
+        return False, f"Variance-collapsed artifact — refusing to auto-promote. {detail}"
 
     if prior_version is None or prior_metrics is None:
         if not force_promote_no_prior:
