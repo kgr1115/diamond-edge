@@ -1,6 +1,12 @@
 /**
  * Visual indicator for confidence tier (1–5).
  * Uses diamond shapes (on-brand) in a dark-mode-first color scheme.
+ *
+ * Label vocabulary is aligned with slate-filters.tsx "minimum strength" options.
+ * Source of truth for which tiers are user-visible: SHADOW_TIER_MIN / LIVE_TIER_MIN
+ * in supabase/functions/pick-pipeline/index.ts (tier >= 3 to store, tier >= 5 to publish).
+ * Tiers 1 and 2 only appear on /history for legacy rows; they render as "Low"
+ * so the UI stays tolerant without introducing filter-incompatible vocabulary.
  */
 
 interface ConfidenceBadgeProps {
@@ -9,7 +15,7 @@ interface ConfidenceBadgeProps {
 }
 
 const TIER_LABELS: Record<number, string> = {
-  1: 'Speculative',
+  1: 'Low',
   2: 'Low',
   3: 'Moderate',
   4: 'High',

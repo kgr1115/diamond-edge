@@ -180,6 +180,11 @@ export function SlateFilters({ totalPicks, visiblePicks, canSeeShadow }: SlateFi
     { value: 'total',      label: 'Totals'    },
   ];
 
+  // Label vocabulary mirrors components/picks/confidence-badge.tsx TIER_LABELS.
+  // Source of truth for tier gate values: SHADOW_TIER_MIN / LIVE_TIER_MIN in
+  // supabase/functions/pick-pipeline/index.ts. Tiers 1/2 ("Low") are below the
+  // shadow gate and should not appear in today's slate; they may still appear
+  // on /history for legacy rows.
   const strengthOptions: { value: MinStrengthFilter; label: string }[] = [
     { value: 'all', label: 'All picks'          },
     { value: '2',   label: 'Low and above'      },

@@ -487,6 +487,25 @@ async function runPipeline(): Promise<Response> {
   }
 
   const dbWriteStart = Date.now();
+
+  // Defensive: the ev_filter stage drops tier < SHADOW_TIER_MIN before dedup,
+  // so nothing with tier 1 or 2 should reach this write path. Log (don't throw)
+  // if the invariant breaks — an overeager assertion would block all picks.
+  // UI label vocabulary in confidence-badge.tsx + slate-filters.tsx is aligned
+  // to this tier floor; a leak here would manifest as a tier-1/2 badge on
+  // /picks/today.
+  const belowGate = preparedPicks.filter((p) => p.candidate.confidence_tier < SHADOW_TIER_MIN);
+  if (belowGate.length > 0) {
+    log('ev_filter_invariant_violation', {
+      ok: false,
+      count: belowGate.length,
+      game_ids: belowGate.map((p) => p.candidate.game_id),
+      tiers: belowGate.map((p) => p.candidate.confidence_tier),
+      shadow_tier_min: SHADOW_TIER_MIN,
+      note: 'candidate passed dedup with tier < SHADOW_TIER_MIN; UI tier vocabulary assumes tier >= 3',
+    });
+  }
+
   const insertRows = preparedPicks.map(({ candidate, required_tier, rationale_cache_id, visibility }) => ({
     game_id: candidate.game_id,
     pick_date: today,
