@@ -64,6 +64,20 @@ All specialist agents live in `.claude/agents/`. Orchestration is owned by `mlb-
 - `mlb-compliance` — state legality matrix, disclaimers, ToS, privacy, responsible gambling
 - `mlb-qa` — E2E tests, pick-pipeline validation, regression checks, staging gate
 
+### Generic improvement pipeline (layered on top of the domain agents — adopted 2026-04-24 from `ai-pipeline-scaffold`)
+
+A disciplined, systematic pipeline for codebase improvement work. Kicked off via `mlb-picks-orchestrator` ("run the improvement pipeline"). Flow: researcher → scope-gate → implementer → tester → publisher, with debugger on tester FAIL.
+
+- `researcher` — audits the repo + external research; returns ≤10 prioritized proposals
+- `scope-gate` — binary APPROVED/DENIED against the locked stack + budget + compliance invariants. Distinct from `mlb-architect` (which designs systems); `scope-gate` applies fixed rules
+- `implementer` — writes the diff for an APPROVED proposal; may delegate to `mlb-*` domain specialists for deep work
+- `tester` — lightweight static + dynamic + edge-case gate; escalates to `mlb-qa` for heavyweight E2E
+- `debugger` — root-cause analysis on FAIL; distinct from `/investigate-pick` which drills into ONE pick
+- `publisher` — fixed commit recipe + secret/personal-data guard; push requires explicit authorization (Kyle granted standing authorization 2026-04-24)
+- `skill-writer` — produces new skills when a repeatable workflow emerges
+
+Pipeline agents live in `.claude/agents/` alongside the domain specialists. Corresponding skills live in `.claude/skills/<name>/SKILL.md` (`research-improvement`, `scope-gate-review`, `implement-change`, `test-change`, `publish-change`, `debug`).
+
 ## User
 
 Kyle Rauch (kyle.g.rauch@gmail.com) — founder, product owner, likely primary engineer. Prefers skimmable output (headers, bullets, no prose walls). On escalation, always bring **options + a recommendation**, never an open question. Senior-level technical collaborator; no need to explain basic concepts.
