@@ -57,6 +57,15 @@ Key entry points:
 - Picks UI: `apps/web/app/picks/`
 - Subscription + billing: `apps/web/app/api/billing/` and `apps/web/app/api/webhooks/stripe/`
 
+## Agent pipelines
+
+Day-to-day development is scaffolded by two parallel Claude agent pipelines under `.claude/`. They are improvement scaffolding — structured research → scope-gate → implement → test → publish loops — not an autonomous system. Every merged change still goes through the human owner.
+
+- **System-improvement pipeline** — audits the codebase, infra, CI, docs, and UX. Entry point: `/research-improvement`. Runs when something feels off about the repo or dev loop, not the model output.
+- **Pick-improvement pipeline** — audits pick quality, features, calibration, ROI, and LLM rationale. Entry point: `/pick-research`. Runs when the model output itself needs attention (picks drifting, rationale regressions, tier/EV distributions off).
+
+Domain specialists (`mlb-backend`, `mlb-frontend`, `mlb-data-engineer`, `mlb-ml-engineer`, `mlb-ai-reasoning`, `mlb-devops`, `mlb-compliance`, `mlb-qa`) sit alongside the pipelines and are invoked by the orchestrator for deep surface-specific work. Routing rules, per-role responsibilities, and escalation paths live in [`.claude/agents/mlb-picks-orchestrator.md`](./.claude/agents/mlb-picks-orchestrator.md); see [`CLAUDE.md`](./CLAUDE.md) for the locked stack and policy those pipelines operate under.
+
 ## Getting started
 
 Prereqs: Node.js (see `apps/web/package.json` for version), Python 3.11+, Supabase CLI, a `.env` populated from `.env.example`, and access to the Supabase project + Upstash + The Odds API + Anthropic + Stripe test keys. The authoritative env var list and ownership is in [`docs/infra/secrets-manifest.md`](./docs/infra/secrets-manifest.md). Do not commit secret values.
