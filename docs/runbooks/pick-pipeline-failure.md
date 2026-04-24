@@ -159,3 +159,9 @@ Or simply wait for the 15-minute TTL to expire — users will see picks within 1
 
 **SLA target:** Picks available by 10am ET on game days.
 **Escalation:** If not resolved by 10:30am ET, page Kyle (kyle.g.rauch@gmail.com).
+
+---
+
+## Note: outcome-grader box score sync
+
+`runOutcomeGrader()` calls `syncBoxScores()` inline at the start of each run (pg_cron `outcome-grader` at 04:00 ET). Previously `syncBoxScores` was defined but had zero callers, so games never flipped to `status='final'` and no picks got graded. Sync errors are logged but do not abort grading.

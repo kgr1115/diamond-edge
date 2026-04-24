@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { syncBoxScores } from '@/lib/ingestion/mlb-stats/box-scores';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,6 +169,26 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
 
   const supabase = createClient(supabaseUrl, serviceKey);
   console.info(JSON.stringify({ level: 'info', event: 'outcome_grader_start', time: new Date().toISOString() }));
+
+  try {
+    const sync = await syncBoxScores();
+    console.info(JSON.stringify({
+      level: 'info',
+      event: 'outcome_grader_box_scores_synced',
+      games_checked: sync.gamesChecked,
+      games_updated: sync.gamesUpdated,
+      errors: sync.errors.length,
+    }));
+    for (const msg of sync.errors) {
+      console.warn(JSON.stringify({ level: 'warn', event: 'outcome_grader_box_scores_error', error: msg }));
+    }
+  } catch (err) {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'outcome_grader_box_scores_failed',
+      error: err instanceof Error ? err.message : String(err),
+    }));
+  }
 
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
 
