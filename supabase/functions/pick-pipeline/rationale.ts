@@ -14,6 +14,19 @@
 import { callRationale } from './worker-client.ts';
 import type { PickCandidate, GameContext, RequiredTier } from './types.ts';
 
+/**
+ * Structural prompt version. Bump on any substantive change to the
+ * worker's rationale system prompt, tier-depth rules, ban list, or
+ * user-prompt shape. Must match RATIONALE_PROMPT_VERSION in
+ * worker/app/rationale.py. Including this in the hash input guarantees
+ * that stale cached rows generated under an older prompt contract are
+ * not served after a prompt revision.
+ *
+ * History:
+ *   v1 (2026-04-24) — first real Anthropic integration. Replaces stub.
+ */
+const PROMPT_CACHE_VERSION = 'v1';
+
 /** Deterministic hash of the rationale input for dedup. */
 async function hashRationaleInput(
   candidate: PickCandidate,
@@ -22,6 +35,7 @@ async function hashRationaleInput(
 ): Promise<string> {
   // Canonical JSON: stable key order, no timestamps that change between calls
   const payload = JSON.stringify({
+    prompt_version: PROMPT_CACHE_VERSION,
     game_id: candidate.game_id,
     market: candidate.market,
     pick_side: candidate.pick_side,

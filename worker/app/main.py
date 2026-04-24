@@ -3,7 +3,7 @@ Diamond Edge — Fly.io ML worker.
 
 Endpoints:
   POST /predict        — run model inference, return PickCandidate[]
-  POST /rationale      — proxy Claude API for rationale generation (stub for now)
+  POST /rationale      — Anthropic-backed pick rationale (Haiku 4.5 / Sonnet 4.6)
   POST /rationale-news — Haiku extraction: news_events → news_signals (structured JSON)
   GET  /health         — liveness probe
 
@@ -692,9 +692,19 @@ async def predict(request: Request) -> JSONResponse:
 @app.post("/rationale")
 async def rationale(request: Request) -> JSONResponse:
     """
-    Stub endpoint for rationale generation.
-    In production this will proxy the Claude API call.
-    Returns a minimal placeholder rationale so the pipeline can function.
+    POST /rationale — pick-level rationale generation via Anthropic.
+
+    Ported from `apps/web/lib/ai/generate-rationale.ts` to consolidate
+    all LLM work on the Fly.io worker. Implementation lives in
+    `worker/app/rationale.py` — this handler is a thin HTTP wrapper.
+
+    Tier routing (locked, per CLAUDE.md):
+      pro   → claude-haiku-4-5
+      elite → claude-sonnet-4-6
+
+    Caching: system prompt is cache-eligible (cache_control: ephemeral).
+    Dedup: the Edge Function checks rationale_cache.prompt_hash before
+    calling us — see supabase/functions/pick-pipeline/rationale.ts.
     """
     _verify_auth(request)
 
@@ -703,43 +713,40 @@ async def rationale(request: Request) -> JSONResponse:
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    pick = body.get("pick", {})
-    tier = body.get("tier", "pro")
-    now = datetime.now(timezone.utc).isoformat()
+    from worker.app.rationale import generate_rationale
 
-    # Build a minimal rationale from feature attributions
-    attributions = pick.get("feature_attributions", [])
-    market = pick.get("market", "moneyline")
-    pick_side = pick.get("pick_side", "home")
-    ev = pick.get("expected_value", 0.0)
-    model_prob = pick.get("model_probability", 0.5)
-
-    if attributions:
-        top = attributions[0]
-        preview = (
-            f"Statistical model favors the {pick_side} side on this {market} "
-            f"— key driver: {top.get('label', 'model signal')}."
+    try:
+        result = generate_rationale(body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        pick = body.get("pick") or {}
+        print(
+            f"[ERROR] /rationale Anthropic call failed for "
+            f"game_id={pick.get('game_id', 'unknown')}: {e}"
         )
-    else:
-        preview = (
-            f"Statistical model favors the {pick_side} side on this {market}."
-        )
+        raise HTTPException(status_code=502, detail=f"Claude API error: {e}")
 
-    full_rationale = (
-        f"{preview} "
-        f"Model probability: {round(model_prob * 100, 1)}%. "
-        f"Expected value: {round(ev * 100, 2)}%. "
-        f"Past model performance does not guarantee future results. Bet responsibly."
-    )
+    telemetry = result.pop("_telemetry", {})
+    pick = body.get("pick") or {}
+    print(json.dumps({
+        "event": "rationale_generated",
+        "game_id": pick.get("game_id", "unknown"),
+        "tier": body.get("tier", "pro"),
+        "model_used": result.get("model_used"),
+        "tokens_input": telemetry.get("tokens_input", 0),
+        "tokens_output": telemetry.get("tokens_output", 0),
+        "tokens_cache_read": telemetry.get("tokens_cache_read", 0),
+        "tokens_cache_write": telemetry.get("tokens_cache_write", 0),
+        "cache_hit": telemetry.get("cache_hit", False),
+        "cost_usd": result.get("cost_usd"),
+        "banned_keyword_leaks": telemetry.get("banned_keyword_leaks", []),
+        "prompt_version": telemetry.get("prompt_version"),
+    }))
 
-    return JSONResponse({
-        "rationale_text": full_rationale if tier == "elite" else preview,
-        "rationale_preview": preview,
-        "model_used": "stub-v1.0.0",
-        "tokens_used": 0,
-        "cost_usd": 0.0,
-        "generated_at": now,
-    })
+    return JSONResponse(result)
 
 
 @app.post("/retrain")
