@@ -12,6 +12,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { runNewsPoll } from '@/lib/ingestion/news/poll';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -32,10 +33,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const runHandle = await startCronRun('news-poll');
   const startMs = Date.now();
   try {
     const response = await runNewsPoll();
     // runNewsPoll already returns 207 on partial errors — pass it through.
+    await finishCronRun(runHandle, {
+      status: response.status >= 200 && response.status < 300 ? 'success' : 'failure',
+      errorMsg: response.status >= 300 ? `HTTP ${response.status}` : null,
+    });
     return response;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -45,6 +51,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       error: msg,
       ms: Date.now() - startMs,
     }));
+    await finishCronRun(runHandle, { status: 'failure', errorMsg: msg });
     return NextResponse.json(
       { news: { ok: false, errors: [msg] }, durationMs: Date.now() - startMs },
       { status: 207 },

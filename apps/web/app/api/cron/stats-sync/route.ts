@@ -58,6 +58,7 @@ import { syncBullpenStats } from '@/lib/ingestion/stats/bullpen-stats';
 import { syncTeamBattingStats } from '@/lib/ingestion/stats/team-batting';
 import { syncUmpireAssignments } from '@/lib/ingestion/stats/umpire-assignments';
 import { syncLineupEntries } from '@/lib/ingestion/stats/lineup-entries';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -79,8 +80,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // ?stage=lineup triggers only the lineup-sync (15-min tight loop)
   const stage = request.nextUrl.searchParams.get('stage');
   if (stage === 'lineup') {
-    return handleLineupOnly(todayUTC, startMs);
+    const lineupHandle = await startCronRun('stats-sync-lineup');
+    const response = await handleLineupOnly(todayUTC, startMs);
+    await finishCronRun(lineupHandle, {
+      status: response.status >= 200 && response.status < 300 ? 'success' : 'failure',
+      errorMsg: response.status >= 300 ? `HTTP ${response.status}` : null,
+    });
+    return response;
   }
+
+  const runHandle = await startCronRun('stats-sync');
 
   console.info(JSON.stringify({ level: 'info', event: 'stats_sync_start', todayUTC, season }));
 
@@ -212,6 +221,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     durationMs,
     errorCount: allErrors.length,
   }));
+
+  await finishCronRun(runHandle, {
+    status: allErrors.length ? 'failure' : 'success',
+    errorMsg: allErrors.length ? allErrors.join(' | ') : null,
+  });
 
   return NextResponse.json({
     pitcher:  { ok: pitcherResult.errors.length === 0, ...pitcherResult },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runOddsPoll } from '@/lib/ingestion/odds/poll';
 import { cacheInvalidate, CacheKeys } from '@/lib/redis/cache';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 10;
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const runHandle = await startCronRun('odds-refresh');
   const startMs = Date.now();
   console.info(
     JSON.stringify({ level: 'info', event: 'cron_odds_refresh_start', time: new Date().toISOString() })
@@ -52,6 +54,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ level: 'error', event: 'cron_odds_poll_stage', ok: false, error: msg, ms: Date.now() - pollStageStart }));
     const durationMs = Date.now() - startMs;
+    await finishCronRun(runHandle, { status: 'failure', errorMsg: msg });
     return NextResponse.json(
       { odds: { ok: false, errors: [msg] }, durationMs },
       { status: 207 },
@@ -100,6 +103,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     durationMs,
     ...pollResult,
   }));
+
+  await finishCronRun(runHandle, {
+    status: pollResult.ok ? 'success' : 'failure',
+    errorMsg: pollResult.ok ? null : pollResult.errors.join(' | '),
+  });
 
   return NextResponse.json(
     {

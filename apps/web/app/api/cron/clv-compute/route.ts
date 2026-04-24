@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { pickClvFrom } from '@/lib/types/pick-clv';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -112,9 +113,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const runHandle = await startCronRun('clv-compute');
   const startMs = Date.now();
   console.info(JSON.stringify({ level: 'info', event: 'clv_compute_start', time: new Date().toISOString() }));
 
+  const wrap = async <T extends NextResponse>(
+    build: () => Promise<T>,
+  ): Promise<NextResponse> => {
+    try {
+      const response = await build();
+      await finishCronRun(runHandle, {
+        status: response.status >= 200 && response.status < 300 ? 'success' : 'failure',
+        errorMsg: response.status >= 300 ? `HTTP ${response.status}` : null,
+      });
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await finishCronRun(runHandle, { status: 'failure', errorMsg: msg });
+      throw err;
+    }
+  };
+
+  return wrap(async () => {
   let supabase;
   try {
     supabase = createServiceRoleClient();
@@ -305,4 +325,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     },
     { status: allErrors.length > 0 ? 207 : 200 },
   );
+  });
 }

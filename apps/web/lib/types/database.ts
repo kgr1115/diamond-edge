@@ -691,6 +691,36 @@ export interface Database {
           }
         ];
       };
+      cron_runs: {
+        Row: {
+          id: string;
+          job_name: string;
+          started_at: string;
+          finished_at: string | null;
+          status: 'running' | 'success' | 'failure';
+          duration_ms: number | null;
+          error_msg: string | null;
+        };
+        Insert: {
+          id?: string;
+          job_name: string;
+          started_at?: string;
+          finished_at?: string | null;
+          status?: 'running' | 'success' | 'failure';
+          duration_ms?: number | null;
+          error_msg?: string | null;
+        };
+        Update: {
+          id?: string;
+          job_name?: string;
+          started_at?: string;
+          finished_at?: string | null;
+          status?: 'running' | 'success' | 'failure';
+          duration_ms?: number | null;
+          error_msg?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

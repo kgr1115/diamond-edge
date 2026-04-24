@@ -8,6 +8,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { runOutcomeGrader } from '@/lib/outcome-grader/lib';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -24,10 +25,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const runHandle = await startCronRun('outcome-grader');
   const startMs = Date.now();
   try {
     const response = await runOutcomeGrader();
-    // runOutcomeGrader already returns 207 on partial errors — pass it through.
+    // runOutcomeGrader returns 207 on partial errors — treat 2xx as success for telemetry.
+    await finishCronRun(runHandle, {
+      status: response.status >= 200 && response.status < 300 ? 'success' : 'failure',
+      errorMsg: response.status >= 300 ? `HTTP ${response.status}` : null,
+    });
     return response;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -37,6 +43,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       error: msg,
       ms: Date.now() - startMs,
     }));
+    await finishCronRun(runHandle, { status: 'failure', errorMsg: msg });
     return NextResponse.json(
       { graded: 0, wins: 0, losses: 0, pushes: 0, voids: 0, errors: [msg], durationMs: Date.now() - startMs },
       { status: 207 },

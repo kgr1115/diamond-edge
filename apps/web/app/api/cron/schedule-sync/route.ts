@@ -4,6 +4,7 @@ import { runOddsPoll } from '@/lib/ingestion/odds/poll';
 import { cacheInvalidate, CacheKeys } from '@/lib/redis/cache';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { runNewsPoll } from '@/lib/ingestion/news/poll';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const runHandle = await startCronRun('schedule-sync');
   const startMs = Date.now();
   console.info(
     JSON.stringify({ level: 'info', event: 'cron_schedule_sync_start', time: new Date().toISOString() })
@@ -158,6 +160,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     odds: { ok: oddsResult.ok, errors: oddsResult.errors },
     news: { ok: newsResult.ok, errors: newsResult.errors },
   }));
+
+  const telemetryError = hadErrors
+    ? [
+        ...scheduleResult.errors.map((e) => `schedule: ${e}`),
+        ...oddsResult.errors.map((e) => `odds: ${e}`),
+        ...newsResult.errors.map((e) => `news: ${e}`),
+      ].join(' | ')
+    : null;
+  await finishCronRun(runHandle, {
+    status: hadErrors ? 'failure' : 'success',
+    errorMsg: telemetryError,
+  });
 
   // 207 Multi-Status when any stage had errors; 200 when all succeeded
   return NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { startCronRun, finishCronRun } from '@/lib/ops/cron-run-log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 10; // This route returns immediately — the heavy work is in the Edge Function
@@ -29,6 +30,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const runHandle = await startCronRun('pick-pipeline');
   const startMs = Date.now();
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
@@ -40,6 +42,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ event: 'pick_pipeline_client_init_failed', error: msg, date: today }));
+    await finishCronRun(runHandle, { status: 'failure', errorMsg: `client init: ${msg}` });
     // Misconfigured service-role key — this IS a hard config error, not a partial failure
     return NextResponse.json(
       { error: { code: 'CONFIG_ERROR', message: 'Supabase client init failed.' } },
@@ -65,6 +68,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       error: invokeError.message,
       duration_ms: Date.now() - startMs,
     }));
+    await finishCronRun(runHandle, { status: 'failure', errorMsg: invokeError.message });
     // 207 instead of 500: the trigger route itself is functional; the edge fn invocation failed.
     // Vercel Cron will NOT retry on 207, which is correct — a retry storm would compound the issue.
     return NextResponse.json(
@@ -84,5 +88,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     duration_ms: Date.now() - startMs,
   }));
 
+  await finishCronRun(runHandle, { status: 'success', errorMsg: null });
   return NextResponse.json({ triggered: true, date: today, pipeline: { ok: true, errors: [] } }, { status: 200 });
 }
