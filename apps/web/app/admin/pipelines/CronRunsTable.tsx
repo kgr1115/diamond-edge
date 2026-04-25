@@ -20,6 +20,8 @@ export interface StatusPayload {
   generatedAt: string;
   jobs: JobRow[];
   pg_cron_jobs_without_telemetry: string[];
+  migrationPending?: boolean;
+  pgCronUnavailable?: boolean;
 }
 
 const REFRESH_MS = 60_000;
@@ -68,9 +70,21 @@ export function CronRunsTable({ initial }: { initial: StatusPayload }) {
         {fetchError && <span className="text-red-400">{fetchError}</span>}
       </div>
 
+      {data.migrationPending && (
+        <div className="rounded border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+          <p className="font-semibold">Migration 0016 not yet applied to this environment.</p>
+          <p className="mt-1 text-amber-300/90">
+            Run <code className="font-mono text-amber-100">supabase db push</code> to enable cron telemetry.
+            Currently showing pg_cron jobs only.
+          </p>
+        </div>
+      )}
+
       {data.jobs.length === 0 ? (
         <div className="rounded border border-gray-800 bg-gray-900/40 px-4 py-8 text-center text-sm text-gray-400">
-          No cron telemetry recorded in the last 24 hours.
+          {data.migrationPending
+            ? 'cron_runs table not present yet — apply migration 0016 to populate this view.'
+            : 'No cron telemetry recorded in the last 24 hours.'}
         </div>
       ) : (
         <div className="overflow-x-auto rounded border border-gray-800">
@@ -119,7 +133,16 @@ export function CronRunsTable({ initial }: { initial: StatusPayload }) {
         <h2 className="text-sm font-semibold text-gray-300 mb-2">
           pg_cron jobs without telemetry
         </h2>
-        {data.pg_cron_jobs_without_telemetry.length === 0 ? (
+        {data.pgCronUnavailable ? (
+          <div className="rounded border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+            <p className="font-semibold">pg_cron schema not queryable in this environment.</p>
+            <p className="mt-1 text-amber-300/90">
+              The <code className="font-mono text-amber-100">cron</code> schema is missing or the
+              service role lacks SELECT on <code className="font-mono text-amber-100">cron.job</code>.
+              Verify the pg_cron extension is enabled.
+            </p>
+          </div>
+        ) : data.pg_cron_jobs_without_telemetry.length === 0 ? (
           <p className="text-xs text-gray-500">
             All registered pg_cron jobs have written at least one row in the last 24h.
           </p>

@@ -53,15 +53,31 @@ export async function GET(): Promise<NextResponse> {
     .limit(1000);
 
   if (error) {
-    console.error(JSON.stringify({
-      level: 'error',
-      event: 'admin_pipelines_status_query_failed',
+    const migrationPending = isMissingRelation(error.code, error.message, 'cron_runs');
+    if (!migrationPending) {
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'admin_pipelines_status_query_failed',
+        error: error.message,
+      }));
+      return NextResponse.json(
+        { error: { code: 'DB_ERROR', message: 'Failed to load cron runs.' } },
+        { status: 500 },
+      );
+    }
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'admin_pipelines_migration_pending',
       error: error.message,
     }));
-    return NextResponse.json(
-      { error: { code: 'DB_ERROR', message: 'Failed to load cron runs.' } },
-      { status: 500 },
-    );
+    const pgCron = await loadPgCronJobsWithoutTelemetry(supabase, new Set<string>());
+    return NextResponse.json({
+      generatedAt: new Date().toISOString(),
+      jobs: [],
+      pg_cron_jobs_without_telemetry: pgCron.jobs,
+      migrationPending: true,
+      pgCronUnavailable: pgCron.unavailable,
+    });
   }
 
   const rows = (runs ?? []) as CronRunRow[];
@@ -102,37 +118,16 @@ export async function GET(): Promise<NextResponse> {
     }))
     .sort((a, b) => a.job_name.localeCompare(b.job_name));
 
-  // Find pg_cron jobs that have never written to cron_runs.
-  // cron.job lives in the pg_cron schema; not in the typed Database — escape hatch.
-  // Failure here is non-fatal — the page still works without this list.
-  let pgCronJobsWithoutTelemetry: string[] = [];
-  try {
-    const supabaseAny = supabase as unknown as {
-      schema: (name: string) => { from: (table: string) => { select: (cols: string) => Promise<{ data: Array<{ jobname: string }> | null; error: { message: string } | null }> } };
-    };
-    const { data: pgCronJobs, error: pgError } = await supabaseAny
-      .schema('cron')
-      .from('job')
-      .select('jobname');
-    if (!pgError && pgCronJobs) {
-      const jobsWithTelemetry = new Set(jobs.map((j) => j.job_name));
-      pgCronJobsWithoutTelemetry = pgCronJobs
-        .map((j) => j.jobname)
-        .filter((name) => !jobsWithTelemetry.has(name))
-        .sort();
-    }
-  } catch (err) {
-    console.warn(JSON.stringify({
-      level: 'warn',
-      event: 'admin_pipelines_pg_cron_query_failed',
-      error: err instanceof Error ? err.message : String(err),
-    }));
-  }
+  const pgCron = await loadPgCronJobsWithoutTelemetry(
+    supabase,
+    new Set(jobs.map((j) => j.job_name)),
+  );
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
     jobs,
-    pg_cron_jobs_without_telemetry: pgCronJobsWithoutTelemetry,
+    pg_cron_jobs_without_telemetry: pgCron.jobs,
+    pgCronUnavailable: pgCron.unavailable,
   });
 }
 
@@ -140,4 +135,60 @@ function truncateForUi(msg: string | null): string | null {
   if (msg == null) return null;
   if (msg.length <= ERROR_MSG_UI_MAX) return msg;
   return msg.slice(0, ERROR_MSG_UI_MAX - 3) + '...';
+}
+
+// Postgres "undefined_table" — the migration that creates the relation
+// hasn't been applied to this environment yet. Mirrored in page.tsx so the
+// initial RSC render and the 60s auto-refresh agree on the sentinel.
+function isMissingRelation(code: string | null | undefined, message: string, relation: string): boolean {
+  if (code === '42P01') return true;
+  return message.includes(`relation "${relation}" does not exist`);
+}
+
+interface PgCronProbe {
+  jobs: string[];
+  unavailable: boolean;
+}
+
+async function loadPgCronJobsWithoutTelemetry(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  withTelemetry: Set<string>,
+): Promise<PgCronProbe> {
+  try {
+    const supabaseAny = supabase as unknown as {
+      schema: (name: string) => { from: (table: string) => { select: (cols: string) => Promise<{ data: Array<{ jobname: string }> | null; error: { code?: string | null; message: string } | null }> } };
+    };
+    const { data: pgCronJobs, error: pgError } = await supabaseAny
+      .schema('cron')
+      .from('job')
+      .select('jobname');
+    if (pgError) {
+      return {
+        jobs: [],
+        unavailable: isMissingRelation(pgError.code ?? null, pgError.message, 'cron.job')
+          || isMissingRelation(pgError.code ?? null, pgError.message, 'job')
+          || /schema "cron" does not exist/.test(pgError.message)
+          || /permission denied/i.test(pgError.message),
+      };
+    }
+    if (!pgCronJobs) return { jobs: [], unavailable: false };
+    return {
+      jobs: pgCronJobs
+        .map((j) => j.jobname)
+        .filter((name) => !withTelemetry.has(name))
+        .sort(),
+      unavailable: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'admin_pipelines_pg_cron_query_failed',
+      error: message,
+    }));
+    return {
+      jobs: [],
+      unavailable: /schema "cron" does not exist|relation .* does not exist|permission denied/i.test(message),
+    };
+  }
 }
