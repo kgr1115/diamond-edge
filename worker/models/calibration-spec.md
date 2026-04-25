@@ -272,6 +272,46 @@ PickCandidate written to Fly.io /predict response
 
 The filter `confidence_tier >= 3` (EV > 4%) is a **locked decision** per TASK-005 brief. Do not relax this threshold for v1.
 
+### B2 isotonic calibrator (pick cycle 1 Proposal #5, 2026-04-24)
+
+After the P1 moneyline classifier rebuild and the run_line / totals delta regressors, the un-wrapped final probability misses the spec's ±5pp bin tolerance on the 2024 holdout — moneyline 10.4% (P1's metrics.json), run_line 14.3%, totals 13.9%. P5 adds a per-market isotonic calibration layer that wraps the model's final probability and remaps it to empirical win rate.
+
+**Mechanism (per market):**
+
+1. Train the LightGBM model on `2022 + H1-2023` exactly as before. The H2-2023 fold (~1206 games at the `H2_2023_CUTOFF = 2023-07-01` boundary) is held out.
+2. Compute the model's final probability on H2-2023:
+   - Moneyline (classifier): `raw_prob = model.predict_proba(X_cal)[:,1]`
+   - RL / totals (regressor on delta): `raw_prob = clip(prior + clip(model.predict(X_cal), ±DELTA_CLIP), 0.05, 0.95)`
+3. Fit `sklearn.isotonic.IsotonicRegression(out_of_bounds='clip', y_min=0, y_max=1)` mapping `raw_prob -> binary_outcome` (`home_win` for ML/RL, `over_hit` for totals).
+4. Persist the calibrator in two places (both written by `worker/models/retrain/monthly.py`):
+   - Embedded in `model_b2.pkl` under the `b2_calibrator` key (atomic load at serving startup).
+   - Side-car at `v<ts>/calibrator.pkl` for inspection / external tooling.
+5. At serving (`worker/app/main.py`), after computing the post-clip `cal_prob`, apply `b2_calibrator.transform([cal_prob])[0]` and re-clip into the safety band. Backward compatible: artifacts without `b2_calibrator` use the uncalibrated probability (the legacy path).
+
+**Why H2-2023 specifically:** The walk-forward protocol already excludes H2-2023 from `train_final` so the LightGBM model never saw it. That's exactly the held-out slice isotonic needs to avoid in-sample overfit. Spec calibration-spec.md §Step 1 calls for 3-fold walk-forward CV when fitting Platt; for isotonic on a single 1206-game fold, in-sample overfit risk is low (the fitted step function has at most ~1206 breakpoints) and the H2-2023 fold is large enough that the standard sklearn pattern suffices. If a future check finds isotonic overfitting, fall back to Platt (`LogisticRegression` on `raw_prob.reshape(-1, 1)`).
+
+**Per-market deviation targets (gate):**
+
+| Market | Pre-P5 max_dev | Target after P5 |
+|---|---|---|
+| Moneyline | 0.1043 | ≤ 0.05 |
+| Run line  | 0.143  | ≤ 0.05 |
+| Totals    | 0.1385 | ≤ 0.05 |
+
+ECE is also tracked — `ece_calibrated - ece_raw ≤ +0.02` (calibration shouldn't make ECE worse; expected to drop).
+
+**Metrics keys added to `metrics.json`:**
+- `calibrator_present: bool`
+- `calibrator_kind: "isotonic_regression" | null`
+- `calibrator_fit_n: int` (H2-2023 sample size used)
+- `holdout_2024.max_calibration_deviation_calibrated: float` (the spec gate)
+- `holdout_2024.ece_raw`, `holdout_2024.ece_calibrated`, `holdout_2024.ece_delta`
+- `holdout_2024.log_loss_raw`, `holdout_2024.log_loss_calibrated` (raw kept for diagnostic; `log_loss_new_model` records the calibrated value when calibrator is present, raw otherwise — consumed by `should_promote`'s no-regression gate).
+
+**ROI / CLV invariance:** Isotonic is a monotone transform on probability magnitudes, not a re-ranking. Picks are selected by EV (`prob * net_win - (1 - prob) * 1.0`), which IS sensitive to magnitude — so a monotone shrink toward the empirical line will move some EVs across the LIVE_EV_MIN threshold. Holdout backtests should report ROI delta ≥ −0.5% and CLV delta ≥ −0.1%; larger swings indicate the calibrator is moving picks across the volume frontier and warrant scope-gate review.
+
+---
+
 ### SHAP near-zero filter (pick-scope-gate proposal #6, 2026-04-24)
 
 Attributions with `|shap_value| < 1e-4` are dropped from `feature_attributions` before the top-7 truncation in `sort_attributions` (see `worker/models/pick_candidate_schema.py`). If fewer than 2 attributions survive (Pro tier's citation floor in `worker/app/rationale.py`), the next-highest-by-magnitude dropped entries are backfilled so the rationale generator always has the Pro-tier floor to cite, and a `[WARN] near-zero SHAP filter` log line is emitted.

@@ -196,6 +196,12 @@ def _load_models() -> None:
 
             calibrated_model = artifact.get("calibrated_model")
             calibrator = artifact.get("calibrator")
+            # B2 isotonic calibrator (P5, 2026-04-24) — wraps the post-clip
+            # final_prob to remap raw model probability -> empirical win rate.
+            # Distinct from `calibrator` above, which is the legacy v1
+            # pre-classification IsotonicRegression on raw predict_proba output.
+            # Backward-compatible: missing key (older artifacts) -> uncalibrated.
+            b2_calibrator = artifact.get("b2_calibrator")
             delta_clip = float(artifact.get("delta_clip", 0.15))
             prob_clip_lo = float(artifact.get("prob_clip_lo", 0.05))
             prob_clip_hi = float(artifact.get("prob_clip_hi", 0.95))
@@ -212,6 +218,7 @@ def _load_models() -> None:
                 "model": model,
                 "calibrated_model": calibrated_model,
                 "calibrator": calibrator,
+                "b2_calibrator": b2_calibrator,
                 "is_b2_regressor": is_b2_regressor,
                 "delta_source": delta_source,
                 "delta_clip": delta_clip,
@@ -221,7 +228,8 @@ def _load_models() -> None:
                 "explainer": explainer,
                 "model_label": model_label,
             }
-            print(f"[OK] Loaded {market} model ({model_label}, {len(features)} features)")
+            cal_tag = "+isotonic" if b2_calibrator is not None else ""
+            print(f"[OK] Loaded {market} model ({model_label}{cal_tag}, {len(features)} features)")
             MARKET_VERSIONS[market] = artifact.get("trained_at", MARKET_VERSIONS.get(market, "unknown"))
         except Exception as e:
             _LOAD_ERRORS[market] = str(e)
@@ -428,6 +436,7 @@ def run_inference(
     model = reg["model"]
     calibrated_model = reg.get("calibrated_model")
     calibrator = reg.get("calibrator")
+    b2_calibrator = reg.get("b2_calibrator")
     is_b2_regressor = reg.get("is_b2_regressor", False)
     delta_source = reg.get("delta_source", "regressor_raw")
     delta_clip = reg.get("delta_clip", 0.15)
@@ -472,6 +481,17 @@ def run_inference(
         cal_prob = float(calibrator.predict([raw_prob])[0])
 
     cal_prob = float(np.clip(cal_prob, prob_clip_lo, prob_clip_hi))
+
+    # P5 (2026-04-24) — apply B2 isotonic calibrator AFTER prior+delta clipping.
+    # Remaps raw model probability to empirical win rate fit on H2-2023.
+    # Backward compatible: artifacts written before P5 ship without
+    # `b2_calibrator`, so this branch no-ops and the uncalibrated probability
+    # (the legacy serving behavior) is used. Final clip re-asserts the
+    # [prob_clip_lo, prob_clip_hi] safety band in case the isotonic transform
+    # pushed a value outside it.
+    if b2_calibrator is not None:
+        cal_prob = float(b2_calibrator.transform([cal_prob])[0])
+        cal_prob = float(np.clip(cal_prob, prob_clip_lo, prob_clip_hi))
 
     # Determine pick sides and best odds
     candidates = []

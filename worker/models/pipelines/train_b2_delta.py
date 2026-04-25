@@ -48,6 +48,7 @@ import numpy as np
 import pandas as pd
 import shap
 from sklearn.calibration import calibration_curve
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 ROOT = Path(__file__).parents[3]
@@ -485,6 +486,70 @@ def plot_reliability_b2(
     plt.savefig(output_path, dpi=150)
     plt.close()
     return max_dev
+
+
+# ---------------------------------------------------------------------------
+# Isotonic calibration (pick cycle 1 Proposal #5, 2026-04-24)
+# ---------------------------------------------------------------------------
+#
+# All three B2 markets exceeded the ±5pp calibration tolerance from
+# `worker/models/calibration-spec.md` on the 2024 holdout (moneyline 6.6%,
+# run_line 14.3%, totals 13.9%). The P1 moneyline rebuild actually widened
+# the deviation to 10.4% — better ROI ranking, worse magnitude calibration.
+#
+# Standard sklearn fix: wrap the model's final probability in an isotonic
+# regression mapping fit on a HELD-OUT slice the LightGBM model never saw.
+# The walk-forward training protocol already produces this slice — H2-2023
+# is excluded from `train_final` (which is 2022 + H1-2023). We fit isotonic
+# on H2-2023 → binary outcome, then `transform()` at inference to remap raw
+# B2 final_prob → calibrated final_prob. Calibration is applied AFTER
+# delta-clip so the [0.05, 0.95] safety band in the regressor path still
+# holds for the input domain.
+
+def calibration_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
+    """Expected calibration error using equal-mass quantile bins (matches plot_reliability_b2)."""
+    if len(y_true) == 0:
+        return 0.0
+    frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=n_bins, strategy="quantile")
+    if len(frac_pos) == 0:
+        return 0.0
+    bin_indices = np.digitize(
+        y_prob, np.quantile(y_prob, np.linspace(0, 1, n_bins + 1)[1:-1])
+    )
+    weights = np.array([
+        (bin_indices == i).sum() / len(y_prob) for i in range(len(frac_pos))
+    ])
+    weights = weights[: len(frac_pos)]
+    return float(np.sum(weights * np.abs(frac_pos - mean_pred)))
+
+
+def fit_isotonic_calibrator(
+    raw_probs: np.ndarray,
+    y_true: np.ndarray,
+) -> IsotonicRegression:
+    """
+    Fit an isotonic regression mapping raw model probability -> empirical win rate.
+
+    Caller must pass H2-2023 (calibration fold) probabilities and outcomes —
+    NEVER the 2024 holdout. out_of_bounds='clip' keeps inference stable when
+    a serving probability falls outside the [min, max] of the calibration
+    distribution (rare but possible).
+    """
+    raw = np.clip(np.asarray(raw_probs, dtype=float), 1e-6, 1.0 - 1e-6)
+    y = np.asarray(y_true, dtype=float)
+    iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
+    iso.fit(raw, y)
+    return iso
+
+
+def apply_isotonic_calibrator(
+    calibrator: IsotonicRegression | None,
+    raw_probs: np.ndarray,
+) -> np.ndarray:
+    """Apply calibrator if present; otherwise return raw_probs unchanged (back-compat)."""
+    if calibrator is None:
+        return np.asarray(raw_probs, dtype=float)
+    return np.asarray(calibrator.transform(np.asarray(raw_probs, dtype=float)), dtype=float)
 
 
 # ---------------------------------------------------------------------------

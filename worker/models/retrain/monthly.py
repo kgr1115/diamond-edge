@@ -493,6 +493,9 @@ def train_market_versioned(
         plot_reliability_b2,
         _remove_vig,
         drop_zero_variance_features,
+        fit_isotonic_calibrator,
+        apply_isotonic_calibrator,
+        calibration_ece,
         DELTA_CLIP as _DELTA_CLIP,
     )
 
@@ -557,8 +560,15 @@ def train_market_versioned(
     _, y_hold = to_xy(holdout)
     X_hold = holdout[available_features].fillna(0).values
 
+    # H2-2023 is the LightGBM-held-out calibration fold (walk-forward boundary
+    # at H2_2023_CUTOFF). Used below to fit the isotonic calibrator (P5,
+    # 2026-04-24) without leakage onto the 2024 holdout.
+    X_cal = h2_2023[available_features].fillna(0).values if len(h2_2023) > 0 else np.empty((0, len(available_features)))
+    y_cal_delta = h2_2023[target_col].astype(float).values if len(h2_2023) > 0 else np.empty(0)
+
     prior_hold = holdout[prior_col].astype(float).values
     prior_train = train_final[prior_col].astype(float).values
+    prior_cal = h2_2023[prior_col].astype(float).values if len(h2_2023) > 0 else np.empty(0)
 
     if use_classifier:
         # Binary classifier on absolute outcome (home_win = round(prior + delta)).
@@ -582,6 +592,41 @@ def train_market_versioned(
     final_probs = np.clip(prior_hold + clipped_delta_hold, 0.05, 0.95)
     y_binary_hold = np.clip((prior_hold + y_hold).round(), 0, 1).astype(float)
 
+    # ----- P5 (2026-04-24): fit isotonic calibrator on H2-2023 -----
+    # Compute the same final_prob form on H2-2023 that the model produces at
+    # inference, then fit a monotone isotonic remap to empirical win rate.
+    # H2-2023 was excluded from train_final, so the model never saw it.
+    calibrator = None
+    cal_fit_n = int(len(h2_2023))
+    if cal_fit_n >= 50:
+        if use_classifier:
+            raw_cal_probs = final_model.predict_proba(X_cal)[:, 1]
+        else:
+            delta_cal = final_model.predict(X_cal)
+            raw_cal_probs = np.clip(
+                prior_cal + np.clip(delta_cal, -_DELTA_CLIP, _DELTA_CLIP),
+                0.05, 0.95,
+            )
+        y_binary_cal = np.clip((prior_cal + y_cal_delta).round(), 0, 1).astype(float)
+        try:
+            calibrator = fit_isotonic_calibrator(raw_cal_probs, y_binary_cal)
+            log.info(
+                f"  [{market}] Fit isotonic calibrator on H2-2023 (n={cal_fit_n})"
+            )
+        except Exception as e:
+            log.warning(f"  [{market}] Isotonic fit failed: {e} — proceeding uncalibrated")
+            calibrator = None
+    else:
+        log.warning(
+            f"  [{market}] H2-2023 calibration fold too small "
+            f"(n={cal_fit_n} < 50) — skipping calibrator fit"
+        )
+
+    # Calibrated holdout probabilities — only used for metrics; serving applies
+    # the same transform downstream via apply_isotonic_calibrator().
+    final_probs_calibrated = apply_isotonic_calibrator(calibrator, final_probs)
+    final_probs_calibrated = np.clip(final_probs_calibrated, 0.05, 0.95)
+
     # RMSE is computed against the delta target for legacy comparability with
     # the regressor baseline. For the classifier path `delta_hold` is
     # predict_proba - prior, not the regressor output, but the RMSE here is
@@ -590,11 +635,21 @@ def train_market_versioned(
     rmse_hold = float(np.sqrt(mean_squared_error(y_hold, delta_hold)))
     rmse_prior = float(np.sqrt(mean_squared_error(y_hold, np.zeros(len(y_hold)))))
 
-    # Log-loss on holdout
-    log_loss_new = _log_loss(y_binary_hold, final_probs)
+    # Log-loss on holdout — record raw and calibrated.
+    # `log_loss_new_model` stays the calibrated value for back-compat with the
+    # promote-eligibility gate (`should_promote` reads this key); the raw
+    # value is exposed for diagnostic comparison only.
+    log_loss_raw = _log_loss(y_binary_hold, final_probs)
+    log_loss_calibrated = _log_loss(y_binary_hold, final_probs_calibrated)
+    log_loss_new = log_loss_calibrated if calibrator is not None else log_loss_raw
     log_loss_prior = _log_loss(y_binary_hold, np.clip(prior_hold, 1e-7, 1 - 1e-7))
 
-    # Calibration diagram
+    # ECE — should drop after calibration; gate is `ece_delta <= +0.02`
+    # (calibration shouldn't make calibration worse).
+    ece_raw = calibration_ece(y_binary_hold, final_probs)
+    ece_calibrated = calibration_ece(y_binary_hold, final_probs_calibrated)
+
+    # Calibration diagram — uncalibrated (left for legacy comparison).
     diag_path = version_dir / f"calibration_{market}.png"
     try:
         max_cal_dev = plot_reliability_b2(
@@ -603,6 +658,27 @@ def train_market_versioned(
     except Exception as e:
         log.warning(f"  Calibration plot failed: {e}")
         max_cal_dev = 0.0
+
+    # Calibrated reliability diagram + max-deviation gate (P5, 2026-04-24).
+    # Spec target: max_dev_calibrated <= 0.05 per `worker/models/calibration-spec.md`.
+    if calibrator is not None:
+        cal_diag_path = version_dir / f"calibration_{market}_calibrated.png"
+        try:
+            max_cal_dev_calibrated = plot_reliability_b2(
+                final_probs_calibrated, y_binary_hold,
+                f"{market} retrain (isotonic-calibrated)", cal_diag_path,
+            )
+        except Exception as e:
+            log.warning(f"  Calibrated reliability plot failed: {e}")
+            max_cal_dev_calibrated = max_cal_dev
+    else:
+        max_cal_dev_calibrated = max_cal_dev
+
+    log.info(
+        f"  [{market}] Calibration: max_dev raw={max_cal_dev:.4f} "
+        f"calibrated={max_cal_dev_calibrated:.4f} "
+        f"(target <=0.05) | ECE raw={ece_raw:.4f} -> {ece_calibrated:.4f}"
+    )
 
     # CLV
     clv_result = {"n": 0, "note": "closing novig column missing"}
@@ -646,10 +722,34 @@ def train_market_versioned(
         for k in roi_results
     )
 
+    # P5 (2026-04-24) — also simulate ROI on the CALIBRATED probabilities,
+    # which is what serving will actually produce. simulate_roi_delta accepts
+    # a (prior, delta) decomposition so we back out an effective_delta from
+    # the calibrated probability: effective_delta = calibrated_prob - prior.
+    # This is the surface pick-tester compares against P1 baseline ROI.
+    roi_results_calibrated: dict = {}
+    best_roi_calibrated = best_roi
+    if calibrator is not None:
+        effective_delta_calibrated = final_probs_calibrated - prior_hold
+        for ev_thr in [0.04, 0.06, 0.08]:
+            key = f"ev_thr_{int(ev_thr*100)}pct"
+            roi_results_calibrated[key] = simulate_roi_delta(
+                prior_hold, effective_delta_calibrated, y_binary_hold,
+                p_odds, o_odds, nv_primary,
+                ev_threshold=ev_thr,
+            )
+        best_roi_calibrated = max(
+            (roi_results_calibrated.get(k, {}).get("delta_model", {}).get("roi") or 0)
+            for k in roi_results_calibrated
+        )
+
     # Save model artifact. `delta_source` tells the serving path how to
     # derive the delta from model output:
     #   regressor_raw            -> model.predict(x) returns delta directly
     #   classifier_minus_prior   -> delta = model.predict_proba(x)[:, 1] - prior
+    # The `b2_calibrator` slot (P5, 2026-04-24) holds the isotonic remap
+    # applied AFTER prior+delta clipping; absent (None) for back-compat with
+    # older artifacts that have no calibrator on disk.
     artifact = {
         "model": final_model,
         "features": available_features,
@@ -658,30 +758,51 @@ def train_market_versioned(
         "prior_feature_name": prior_col,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "training_protocol": "walk_forward_b2_monthly_retrain",
+        "b2_calibrator": calibrator,
     }
     pkl_path = version_dir / "model_b2.pkl"
     with open(pkl_path, "wb") as f:
         pickle.dump(artifact, f, protocol=5)
     log.info(f"  Model artifact written: {pkl_path}")
 
+    # Side-car calibrator file for inspection / external tooling. The serving
+    # path reads the calibrator out of model_b2.pkl, so this file is purely
+    # informational. Skipped if no calibrator was fit.
+    if calibrator is not None:
+        cal_pkl_path = version_dir / "calibrator.pkl"
+        with open(cal_pkl_path, "wb") as f:
+            pickle.dump(calibrator, f, protocol=5)
+        log.info(f"  Calibrator side-car written: {cal_pkl_path}")
+
     metrics = {
         "market": market,
         "delta_source": delta_source,
+        "calibrator_present": calibrator is not None,
+        "calibrator_fit_n": cal_fit_n,
+        "calibrator_kind": "isotonic_regression" if calibrator is not None else None,
         "holdout_2024": {
             "n": len(holdout),
             "rmse_b2": round(rmse_hold, 4),
             "rmse_prior_only": round(rmse_prior, 4),
             "beats_market_rmse": rmse_hold < rmse_prior,
             "log_loss_new_model": round(log_loss_new, 5),
+            "log_loss_raw": round(log_loss_raw, 5),
+            "log_loss_calibrated": round(log_loss_calibrated, 5),
             "log_loss_market_prior": round(log_loss_prior, 5),
             "log_loss_delta": round(log_loss_new - log_loss_prior, 5),
             "max_calibration_deviation": round(max_cal_dev, 4),
+            "max_calibration_deviation_calibrated": round(max_cal_dev_calibrated, 4),
+            "ece_raw": round(ece_raw, 4),
+            "ece_calibrated": round(ece_calibrated, 4),
+            "ece_delta": round(ece_calibrated - ece_raw, 4),
             "nonzero_delta_rate_02": round(float((np.abs(clipped_delta_hold) > 0.02).mean()), 3),
             "delta_std": round(float(np.std(clipped_delta_hold)), 4),
         },
         "clv": clv_result,
         "roi_simulation": roi_results,
+        "roi_simulation_calibrated": roi_results_calibrated,
         "best_roi_pct": round(best_roi, 2),
+        "best_roi_pct_calibrated": round(best_roi_calibrated, 2),
         "features": available_features,
         "n_features": len(available_features),
         "missing_features_imputed": missing_features,
