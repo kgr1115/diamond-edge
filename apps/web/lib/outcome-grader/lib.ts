@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { syncBoxScores } from '@/lib/ingestion/mlb-stats/box-scores';
+import { cacheInvalidatePattern, CacheKeys } from '@/lib/redis/cache';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -127,26 +128,21 @@ async function updatePickResults(
   }
 }
 
-async function invalidateHistoryCache(): Promise<void> {
-  const redisUrl   = process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!redisUrl || !redisToken) return;
-  const url = redisUrl.replace(/\/$/, '');
+// Derive SCAN globs from CacheKeys builders so the prefix is single-sourced
+// (the original bug was a typo'd literal). For builders with numeric segments,
+// trim down to the prefix and append a single '*' — SCAN matches '*' greedily
+// across ':' boundaries, covering every concrete key the builder can produce.
+function patternFor(key: string, keepSegments: number): string {
+  return `${key.split(':').slice(0, keepSegments).join(':')}:*`;
+}
 
-  const keysRes = await fetch(`${url}/keys/de:picks:history:*`, {
-    headers: { Authorization: `Bearer ${redisToken}` },
-  });
-  if (!keysRes.ok) return;
-
-  const { result: keys } = await keysRes.json() as { result: string[] };
-  if (!keys || keys.length === 0) return;
-
-  await fetch(`${url}/pipeline`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${redisToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(keys.map((k) => ['DEL', k])),
-  });
-  console.info(JSON.stringify({ level: 'info', event: 'outcome_grader_cache_invalidated', keys_deleted: keys.length }));
+async function invalidateGradedCaches(): Promise<void> {
+  const patterns = [
+    patternFor(CacheKeys.historyAgg('x', 'x', 'x'), 3),   // de:history:agg:*
+    patternFor(CacheKeys.historyList('x', 'x', 'x', 0, 0), 3), // de:history:list:*
+    patternFor(CacheKeys.picksToday('x', 'x'), 3),        // de:picks:today:*
+  ];
+  await Promise.all(patterns.map((p) => cacheInvalidatePattern(p)));
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +346,7 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
       await updatePickResults(supabase, outcomes);
     }
 
-    await invalidateHistoryCache().catch((err) => {
+    await invalidateGradedCaches().catch((err) => {
       console.warn(JSON.stringify({ level: 'warn', event: 'outcome_grader_cache_invalidation_failed', error: err instanceof Error ? err.message : String(err) }));
     });
   }
