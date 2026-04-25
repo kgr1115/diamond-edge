@@ -79,6 +79,10 @@ export interface PickResponse {
   rationale_preview?: string;
   shap_attributions?: ShapAttribution[];
   line_snapshots?: OddsSnapshot[];
+  /** True when THIS pick's pinned odds snapshot is older than ODDS_STALE_MIN.
+   *  Per-pick narrowing of the slate-level meta.odds_stale flag — only the
+   *  pick whose own book/snapshot is stale gets the warning, not every card. */
+  odds_stale?: boolean;
 }
 
 export interface PicksMeta {
@@ -147,6 +151,7 @@ function maskPick(
   bookName: string | null,
   lineSnapshots: OddsSnapshot[] | undefined,
   lineValues: { total_line: number | null; run_line_spread: number | null } | undefined,
+  oddsStale: boolean,
 ): PickResponse {
   const level = entitlementLevel(tier);
 
@@ -165,6 +170,7 @@ function maskPick(
     required_tier: row.required_tier,
     visibility: row.visibility,
     result: row.result,
+    odds_stale: oddsStale,
   };
 
   // Line values (total / run-line spread) are the public line numbers — always
@@ -305,6 +311,10 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
   const entLevel = entitlementLevel(userTier);
   const lineSnapshotsByGameId = new Map<string, OddsSnapshot[]>();
   const lineValuesByPickId = new Map<string, { total_line: number | null; run_line_spread: number | null }>();
+  // Per-pick pinned-snapshot timestamp — used to compute per-pick odds_stale
+  // below. Populated for ALL pick markets (not just total/run_line) so the
+  // moneyline cards also get an accurate per-card freshness signal.
+  const pinnedSnapshotAtByPickId = new Map<string, string>();
 
   if (picks && picks.length > 0) {
     const uniqueGameIds = [...new Set(picks.map((p) => p.games?.id).filter(Boolean))] as string[];
@@ -341,15 +351,17 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
         oddsByGameMarket.get(key)!.push(row);
       }
 
-      // Per-pick line-value pinning. Match on the pick's best_line_book_id +
+      // Per-pick snapshot pinning. Match on the pick's best_line_book_id +
       // newest snapshot at-or-before generated_at. If no exact-book match,
       // fall back to most-recent-pre-pick row of any book on that game+market.
       // If even that fails, fall back to the most-recent row period (preserves
       // prior behavior for pre-fix picks lacking a sane generated_at).
+      // Runs for every pick market so moneyline picks also pin a snapshot for
+      // the per-card staleness signal — line-value extraction below is then
+      // gated to total/run_line only.
       for (const pick of picks) {
         const gid = pick.games?.id;
         if (!gid) continue;
-        if (pick.market !== 'total' && pick.market !== 'run_line') continue;
 
         const bucket = oddsByGameMarket.get(`${gid}:${pick.market}`) ?? [];
         if (bucket.length === 0) continue;
@@ -370,10 +382,14 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
         const anyBookPrePick = sameBookPrePick ?? bucket.find(eligibleAtCutoff);
 
         const matched = anyBookPrePick ?? bucket[0];
-        lineValuesByPickId.set(pick.id, {
-          total_line: matched.total_line,
-          run_line_spread: matched.run_line_spread,
-        });
+        pinnedSnapshotAtByPickId.set(pick.id, matched.snapshotted_at);
+
+        if (pick.market === 'total' || pick.market === 'run_line') {
+          lineValuesByPickId.set(pick.id, {
+            total_line: matched.total_line,
+            run_line_spread: matched.run_line_spread,
+          });
+        }
       }
 
       // Pro+ sparkline: 3 most-recent snapshots per game. Note this still mixes
@@ -458,11 +474,25 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
     ms: Date.now() - metaStart,
   });
 
+  const nowMs = Date.now();
   const maskedPicks: PickResponse[] = (picks ?? []).map((row) => {
     const bookName = row.sportsbooks?.name ?? null;
     const lineSnapshots = lineSnapshotsByGameId.get(row.games?.id ?? '') ?? undefined;
     const lineValues = lineValuesByPickId.get(row.id);
-    return maskPick(row, userTier, bookName, lineSnapshots, lineValues);
+
+    // Per-pick staleness: compare THIS pick's pinned snapshot (the row the
+    // price was actually taken from) against the same ODDS_STALE_MIN window
+    // used for the slate-level meta flag. Same Math.max(0, …) clock-drift
+    // guard. Picks with no pinned snapshot (no matching odds row at all)
+    // default to false rather than panicking — the absence is already covered
+    // by the slate-level signal in the header badge.
+    const pinnedAt = pinnedSnapshotAtByPickId.get(row.id);
+    const pickAgeMin = pinnedAt
+      ? Math.max(0, (nowMs - new Date(pinnedAt).getTime()) / 60_000)
+      : 0;
+    const pickOddsStale = pinnedAt !== undefined && pickAgeMin >= ODDS_STALE_MIN;
+
+    return maskPick(row, userTier, bookName, lineSnapshots, lineValues, pickOddsStale);
   });
 
   const response: PicksSlateResponse = {

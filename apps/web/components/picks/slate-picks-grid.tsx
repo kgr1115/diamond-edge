@@ -60,6 +60,7 @@ interface PickData {
   shap_attributions?: ShapAttribution[];
   line_snapshots?: OddsSnapshot[];
   has_note?: boolean;
+  odds_stale?: boolean;
 }
 
 interface SlatePicksGridProps {
@@ -263,7 +264,6 @@ function ThinSlateDiagnostic({
 export function SlatePicksGrid({ picks, userTier, meta }: SlatePicksGridProps) {
   const { market, minStrength, visibility, sort, minEv } = useSlateFilters();
   const canSeeShadow = userTier === 'pro' || userTier === 'elite';
-  const oddsStale = meta?.odds_stale ?? false;
 
   const filtered = useMemo(
     () => applyFilters(picks, market, minStrength, visibility, sort, minEv),
@@ -316,7 +316,7 @@ export function SlatePicksGrid({ picks, userTier, meta }: SlatePicksGridProps) {
                 </div>
               )}
 
-              <PickCard pick={pick} userTier={userTier} oddsStale={oddsStale} />
+              <PickCard pick={pick} userTier={userTier} />
 
               {userTier === 'elite' && pick.shap_attributions && pick.shap_attributions.length > 0 && (
                 <div className="mt-1 px-4 pb-3 bg-gray-900 border border-t-0 border-gray-800 rounded-b-lg">

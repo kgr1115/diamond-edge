@@ -27,10 +27,12 @@ interface PickCardProps {
     rationale_preview?: string;
     /** True when the user has a journal note saved for this pick. */
     has_note?: boolean;
+    /** True when THIS pick's pinned odds snapshot is past the freshness
+     *  threshold. Per-pick narrowing of the slate-level meta.odds_stale so
+     *  only the actually-stale pick card surfaces the warning. */
+    odds_stale?: boolean;
   };
   userTier: 'anon' | 'free' | 'pro' | 'elite';
-  /** When true, the slate's latest odds snapshot is past the freshness threshold. */
-  oddsStale?: boolean;
 }
 
 function formatOdds(price: number): string {
@@ -173,10 +175,11 @@ function PickHeadline({ pick }: { pick: PickCardProps['pick'] }) {
   );
 }
 
-export function PickCard({ pick, userTier, oddsStale = false }: PickCardProps) {
+export function PickCard({ pick, userTier }: PickCardProps) {
   const isProEligible = userTier === 'pro' || userTier === 'elite';
   const hasProData = pick.best_line_price !== undefined;
   const showPaywall = !isProEligible && pick.required_tier !== 'free';
+  const oddsStale = pick.odds_stale ?? false;
 
   const urgency = resolveUrgency(pick.game.status, pick.game.game_time_utc, Date.now());
   const cardDim = urgency?.dim ?? false;
