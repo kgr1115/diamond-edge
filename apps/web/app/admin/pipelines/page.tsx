@@ -22,7 +22,7 @@ const ERROR_MSG_UI_MAX = 200;
 // highlight: a job is stale if its last run was > 2× expected cadence ago.
 // null = no meaningful cadence (e.g., one-shot / manual); never mark stale.
 const EXPECTED_CADENCE_MIN: Record<string, number | null> = {
-  'bluesky-poll': 5,
+  'news-poll': 5,
   'news-extraction-sweep': 15,
   'outcome-grader': 24 * 60,
   'odds-refresh-daytime': 30,
@@ -54,12 +54,20 @@ async function loadInitialStatus(): Promise<StatusPayload> {
     .limit(1000);
 
   if (error) {
+    const migrationPending = isMissingRelation(error.code, error.message, 'cron_runs');
     console.error(JSON.stringify({
-      level: 'error',
-      event: 'admin_pipelines_initial_load_failed',
+      level: migrationPending ? 'warn' : 'error',
+      event: migrationPending ? 'admin_pipelines_migration_pending' : 'admin_pipelines_initial_load_failed',
       error: error.message,
     }));
-    return { generatedAt: new Date().toISOString(), jobs: [], pg_cron_jobs_without_telemetry: [] };
+    const pgCron = await loadPgCronJobsWithoutTelemetry(supabase, new Set<string>());
+    return {
+      generatedAt: new Date().toISOString(),
+      jobs: [],
+      pg_cron_jobs_without_telemetry: pgCron.jobs,
+      migrationPending,
+      pgCronUnavailable: pgCron.unavailable,
+    };
   }
 
   const rows = (runs ?? []) as CronRunRow[];
@@ -95,31 +103,68 @@ async function loadInitialStatus(): Promise<StatusPayload> {
     }))
     .sort((a, b) => a.job_name.localeCompare(b.job_name));
 
-  let pgCronJobsWithoutTelemetry: string[] = [];
-  try {
-    const supabaseAny = supabase as unknown as {
-      schema: (name: string) => { from: (table: string) => { select: (cols: string) => Promise<{ data: Array<{ jobname: string }> | null }> } };
-    };
-    const { data: pgCronJobs } = await supabaseAny
-      .schema('cron')
-      .from('job')
-      .select('jobname');
-    if (pgCronJobs) {
-      const withTelemetry = new Set(jobs.map((j) => j.job_name));
-      pgCronJobsWithoutTelemetry = pgCronJobs
-        .map((j) => j.jobname)
-        .filter((name) => !withTelemetry.has(name))
-        .sort();
-    }
-  } catch {
-    // Non-fatal — page renders without this list if the cron schema isn't queryable.
-  }
+  const pgCron = await loadPgCronJobsWithoutTelemetry(
+    supabase,
+    new Set(jobs.map((j) => j.job_name)),
+  );
 
   return {
     generatedAt: new Date().toISOString(),
     jobs,
-    pg_cron_jobs_without_telemetry: pgCronJobsWithoutTelemetry,
+    pg_cron_jobs_without_telemetry: pgCron.jobs,
+    pgCronUnavailable: pgCron.unavailable,
   };
+}
+
+// Postgres "undefined_table" — the migration that creates the relation
+// hasn't been applied to this environment yet. We treat this as a graceful
+// degrade rather than a 500 so the admin can still see the pg_cron list.
+function isMissingRelation(code: string | null | undefined, message: string, relation: string): boolean {
+  if (code === '42P01') return true;
+  return message.includes(`relation "${relation}" does not exist`);
+}
+
+interface PgCronProbe {
+  jobs: string[];
+  unavailable: boolean;
+}
+
+async function loadPgCronJobsWithoutTelemetry(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  withTelemetry: Set<string>,
+): Promise<PgCronProbe> {
+  try {
+    const supabaseAny = supabase as unknown as {
+      schema: (name: string) => { from: (table: string) => { select: (cols: string) => Promise<{ data: Array<{ jobname: string }> | null; error: { code?: string | null; message: string } | null }> } };
+    };
+    const { data: pgCronJobs, error: pgError } = await supabaseAny
+      .schema('cron')
+      .from('job')
+      .select('jobname');
+    if (pgError) {
+      return {
+        jobs: [],
+        unavailable: isMissingRelation(pgError.code ?? null, pgError.message, 'cron.job')
+          || isMissingRelation(pgError.code ?? null, pgError.message, 'job')
+          || /schema "cron" does not exist/.test(pgError.message)
+          || /permission denied/i.test(pgError.message),
+      };
+    }
+    if (!pgCronJobs) return { jobs: [], unavailable: false };
+    return {
+      jobs: pgCronJobs
+        .map((j) => j.jobname)
+        .filter((name) => !withTelemetry.has(name))
+        .sort(),
+      unavailable: false,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      jobs: [],
+      unavailable: /schema "cron" does not exist|relation .* does not exist|permission denied/i.test(message),
+    };
+  }
 }
 
 function truncateForUi(msg: string | null): string | null {

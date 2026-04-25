@@ -84,7 +84,7 @@ By category:
 
 Top gaps by ROI impact:
   1. Umpire data — stats-sync may need manual trigger if T-90min hasn't hit yet
-  2. News signals — pg_cron bluesky-poll should be firing every 5 min; check cron.job_run_details
+  2. News signals — pg_cron news-poll should be firing every 5 min; check cron.job_run_details
   3. Statcast (barrel, swstr, avg_ev) — depends on Savant scrape; brittle
 ```
 

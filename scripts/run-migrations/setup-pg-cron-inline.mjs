@@ -33,7 +33,9 @@ await client.connect();
 // Build the new command bodies with hardcoded values.
 const jobs = [
   {
-    name: 'bluesky-poll',
+    // Renamed from 'bluesky-poll' in migration 0017 to match the route path
+    // (/api/cron/news-poll) and the cron_runs telemetry job_name.
+    name: 'news-poll',
     schedule: '*/5 * * * *',
     command: `
       SELECT net.http_post(
@@ -42,7 +44,7 @@ const jobs = [
           'Content-Type', 'application/json',
           'Authorization', 'Bearer ${CRON_SECRET}'
         ),
-        body := '{"source":"bluesky"}'::jsonb
+        body := '{}'::jsonb
       ) AS request_id;
     `,
   },
@@ -122,6 +124,18 @@ const jobs = [
     `,
   },
 ];
+
+// Drop any legacy job names that were renamed in later migrations so this
+// script stays converge-able with the canonical post-migration state.
+const LEGACY_JOB_NAMES = ['bluesky-poll'];
+for (const legacy of LEGACY_JOB_NAMES) {
+  try {
+    await client.query(`SELECT cron.unschedule($1)`, [legacy]);
+    console.log(`✓ unscheduled legacy job: ${legacy}`);
+  } catch {
+    // Job didn't exist — fine.
+  }
+}
 
 console.log('Reschedule cron jobs with inline values...\n');
 for (const j of jobs) {
