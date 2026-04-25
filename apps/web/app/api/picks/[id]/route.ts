@@ -78,6 +78,12 @@ export interface PickDetailApiResponse {
       value: number;
       direction: 'positive' | 'negative';
     }>;
+    outcome?: {
+      result: 'win' | 'loss' | 'push' | 'void';
+      home_score: number;
+      away_score: number;
+      graded_at: string;
+    };
   };
 }
 
@@ -257,7 +263,26 @@ export async function GET(
     }
   }
 
-  // 5. Build response — apply tier masking
+  // 5. Fetch graded outcome if pick is no longer pending. pick_outcomes has
+  // RLS public-SELECT (migration 0005:73), so we read from it via the same
+  // service client. PnL is computed client-side via computePnL — pick_outcomes
+  // intentionally does NOT store pnl_units.
+  let outcomeRow:
+    | { result: 'win' | 'loss' | 'push' | 'void'; home_score: number; away_score: number; graded_at: string }
+    | null = null;
+
+  if (pick.result !== 'pending') {
+    const { data: outcomeData } = await serviceClient
+      .from('pick_outcomes')
+      .select('result, home_score, away_score, graded_at')
+      .eq('pick_id', pick.id)
+      .maybeSingle();
+    if (outcomeData) {
+      outcomeRow = outcomeData as unknown as typeof outcomeRow;
+    }
+  }
+
+  // 6. Build response — apply tier masking
   const game = pick.games;
   const homePitcherId = game?.probable_home_pitcher_id;
   const awayPitcherId = game?.probable_away_pitcher_id;
@@ -312,6 +337,12 @@ export async function GET(
   // Elite-only fields
   if (level >= 2) {
     if (pick.expected_value != null) response.pick.expected_value = pick.expected_value;
+  }
+
+  // Graded outcome — visible to all tiers (including anon) since pick_outcomes
+  // is public-SELECT and the result is already exposed via pick.result.
+  if (outcomeRow) {
+    response.pick.outcome = outcomeRow;
   }
 
   return NextResponse.json(response, {
