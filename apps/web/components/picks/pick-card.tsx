@@ -72,6 +72,34 @@ function UrgencyPill({ state }: { state: UrgencyState }) {
   );
 }
 
+/**
+ * Top-of-card banner for line-locked states (live / final / postponed / cancelled).
+ * Copy is intentionally factual ("line locked / closed / voided") rather than
+ * directive ("do not bet") — it describes the state of the underlying market,
+ * not a betting recommendation.
+ */
+function LockedLineBanner({ state }: { state: UrgencyState }) {
+  if (!state.lineLocked || !state.lockedReason) return null;
+  const styles: Record<UrgencyVariant, string> = {
+    'countdown-neutral': '',
+    'countdown-amber': '',
+    'countdown-red': '',
+    'live': 'bg-amber-500/20 text-amber-200 border-amber-500/60',
+    'final': 'bg-gray-700/40 text-gray-200 border-gray-600',
+    'off': 'bg-gray-700/40 text-gray-200 border-gray-600',
+  };
+  return (
+    <div
+      className={`mb-3 -mx-4 -mt-4 px-4 py-2 border-b text-[11px] font-bold uppercase tracking-wider text-center ${styles[state.variant]}`}
+      role="status"
+      aria-label={state.lockedReason}
+    >
+      <span aria-hidden>⛔ </span>
+      {state.lockedReason}
+    </div>
+  );
+}
+
 function ResultBadge({ result }: { result: string }) {
   const config: Record<string, { label: string; className: string }> = {
     pending: { label: 'Pending', className: 'bg-gray-800 text-gray-400' },
@@ -152,12 +180,27 @@ export function PickCard({ pick, userTier, oddsStale = false }: PickCardProps) {
 
   const urgency = resolveUrgency(pick.game.status, pick.game.game_time_utc, Date.now());
   const cardDim = urgency?.dim ?? false;
+  const lineLocked = urgency?.lineLocked ?? false;
 
   return (
-    <Link href={`/picks/${pick.id}`} className="block group">
+    <Link
+      href={`/picks/${pick.id}`}
+      className="block group"
+      aria-describedby={lineLocked ? `pick-${pick.id}-locked-status` : undefined}
+    >
       <div
-        className={`bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors min-w-0 ${cardDim ? 'opacity-60' : ''}`}
+        className={`bg-gray-900 rounded-lg p-4 transition-colors min-w-0 ${
+          lineLocked
+            ? 'border border-dashed border-gray-700 grayscale-[0.4] cursor-not-allowed'
+            : 'border border-gray-800 hover:border-gray-600'
+        } ${cardDim ? 'opacity-60' : ''}`}
       >
+        {urgency && <LockedLineBanner state={urgency} />}
+        {lineLocked && urgency?.lockedReason && (
+          <span id={`pick-${pick.id}-locked-status`} className="sr-only">
+            {urgency.lockedReason}
+          </span>
+        )}
         {/* Matchup + game time + result */}
         <div className="flex items-start justify-between gap-2 mb-3 flex-wrap">
           <div className="min-w-0">
@@ -190,14 +233,29 @@ export function PickCard({ pick, userTier, oddsStale = false }: PickCardProps) {
             <PickHeadline pick={pick} />
           </div>
           {hasProData && pick.best_line_price !== undefined && (
-            <p className="mt-1 text-sm font-mono text-emerald-400">
+            <p
+              className={`mt-1 text-sm font-mono ${
+                lineLocked ? 'text-gray-500 line-through decoration-gray-500/80' : 'text-emerald-400'
+              }`}
+              aria-label={
+                lineLocked
+                  ? `Line ${formatOdds(pick.best_line_price)} no longer bettable`
+                  : undefined
+              }
+            >
               {formatOdds(pick.best_line_price)}
               {pick.best_line_book && (
-                <span className="text-xs text-gray-500 font-sans ml-1.5">@ {pick.best_line_book}</span>
+                <span
+                  className={`text-xs font-sans ml-1.5 no-underline ${
+                    lineLocked ? 'text-gray-600' : 'text-gray-500'
+                  }`}
+                >
+                  @ {pick.best_line_book}
+                </span>
               )}
             </p>
           )}
-          {hasProData && oddsStale && (
+          {hasProData && oddsStale && !lineLocked && (
             <p className="mt-1 text-xs text-amber-400 font-sans">Line may be stale</p>
           )}
         </div>

@@ -13,26 +13,42 @@ function gameAt(offsetMinutes: number): string {
 }
 
 describe('resolveUrgency — status-driven states', () => {
-  it('returns live state with dim=true when status=live', () => {
+  it('returns live state with dim=true and lineLocked=true when status=live', () => {
     const r = resolveUrgency('live', gameAt(-30), BASE_NOW);
-    expect(r).toEqual({ variant: 'live', label: 'Live', dim: true });
+    expect(r).toEqual({
+      variant: 'live',
+      label: 'Live',
+      dim: true,
+      lineLocked: true,
+      lockedReason: 'GAME IN PROGRESS — line locked',
+    });
   });
 
-  it('returns final state with dim=true when status=final', () => {
+  it('returns final state with dim=true and lineLocked=true when status=final', () => {
     const r = resolveUrgency('final', gameAt(-180), BASE_NOW);
-    expect(r).toEqual({ variant: 'final', label: 'Final', dim: true });
+    expect(r).toEqual({
+      variant: 'final',
+      label: 'Final',
+      dim: true,
+      lineLocked: true,
+      lockedReason: 'GAME FINAL — line closed',
+    });
   });
 
-  it('returns PPD with dim=true when status=postponed', () => {
+  it('returns PPD with dim=true and lineLocked=true when status=postponed', () => {
     const r = resolveUrgency('postponed', gameAt(120), BASE_NOW);
     expect(r?.label).toBe('PPD');
     expect(r?.dim).toBe(true);
+    expect(r?.lineLocked).toBe(true);
+    expect(r?.lockedReason).toBe('GAME POSTPONED — line voided');
   });
 
-  it('returns Cancelled with dim=true when status=cancelled', () => {
+  it('returns Cancelled with dim=true and lineLocked=true when status=cancelled', () => {
     const r = resolveUrgency('cancelled', gameAt(120), BASE_NOW);
     expect(r?.label).toBe('Cancelled');
     expect(r?.dim).toBe(true);
+    expect(r?.lineLocked).toBe(true);
+    expect(r?.lockedReason).toBe('GAME CANCELLED — line voided');
   });
 });
 
@@ -41,6 +57,8 @@ describe('resolveUrgency — countdown thresholds', () => {
     const r = resolveUrgency('scheduled', gameAt(180), BASE_NOW); // 3h out
     expect(r?.variant).toBe('countdown-neutral');
     expect(r?.dim).toBe(false);
+    expect(r?.lineLocked).toBe(false);
+    expect(r?.lockedReason).toBeNull();
   });
 
   it('amber variant when < 2h and >= 30m out', () => {
