@@ -2,7 +2,7 @@
 
 **An MLB pick recommendation system: gradient-boosted models on real Statcast + odds data, an LLM rationale layer that's grounded on SHAP attributions (not free-form), a calibrated probability output, two parallel Claude agent pipelines that scaffold the dev loop, and an honest ledger of what's been shipped vs. what's still aspirational. Free, informational, no bets placed, no funds held.**
 
-I built this in roughly three weeks as a portfolio piece while job-searching for Solutions Engineer / Implementation / AI-engineering roles. The product surface is a paid SaaS pretending — full subscription scaffolding, tier gates, Stripe checkout — but the version of the repo featured here drops the paid-tier UI and runs as a free informational tool. The paid-tier work is preserved at tag [`v0.1-paid-tiers`](https://github.com/kgr1115/diamond-edge/releases/tag/v0.1-paid-tiers) and discussed below; portfolio viewers can browse it without it being live in production.
+I built this in roughly three weeks as a portfolio piece while job-searching for Solutions Engineer / Implementation / AI-engineering roles. The product surface is a paid SaaS pretending — full subscription scaffolding, tier gates, Stripe checkout — but the version of the repo featured here drops the paid-tier UI and runs as a free informational tool. The paid-tier work is preserved at tag [`v0.1-paid-tiers`](https://github.com/kgr1115/diamond-edge/releases/tag/v0.1-paid-tiers) (also browse the [`feat/paid-tiers`](https://github.com/kgr1115/diamond-edge/tree/feat/paid-tiers) branch) and discussed below; portfolio viewers can browse it without it being live in production.
 
 > **Transparent about the process:** I built this codebase _with_ Claude Code (Sonnet 4.6 + Opus 4.7 across the cycle). Every architectural call — the model architecture, the calibration pipeline, the snapshot-pinning fix, the agent scaffolding, the line-locked compliance treatment, the choice to ground the LLM on SHAP attributions instead of letting it free-form — is mine. The implementation was AI-assisted at every step. This README is honest about what that collaboration looks like because the whole point of the repo is to demonstrate what I can build when I use AI well.
 
@@ -203,7 +203,7 @@ The original moneyline B2 model that shipped as a passthrough auto-promoted itse
 `pg_cron.cron.job_run_details` records when jobs fired but not the per-job semantic outcome ("did the handler actually do useful work?"). The `cron_runs` table is written by each handler's `startCronRun` / `finishCronRun` wrapper and surfaces (status, duration, error_msg, optional metadata). The `/admin/pipelines` page reads from this table; clean-degrades when the migration hasn't been applied yet. Bridges the silent-failure gap that hid three latent grader/clv-compute bugs until tonight.
 
 **Why the paid-tier UI got dropped from the portfolio cut.**
-Two reasons: (1) the legal posture is meaningfully simpler for a free informational service vs. a paid tout (NV §463.0152 and similar state regulations), and (2) the paid-tier code is the least *interesting* part of the architecture for a hiring reviewer. The Stripe webhook handler is a Stripe webhook handler. The model architecture, the agent scaffolding, the calibration, the snapshot-pinning — those are the bits that demonstrate engineering judgment. The paid-tier code is preserved at tag [`v0.1-paid-tiers`](https://github.com/kgr1115/diamond-edge/releases/tag/v0.1-paid-tiers) and can be browsed by anyone interested in how the subscription / tier-gate / Stripe flow was wired.
+Two reasons: (1) the legal posture is meaningfully simpler for a free informational service vs. a paid tout (NV §463.0152 and similar state regulations), and (2) the paid-tier code is the least *interesting* part of the architecture for a hiring reviewer. The Stripe webhook handler is a Stripe webhook handler. The model architecture, the agent scaffolding, the calibration, the snapshot-pinning — those are the bits that demonstrate engineering judgment. The paid-tier code is preserved at tag [`v0.1-paid-tiers`](https://github.com/kgr1115/diamond-edge/releases/tag/v0.1-paid-tiers) (also browse the [`feat/paid-tiers`](https://github.com/kgr1115/diamond-edge/tree/feat/paid-tiers) branch) and can be browsed by anyone interested in how the subscription / tier-gate / Stripe flow was wired.
 
 ---
 
@@ -274,7 +274,7 @@ supabase db reset    # applies all migrations from scratch
 
 The pick-pipeline Edge Function can be invoked locally with `supabase functions serve pick-pipeline` and a fixture payload. The worker's `/predict` and `/rationale` endpoints can be smoke-tested with `curl` against `http://localhost:8000`.
 
-For the deployed instance, see whatever live URL is currently linked from my [GitHub profile](https://github.com/kgr1115). The portfolio cut omits the auth + checkout flow; viewers see the slate + pick details directly.
+**Live deployment:** [https://www.diamond-edge.co](https://www.diamond-edge.co). The portfolio cut omits the auth + checkout flow; viewers see the slate + pick details directly. Worker `/health` is at [https://diamond-edge-worker.fly.dev/health](https://diamond-edge-worker.fly.dev/health) if you want to verify the ML side is up.
 
 ---
 
@@ -288,7 +288,7 @@ What's in the portfolio cut:
 - **No bet placement; no fund custody; no advice copy** ("DO NOT BET" / "BET NOW" / "guaranteed wins" — none of these appear, by design).
 - **Sportsbook neutrality** — picks reference DraftKings and FanDuel lines because those are the available data feeds, but the product is not affiliated with either, does not earn referral commissions, and does not recommend that the user bet via either.
 
-What was in the paid-tier version (preserved at tag [`v0.1-paid-tiers`](https://github.com/kgr1115/diamond-edge/releases/tag/v0.1-paid-tiers)):
+What was in the paid-tier version (preserved at tag [`v0.1-paid-tiers`](https://github.com/kgr1115/diamond-edge/releases/tag/v0.1-paid-tiers) (also browse the [`feat/paid-tiers`](https://github.com/kgr1115/diamond-edge/tree/feat/paid-tiers) branch)):
 
 - 21+ age gate, geo-block to states where DK + FanDuel are both legal + operational, Stripe-gated subscription tiers, RG copy required on every page.
 
