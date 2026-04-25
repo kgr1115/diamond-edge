@@ -192,12 +192,16 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
 
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
 
+  // No FK exists from picks → odds (the join is composite via game_id +
+  // market + sportsbook_id), so we can't use PostgREST embedded selection
+  // here. Two-query pattern: fetch picks first, then look up the snapshot-
+  // pinned odds row per pick. Mirrors the snapshot-pinning fix in
+  // apps/web/lib/picks/load-slate.ts (commit f38ae7c).
   const { data: picksData, error: picksError } = await supabase
     .from('picks')
     .select(`
-      id, game_id, market, pick_side, best_line_price,
-      games!inner ( home_score, away_score, home_team_id, away_team_id, status, updated_at ),
-      odds!left ( run_line_spread, total_line, market, snapshotted_at )
+      id, game_id, market, pick_side, best_line_price, best_line_book_id, generated_at,
+      games!inner ( home_score, away_score, home_team_id, away_team_id, status, updated_at )
     `)
     .eq('result', 'pending')
     .eq('games.status', 'final')
@@ -213,9 +217,59 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
 
   const picks = (picksData ?? []) as unknown as Array<{
     id: string; game_id: string; market: string; pick_side: string; best_line_price: number | null;
+    best_line_book_id: string | null; generated_at: string | null;
     games: { home_score: number | null; away_score: number | null; home_team_id: string; away_team_id: string; status: string; updated_at: string };
-    odds: Array<{ run_line_spread: number | null; total_line: number | null; market: string; snapshotted_at: string }> | null;
   }>;
+
+  // Build a per-pick lookup for run_line_spread / total_line using snapshot
+  // pinning: prefer the odds row from the same book at-or-before pick time;
+  // fall back to any book at-or-before pick time, then to most-recent.
+  const lineByPickId = new Map<string, { run_line_spread: number | null; total_line: number | null }>();
+  const rlAndTotalsPicks = picks.filter((p) => p.market === 'run_line' || p.market === 'total');
+
+  if (rlAndTotalsPicks.length > 0) {
+    const gameIds = Array.from(new Set(rlAndTotalsPicks.map((p) => p.game_id)));
+    const markets = Array.from(new Set(rlAndTotalsPicks.map((p) => p.market)));
+
+    const { data: oddsRows } = await supabase
+      .from('odds')
+      .select('game_id, market, sportsbook_id, run_line_spread, total_line, snapshotted_at')
+      .in('game_id', gameIds)
+      .in('market', markets);
+
+    const oddsByKey = new Map<string, Array<{ sportsbook_id: string | null; run_line_spread: number | null; total_line: number | null; snapshotted_at: string }>>();
+    for (const o of (oddsRows ?? [])) {
+      const key = `${o.game_id}::${o.market}`;
+      if (!oddsByKey.has(key)) oddsByKey.set(key, []);
+      oddsByKey.get(key)!.push(o);
+    }
+
+    for (const p of rlAndTotalsPicks) {
+      const candidates = oddsByKey.get(`${p.game_id}::${p.market}`) ?? [];
+      if (candidates.length === 0) {
+        lineByPickId.set(p.id, { run_line_spread: null, total_line: null });
+        continue;
+      }
+      const pickTimeMs = p.generated_at ? new Date(p.generated_at).getTime() + 5 * 60 * 1000 : Date.now();
+
+      // Tier 1: same book at-or-before pick time, newest first
+      const sameBookPrePick = candidates
+        .filter((o) => o.sportsbook_id === p.best_line_book_id && new Date(o.snapshotted_at).getTime() <= pickTimeMs)
+        .sort((a, b) => (a.snapshotted_at < b.snapshotted_at ? 1 : -1));
+      // Tier 2: any book at-or-before pick time
+      const anyBookPrePick = candidates
+        .filter((o) => new Date(o.snapshotted_at).getTime() <= pickTimeMs)
+        .sort((a, b) => (a.snapshotted_at < b.snapshotted_at ? 1 : -1));
+      // Tier 3: any time
+      const anyTime = candidates.sort((a, b) => (a.snapshotted_at < b.snapshotted_at ? 1 : -1));
+
+      const chosen = sameBookPrePick[0] ?? anyBookPrePick[0] ?? anyTime[0];
+      lineByPickId.set(p.id, {
+        run_line_spread: chosen.run_line_spread ?? null,
+        total_line: chosen.total_line ?? null,
+      });
+    }
+  }
 
   console.info(JSON.stringify({ level: 'info', event: 'outcome_grader_picks_loaded', pending_count: picks.length }));
 
@@ -237,10 +291,7 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
       continue;
     }
 
-    const relevantOdds = (row.odds ?? [])
-      .filter((o) => o.market === market)
-      .sort((a, b) => (a.snapshotted_at < b.snapshotted_at ? 1 : -1));
-    const latestOdds = relevantOdds[0] ?? null;
+    const pinnedLine = lineByPickId.get(pick_id) ?? null;
 
     let result: PickResult;
     let notes: string | null = null;
@@ -251,12 +302,12 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
           result = gradeMoneyline(pick_side, home_score, away_score, home_team_id, away_team_id);
           break;
         case 'run_line': {
-          const spread = latestOdds?.run_line_spread ?? -1.5;
+          const spread = pinnedLine?.run_line_spread ?? -1.5;
           result = gradeRunLine(pick_side, home_score, away_score, home_team_id, away_team_id, spread);
           break;
         }
         case 'total': {
-          const line = latestOdds?.total_line ?? null;
+          const line = pinnedLine?.total_line ?? null;
           if (line === null) { result = 'void'; notes = 'total_line unavailable — grading as void'; }
           else result = gradeTotal(pick_side, home_score, away_score, line);
           break;
