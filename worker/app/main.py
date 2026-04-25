@@ -144,6 +144,13 @@ def _resolve_b2_artifact_path(market: str) -> Path | None:
     """
     Return path to the current promoted B2 versioned model_b2.pkl if one exists,
     otherwise return None.  Reads current_version.json pointer.
+
+    Path resolution is portable: derives `MODELS_DIR / market / "artifacts" /
+    f"v{version}"` from the pointer's `version` field, so the same pointer
+    works on the dev machine that wrote it AND on the Fly.io container where
+    MODELS_DIR is at a different absolute path. The pointer's `artifact_dir`
+    field (a host-absolute path written by promote.py at promotion time) is
+    used only as a backward-compat fallback when `version` is missing.
     """
     pointer_path = MODELS_DIR / market / "artifacts" / "current_version.json"
     if not pointer_path.exists():
@@ -151,7 +158,15 @@ def _resolve_b2_artifact_path(market: str) -> Path | None:
     try:
         with open(pointer_path) as f:
             pointer = json.load(f)
-        artifact_dir = Path(pointer["artifact_dir"])
+
+        # Prefer the portable version-based resolution.
+        version = pointer.get("version")
+        if version:
+            artifact_dir = MODELS_DIR / market / "artifacts" / f"v{version}"
+        else:
+            # Backward-compat: pre-portability pointers only have artifact_dir.
+            artifact_dir = Path(pointer["artifact_dir"])
+
         b2_pkl = artifact_dir / "model_b2.pkl"
         if b2_pkl.exists():
             return b2_pkl

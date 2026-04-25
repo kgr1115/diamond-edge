@@ -1,7 +1,7 @@
 {
   "version": "20260424T220345",
-  "promoted_at": "2026-04-25T03:43:17.693979+00:00",
-  "artifact_dir": "C:\\projects\\baseball_edge\\worker\\models\\totals\\artifacts\\v20260424T220345",
+  "promoted_at": "2026-04-25T05:10:17.934642+00:00",
+  "artifact_dir": "worker/models/totals/artifacts/v20260424T220345",
   "log_loss": 0.67765,
   "best_roi_pct": 57.57,
   "clv_pct": 0.03,

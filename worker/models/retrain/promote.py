@@ -104,10 +104,17 @@ def promote(
             "to override (NOT recommended)."
         )
 
+    # `artifact_dir` is recorded as a repo-relative POSIX path so the pointer
+    # is portable across hosts (was an absolute path on the writing machine,
+    # which broke loading on Fly.io's Linux container — fixed 2026-04-25).
+    # The loader resolves the actual path from `version` + MODELS_DIR; this
+    # field is now informational + backward-compat for older loaders.
+    rel_artifact_dir = f"worker/models/{market}/artifacts/v{timestamp}"
+
     pointer = {
         "version": timestamp,
         "promoted_at": datetime.now(timezone.utc).isoformat(),
-        "artifact_dir": str(artifact_dir),
+        "artifact_dir": rel_artifact_dir,
         "log_loss": (metrics.get("holdout_2024") or {}).get("log_loss_new_model"),
         "best_roi_pct": metrics.get("best_roi_pct"),
         "clv_pct": (metrics.get("clv") or {}).get("mean_clv_pct"),
