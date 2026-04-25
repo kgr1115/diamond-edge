@@ -31,6 +31,7 @@ interface PickRow {
   visibility: 'live' | 'shadow';
   best_line_price: number | null;
   best_line_book_id: string | null;
+  generated_at: string | null;
   model_probability: number | null;
   expected_value: number | null;
   rationale_id: string | null;
@@ -244,6 +245,7 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
       visibility,
       best_line_price,
       best_line_book_id,
+      generated_at,
       model_probability,
       expected_value,
       rationale_id,
@@ -289,12 +291,20 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
   // cast to the known PickRow shape which matches the select() exactly.
   const picks = picksRaw as unknown as PickRow[] | null;
 
-  // Latest odds per (game_id, market) — fetched for ALL tiers so we can surface
-  // the line number (O/U total, RL spread) on the pick card. The `line_snapshots`
-  // array (3 most recent) stays Pro+ gated further down.
+  // Odds rows fetched for ALL tiers so we can surface the line number
+  // (O/U total, RL spread) on the pick card. The `line_snapshots` array
+  // (3 most recent) stays Pro+ gated further down.
+  //
+  // Line values must be pinned to the SAME (sportsbook, snapshot) the pick was
+  // priced against — otherwise the displayed total/spread can come from a later
+  // snapshot (e.g. live in-game alternate lines) while the price comes from
+  // pre-game close, producing the displayed-vs-actual mismatch Kyle reported on
+  // 2026-04-24 where pre-game total 9.0 picks rendered as "OVER 12.5".
+  // Falls back to most-recent-by-(game,market) only if no snapshot at-or-before
+  // generated_at can be matched on (game, market, best_line_book_id).
   const entLevel = entitlementLevel(userTier);
   const lineSnapshotsByGameId = new Map<string, OddsSnapshot[]>();
-  const lineValuesByKey = new Map<string, { total_line: number | null; run_line_spread: number | null }>();
+  const lineValuesByPickId = new Map<string, { total_line: number | null; run_line_spread: number | null }>();
 
   if (picks && picks.length > 0) {
     const uniqueGameIds = [...new Set(picks.map((p) => p.games?.id).filter(Boolean))] as string[];
@@ -302,36 +312,79 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
     if (uniqueGameIds.length > 0) {
       const { data: oddsRows } = await serviceClient
         .from('odds')
-        .select('game_id, market, home_price, away_price, over_price, under_price, total_line, run_line_spread, snapshotted_at')
+        .select('game_id, sportsbook_id, market, home_price, away_price, over_price, under_price, total_line, run_line_spread, snapshotted_at')
         .in('game_id', uniqueGameIds)
         .order('snapshotted_at', { ascending: false });
 
-      if (oddsRows) {
+      type OddsRow = {
+        game_id: string;
+        sportsbook_id: string;
+        market: MarketType;
+        home_price: number | null;
+        away_price: number | null;
+        over_price: number | null;
+        under_price: number | null;
+        total_line: number | null;
+        run_line_spread: number | null;
+        snapshotted_at: string;
+      };
+
+      const oddsRowsTyped = (oddsRows ?? []) as OddsRow[];
+
+      // Index odds by (game_id, market) for the per-pick line-value lookup +
+      // by game for the line_snapshots sparkline. Rows are pre-sorted DESC by
+      // snapshotted_at so iteration order = newest-first.
+      const oddsByGameMarket = new Map<string, OddsRow[]>();
+      for (const row of oddsRowsTyped) {
+        const key = `${row.game_id}:${row.market}`;
+        if (!oddsByGameMarket.has(key)) oddsByGameMarket.set(key, []);
+        oddsByGameMarket.get(key)!.push(row);
+      }
+
+      // Per-pick line-value pinning. Match on the pick's best_line_book_id +
+      // newest snapshot at-or-before generated_at. If no exact-book match,
+      // fall back to most-recent-pre-pick row of any book on that game+market.
+      // If even that fails, fall back to the most-recent row period (preserves
+      // prior behavior for pre-fix picks lacking a sane generated_at).
+      for (const pick of picks) {
+        const gid = pick.games?.id;
+        if (!gid) continue;
+        if (pick.market !== 'total' && pick.market !== 'run_line') continue;
+
+        const bucket = oddsByGameMarket.get(`${gid}:${pick.market}`) ?? [];
+        if (bucket.length === 0) continue;
+
+        const generatedAtMs = pick.generated_at ? new Date(pick.generated_at).getTime() : NaN;
+        // 5-minute slack: pick.generated_at is set when the worker returns,
+        // odds row snapshotted_at may be a few seconds later if the same pull
+        // wrote both. Guards against off-by-a-few-seconds clock drift.
+        const cutoffMs = Number.isFinite(generatedAtMs) ? generatedAtMs + 5 * 60_000 : Infinity;
+
+        const eligibleAtCutoff = (r: OddsRow) =>
+          new Date(r.snapshotted_at).getTime() <= cutoffMs;
+
+        const sameBookPrePick = pick.best_line_book_id
+          ? bucket.find((r) => r.sportsbook_id === pick.best_line_book_id && eligibleAtCutoff(r))
+          : undefined;
+
+        const anyBookPrePick = sameBookPrePick ?? bucket.find(eligibleAtCutoff);
+
+        const matched = anyBookPrePick ?? bucket[0];
+        lineValuesByPickId.set(pick.id, {
+          total_line: matched.total_line,
+          run_line_spread: matched.run_line_spread,
+        });
+      }
+
+      // Pro+ sparkline: 3 most-recent snapshots per game. Note this still mixes
+      // books across snapshots — the sparkline shows market-wide trajectory,
+      // not a single book. Improving this is tracked separately; not the bug
+      // Kyle reported on the cards.
+      if (entLevel >= 1) {
         const LABELS = ['Close', 'PM', 'AM'];
         const seenByGame = new Map<string, number>();
 
-        for (const row of oddsRows as Array<{
-          game_id: string;
-          market: MarketType;
-          home_price: number | null;
-          away_price: number | null;
-          over_price: number | null;
-          under_price: number | null;
-          total_line: number | null;
-          run_line_spread: number | null;
-          snapshotted_at: string;
-        }>) {
-          // Capture the first (= most recent) line value seen per (game, market).
-          const key = `${row.game_id}:${row.market}`;
-          if (!lineValuesByKey.has(key)) {
-            lineValuesByKey.set(key, {
-              total_line: row.total_line,
-              run_line_spread: row.run_line_spread,
-            });
-          }
-
-          if (entLevel < 1) continue;
-
+        for (const row of oddsRowsTyped) {
           const count = seenByGame.get(row.game_id) ?? 0;
           if (count >= 3) continue;
 
@@ -408,7 +461,7 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
   const maskedPicks: PickResponse[] = (picks ?? []).map((row) => {
     const bookName = row.sportsbooks?.name ?? null;
     const lineSnapshots = lineSnapshotsByGameId.get(row.games?.id ?? '') ?? undefined;
-    const lineValues = lineValuesByKey.get(`${row.games?.id ?? ''}:${row.market}`);
+    const lineValues = lineValuesByPickId.get(row.id);
     return maskPick(row, userTier, bookName, lineSnapshots, lineValues);
   });
 
