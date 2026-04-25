@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 
 // Routes that require geo-blocking enforcement.
 // Marketing pages, stats, and public history are intentionally excluded per geo-block-spec.md.
@@ -42,6 +43,12 @@ function geoBlockedResponse(request: NextRequest): NextResponse {
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
+
+  // Portfolio mode (NEXT_PUBLIC_PAID_TIERS=false): no auth, no geo enforcement.
+  // Skip session refresh + geo-block so anonymous visitors see all picks unmasked.
+  if (!paidTiersEnabled()) {
+    return NextResponse.next();
+  }
 
   // Always let Supabase Auth update the session cookie (required for SSR auth to work).
   // updateSession runs before geo-check so the session is always refreshed regardless

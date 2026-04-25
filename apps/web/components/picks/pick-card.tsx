@@ -3,6 +3,10 @@ import { ConfidenceBadge } from './confidence-badge';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
 import { resolveUrgency, type UrgencyState, type UrgencyVariant } from '@/lib/picks/urgency';
 
+// Server Components evaluate at request time — read directly from process.env
+// rather than importing the helper, which keeps this module synchronous.
+const PAID_TIERS_ENABLED = process.env.NEXT_PUBLIC_PAID_TIERS === 'true';
+
 interface PickCardProps {
   pick: {
     id: string;
@@ -178,7 +182,8 @@ function PickHeadline({ pick }: { pick: PickCardProps['pick'] }) {
 export function PickCard({ pick, userTier }: PickCardProps) {
   const isProEligible = userTier === 'pro' || userTier === 'elite';
   const hasProData = pick.best_line_price !== undefined;
-  const showPaywall = !isProEligible && pick.required_tier !== 'free';
+  // Portfolio mode: never render the paywall nudge — every viewer sees full data.
+  const showPaywall = PAID_TIERS_ENABLED && !isProEligible && pick.required_tier !== 'free';
   const oddsStale = pick.odds_stale ?? false;
 
   const urgency = resolveUrgency(pick.game.status, pick.game.game_time_utc, Date.now());

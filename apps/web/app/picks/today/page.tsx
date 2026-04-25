@@ -4,6 +4,7 @@ import { createServerClient } from '@supabase/ssr';
 import { RefreshOddsButton } from '@/components/picks/refresh-odds-button';
 import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
 import { SlatePicksGrid } from '@/components/picks/slate-picks-grid';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 import type { Database } from '@/lib/types/database';
 import {
   loadPicksSlate,
@@ -17,6 +18,13 @@ import {
 export const dynamic = 'force-dynamic';
 
 async function getUserTierAndState(): Promise<{ tier: UserTier; geoState: string | null }> {
+  // Portfolio mode: skip the auth lookup. loadPicksSlate already overrides
+  // tier to 'elite' internally; we mirror that here so canSeeShadow below
+  // includes shadow picks for every viewer.
+  if (!paidTiersEnabled()) {
+    return { tier: 'elite', geoState: null };
+  }
+
   const cookieStore = await cookies();
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

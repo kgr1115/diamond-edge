@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { cacheGet, cacheSet, CacheKeys, CacheTTL } from '@/lib/redis/cache';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 import type { SubscriptionTier, MarketType } from '@/lib/types/database';
 
 // ---------------------------------------------------------------------------
@@ -222,7 +223,11 @@ export function todayInET(): string {
 // ---------------------------------------------------------------------------
 
 export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<PicksSlateResponse> {
-  const { userTier, pickDate, market, minConfidence } = opts;
+  // Portfolio mode: every viewer is treated as Elite so all fields (price, EV,
+  // rationale, SHAP, line snapshots) render unmasked. The maskPick helper itself
+  // is preserved verbatim — we just bypass tier downgrades by forcing the input.
+  const userTier: UserTier = paidTiersEnabled() ? opts.userTier : 'elite';
+  const { pickDate, market, minConfidence } = opts;
   const requestedVisibility = opts.visibility ?? 'live';
 
   const hasFilters = !!market || !!minConfidence;

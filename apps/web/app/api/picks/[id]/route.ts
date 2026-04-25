@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 import type { SubscriptionTier, MarketType, PickResult } from '@/lib/types/database';
 
 export const dynamic = 'force-dynamic';
@@ -111,26 +112,32 @@ export async function GET(
     );
   }
 
-  // 1. Resolve caller tier
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
+  // 1. Resolve caller tier. Portfolio mode: every viewer is elite-equivalent so
+  // rationale, EV, SHAP, and line-shopping fields render unmasked. Skip the
+  // Supabase auth round-trip entirely.
   let userTier: UserTier = 'anon';
-  if (user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('subscription_tier, geo_blocked')
-      .eq('id', user.id)
-      .single();
+  if (!paidTiersEnabled()) {
+    userTier = 'elite';
+  } else {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (profile?.geo_blocked) {
-      return NextResponse.json(
-        { error: { code: 'GEO_RESTRICTED', message: 'This service is not available in your location.' } },
-        { status: 403 }
-      );
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('subscription_tier, geo_blocked')
+        .eq('id', user.id)
+        .single();
+
+      if (profile?.geo_blocked) {
+        return NextResponse.json(
+          { error: { code: 'GEO_RESTRICTED', message: 'This service is not available in your location.' } },
+          { status: 403 }
+        );
+      }
+
+      userTier = (profile?.subscription_tier as UserTier) ?? 'free';
     }
-
-    userTier = (profile?.subscription_tier as UserTier) ?? 'free';
   }
 
   const level = entitlementLevel(userTier);

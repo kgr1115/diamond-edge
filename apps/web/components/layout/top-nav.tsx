@@ -12,18 +12,24 @@ interface NavItem {
   href: string;
   label: string;
   minTier?: Tier;
+  /** When true, hidden in portfolio mode (NEXT_PUBLIC_PAID_TIERS=false). */
+  paidOnly?: boolean;
 }
+
+// NEXT_PUBLIC_ vars are inlined into the client bundle at build time.
+const PAID_TIERS_ENABLED = process.env.NEXT_PUBLIC_PAID_TIERS === 'true';
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/picks/today', label: "Today's Picks" },
   { href: '/history',     label: 'History' },
-  { href: '/bankroll',    label: 'Bankroll' },
-  { href: '/clv',         label: 'CLV', minTier: 'elite' },
+  { href: '/bankroll',    label: 'Bankroll',                      paidOnly: true },
+  { href: '/clv',         label: 'CLV',      minTier: 'elite',    paidOnly: true },
 ];
 
 const TIER_RANK: Record<Tier, number> = { anon: 0, free: 1, pro: 2, elite: 3 };
 
 function canSee(item: NavItem, userTier: Tier): boolean {
+  if (item.paidOnly && !PAID_TIERS_ENABLED) return false;
   if (!item.minTier) return true;
   return TIER_RANK[userTier] >= TIER_RANK[item.minTier];
 }
@@ -37,6 +43,13 @@ export function TopNav() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
+    // Portfolio mode: skip the auth round-trip entirely. No session, no
+    // profile lookup, no tier badge. Every viewer is anon-equivalent.
+    if (!PAID_TIERS_ENABLED) {
+      setLoaded(true);
+      return;
+    }
+
     const supabase = createBrowserClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -119,9 +132,9 @@ export function TopNav() {
           })}
         </div>
 
-        {/* Right side: tier badge + sign in/out */}
+        {/* Right side: tier badge + sign in/out (paid-tier only) */}
         <div className="flex items-center gap-3">
-          {loaded && tier !== 'anon' && (
+          {PAID_TIERS_ENABLED && loaded && tier !== 'anon' && (
             <span
               className={`hidden sm:inline text-xs px-2 py-0.5 rounded font-medium ${
                 tier === 'elite'
@@ -136,7 +149,7 @@ export function TopNav() {
             </span>
           )}
 
-          {loaded && tier === 'anon' ? (
+          {PAID_TIERS_ENABLED && loaded && tier === 'anon' ? (
             <div className="flex items-center gap-2">
               <Link href="/login" className="text-sm text-gray-400 hover:text-white">
                 Sign in
@@ -148,7 +161,7 @@ export function TopNav() {
                 Sign up
               </Link>
             </div>
-          ) : loaded ? (
+          ) : PAID_TIERS_ENABLED && loaded ? (
             <button
               onClick={handleSignOut}
               className="hidden md:inline text-sm text-gray-400 hover:text-white"
@@ -203,7 +216,7 @@ export function TopNav() {
                 </Link>
               );
             })}
-            {loaded && tier !== 'anon' && (
+            {PAID_TIERS_ENABLED && loaded && tier !== 'anon' && (
               <button
                 onClick={() => { setMenuOpen(false); handleSignOut(); }}
                 className="text-sm px-3 py-2 rounded text-gray-400 hover:text-white hover:bg-gray-900 text-left"

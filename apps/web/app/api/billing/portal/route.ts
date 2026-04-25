@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe/client';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,6 +9,11 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Suppress unused warning — request is required by Next.js route signature
   void request;
+
+  // Portfolio mode: 404 — same opacity as a non-existent route.
+  if (!paidTiersEnabled()) {
+    return new NextResponse(null, { status: 404 });
+  }
 
   // 1. Authenticate via Supabase session JWT
   const supabase = await createClient();

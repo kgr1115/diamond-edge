@@ -8,6 +8,11 @@ interface UpgradeCtaProps {
   label?: string;
 }
 
+// NEXT_PUBLIC_PAID_TIERS=false → upgrade button renders nothing. The full Stripe
+// integration below is preserved as portfolio reference; flipping the env var
+// back to true restores the working checkout flow without code changes.
+const PAID_TIERS_ENABLED = process.env.NEXT_PUBLIC_PAID_TIERS === 'true';
+
 const SIZE_CLASSES = {
   xs: 'text-xs px-2 py-1',
   sm: 'text-sm px-3 py-1.5',
@@ -26,6 +31,8 @@ const TIER_STYLES = {
 export function UpgradeCta({ tier, size = 'sm', label }: UpgradeCtaProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (!PAID_TIERS_ENABLED) return null;
 
   async function handleClick() {
     setLoading(true);

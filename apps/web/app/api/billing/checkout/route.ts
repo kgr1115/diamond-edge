@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { getStripe } from '@/lib/stripe/client';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,12 @@ function idempotencyKey(userId: string, tier: string): string {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Portfolio mode: surface is unreachable. Return 404 (not 403) so the
+  // existence of the route isn't leaked to anonymous probes.
+  if (!paidTiersEnabled()) {
+    return new NextResponse(null, { status: 404 });
+  }
+
   // 1. Authenticate via Supabase session JWT
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();

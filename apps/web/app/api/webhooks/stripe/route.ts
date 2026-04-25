@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 import { getStripe, tierFromPriceId } from '@/lib/stripe/client';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 import type { SubscriptionTier } from '@/lib/types/database';
 
 // Stripe sends the raw body for signature verification — disable body parsing
@@ -137,6 +138,14 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice): Promise<void
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Portfolio mode: webhook is dormant. Return 404 — Stripe webhook deliveries
+  // would already be paused on the dashboard side when the flag is off, so a
+  // 404 here is purely a defense-in-depth response. Signature-verification
+  // logic below stays intact verbatim for the day the flag flips back on.
+  if (!paidTiersEnabled()) {
+    return new NextResponse(null, { status: 404 });
+  }
+
   const body = await request.text();
   const signature = request.headers.get('stripe-signature');
 
