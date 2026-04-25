@@ -1,0 +1,11 @@
+{
+  "version": "20260424T220345",
+  "promoted_at": "2026-04-25T03:43:17.693979+00:00",
+  "artifact_dir": "C:\\projects\\baseball_edge\\worker\\models\\totals\\artifacts\\v20260424T220345",
+  "log_loss": 0.67765,
+  "best_roi_pct": 57.57,
+  "clv_pct": 0.03,
+  "lgbm_best_iteration": 37,
+  "variance_collapsed": false,
+  "promoted_by": "worker.models.retrain.promote"
+}

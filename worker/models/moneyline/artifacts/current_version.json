@@ -1,11 +1,11 @@
 {
-  "version": "20260423T191316",
-  "promoted_at": "2026-04-23T19:13:17.570618+00:00",
-  "artifact_dir": "C:\\Projects\\Baseball_Edge\\worker\\models\\moneyline\\artifacts\\v20260423T191316",
-  "log_loss": null,
-  "best_roi_pct": null,
-  "clv_pct": null,
-  "final_prob_std": 0.0858,
-  "nonzero_delta_rate": 0.0,
-  "model_version": "moneyline-b2-v3-20260423T191316"
+  "version": "20260424T220345",
+  "promoted_at": "2026-04-25T03:42:51.061979+00:00",
+  "artifact_dir": "C:\\projects\\baseball_edge\\worker\\models\\moneyline\\artifacts\\v20260424T220345",
+  "log_loss": 0.67953,
+  "best_roi_pct": 22.97,
+  "clv_pct": -0.335,
+  "lgbm_best_iteration": 80,
+  "variance_collapsed": false,
+  "promoted_by": "worker.models.retrain.promote"
 }
