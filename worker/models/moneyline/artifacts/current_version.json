@@ -1,8 +1,8 @@
 {
-  "version": "20260424T220345",
-  "promoted_at": "2026-04-25T03:42:51.061979+00:00",
-  "artifact_dir": "C:\\projects\\baseball_edge\\worker\\models\\moneyline\\artifacts\\v20260424T220345",
-  "log_loss": 0.67953,
+  "version": "20260425T035208",
+  "promoted_at": "2026-04-25T04:14:14.829826+00:00",
+  "artifact_dir": "C:\\projects\\baseball_edge\\worker\\models\\moneyline\\artifacts\\v20260425T035208",
+  "log_loss": 0.67705,
   "best_roi_pct": 22.97,
   "clv_pct": -0.335,
   "lgbm_best_iteration": 80,
