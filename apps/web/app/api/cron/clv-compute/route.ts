@@ -17,7 +17,7 @@ export const maxDuration = 60;
  * Algorithm:
  *   1. Find picks where pick_clv row does NOT exist AND game.status = 'final'.
  *   2. For each pick: find the closing odds snapshot from market_priors
- *      (most recent row for the game's market before commence_time).
+ *      (most recent row for the game's market before game_time_utc).
  *   3. Compute novig closing probability for the pick's side.
  *   4. clv_edge = closing_novig_prob - pick_time_novig_prob
  *      (positive = line moved toward us after pick was generated)
@@ -47,7 +47,7 @@ interface PickRow {
   pick_side: string;
   market_novig_prior: number | null;
   games: {
-    commence_time: string;
+    game_time_utc: string;
     status: string;
   } | null;
 }
@@ -151,7 +151,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .from('picks')
     .select(
       'id, game_id, market, pick_side, market_novig_prior, ' +
-        'games!inner(commence_time, status)',
+        'games!inner(game_time_utc, status)',
     )
     .eq('games.status', 'final')
     .not('market_novig_prior', 'is', null)
@@ -188,7 +188,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ...new Map(
       unprocessedPicks.map((p) => [
         `${p.game_id}:${p.market}`,
-        { game_id: p.game_id, market: p.market, commence_time: p.games?.commence_time ?? '' },
+        { game_id: p.game_id, market: p.market, game_time_utc: p.games?.game_time_utc ?? '' },
       ]),
     ).values(),
   ];
@@ -210,7 +210,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const priorsData = (allPriors ?? []) as MarketPriorRow[];
 
-  // Build lookup: game_id:market → sorted closing priors (before commence_time)
+  // Build lookup: game_id:market → sorted closing priors (before game_time_utc)
   const priorsLookup = new Map<string, MarketPriorRow[]>();
   for (const pair of gameMarketPairs) {
     const key = `${pair.game_id}:${pair.market}`;
@@ -220,7 +220,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         (r) =>
           r.game_id === pair.game_id &&
           (r.market === pair.market || r.market === normalized_market) &&
-          r.snapshot_time < pair.commence_time,
+          r.snapshot_time < pair.game_time_utc,
       )
       .sort((a, b) => b.snapshot_time.localeCompare(a.snapshot_time)); // descending = most recent first
     priorsLookup.set(key, matchingPriors);

@@ -190,8 +190,16 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
     }));
   }
 
-  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-
+  // Eligibility: result='pending' AND game has both home + away scores
+  // populated under the 'final' status. The previous gate
+  // (games.updated_at < 6h ago) was meant to wait out score-stabilization
+  // races, but it broke manual backfills where syncBoxScores had just
+  // touched every flipped game (updated_at = NOW). Filtering on
+  // home_score IS NOT NULL AND away_score IS NOT NULL is race-safe AND
+  // backfill-friendly: scores are written in the same syncBoxScores
+  // update that flips status, so once both columns are populated the
+  // data is consistent.
+  //
   // No FK exists from picks → odds (the join is composite via game_id +
   // market + sportsbook_id), so we can't use PostgREST embedded selection
   // here. Two-query pattern: fetch picks first, then look up the snapshot-
@@ -205,7 +213,8 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
     `)
     .eq('result', 'pending')
     .eq('games.status', 'final')
-    .lt('games.updated_at', sixHoursAgo);
+    .not('games.home_score', 'is', null)
+    .not('games.away_score', 'is', null);
 
   if (picksError) {
     console.error(JSON.stringify({ level: 'error', event: 'outcome_grader_fetch_failed', error: picksError.message }));
