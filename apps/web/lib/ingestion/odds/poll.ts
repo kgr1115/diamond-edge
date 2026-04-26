@@ -106,7 +106,22 @@ export async function runOddsPoll(): Promise<OddsPollResult> {
     return zeroResult(errors);
   }
 
-  const { games: apiGames, requestsRemaining, requestsUsed } = oddsResult;
+  const { games: apiGamesRaw, requestsRemaining, requestsUsed } = oddsResult;
+
+  // Drop in-progress games. The Odds API `/sports/baseball_mlb/odds` endpoint
+  // returns BOTH pre-game and live in-progress odds in one response, and live
+  // late-inning odds (e.g. ML -50000 in a blowout, RL ±6.5, live totals 3.5
+  // or 15.0) get stored alongside pre-game odds with the same (game,book,market)
+  // shape — corrupting any "latest snapshot" lookup downstream. We don't trade
+  // on live odds; the product grades against pre-game close. 15-min grace
+  // covers rain delays where commence_time has passed but no live action yet.
+  const PREGAME_GRACE_MS = 15 * 60_000;
+  const liveCutoffMs = Date.now() - PREGAME_GRACE_MS;
+  const apiGames = apiGamesRaw.filter((g) => {
+    if (!g.commence_time) return false;
+    return new Date(g.commence_time).getTime() > liveCutoffMs;
+  });
+  const liveDropped = apiGamesRaw.length - apiGames.length;
 
   // Log budget usage after every call — catch runaway consumption early.
   console.info(
@@ -115,7 +130,9 @@ export async function runOddsPoll(): Promise<OddsPollResult> {
       event: 'odds_api_call_complete',
       requestsUsed,
       requestsRemaining,
-      apiGamesReturned: apiGames.length,
+      apiGamesReturned: apiGamesRaw.length,
+      apiGamesPregame: apiGames.length,
+      apiGamesLiveDropped: liveDropped,
       date: today,
     })
   );
