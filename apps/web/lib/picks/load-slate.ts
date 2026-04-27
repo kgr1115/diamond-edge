@@ -84,6 +84,9 @@ export interface PickResponse {
    *  Per-pick narrowing of the slate-level meta.odds_stale flag — only the
    *  pick whose own book/snapshot is stale gets the warning, not every card. */
   odds_stale?: boolean;
+  /** ISO timestamp of the pinned odds snapshot this pick was priced against.
+   *  Lets the card render "Odds updated 12m ago" without re-querying. */
+  odds_snapshot_at?: string;
 }
 
 export interface PicksMeta {
@@ -153,6 +156,7 @@ function maskPick(
   lineSnapshots: OddsSnapshot[] | undefined,
   lineValues: { total_line: number | null; run_line_spread: number | null } | undefined,
   oddsStale: boolean,
+  oddsSnapshotAt: string | undefined,
 ): PickResponse {
   const level = entitlementLevel(tier);
 
@@ -172,6 +176,7 @@ function maskPick(
     visibility: row.visibility,
     result: row.result,
     odds_stale: oddsStale,
+    ...(oddsSnapshotAt ? { odds_snapshot_at: oddsSnapshotAt } : {}),
   };
 
   // Line values (total / run-line spread) are the public line numbers — always
@@ -497,7 +502,7 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
       : 0;
     const pickOddsStale = pinnedAt !== undefined && pickAgeMin >= ODDS_STALE_MIN;
 
-    return maskPick(row, userTier, bookName, lineSnapshots, lineValues, pickOddsStale);
+    return maskPick(row, userTier, bookName, lineSnapshots, lineValues, pickOddsStale, pinnedAt);
   });
 
   const response: PicksSlateResponse = {

@@ -35,6 +35,8 @@ interface PickCardProps {
      *  threshold. Per-pick narrowing of the slate-level meta.odds_stale so
      *  only the actually-stale pick card surfaces the warning. */
     odds_stale?: boolean;
+    /** ISO timestamp of the pinned odds snapshot this pick was priced against. */
+    odds_snapshot_at?: string;
   };
   userTier: 'anon' | 'free' | 'pro' | 'elite';
 }
@@ -45,6 +47,16 @@ function formatOdds(price: number): string {
 
 function formatSpread(spread: number): string {
   return spread >= 0 ? `+${spread}` : `${spread}`;
+}
+
+function formatRelativeOddsAge(iso: string | undefined, nowMs: number): string | null {
+  if (!iso) return null;
+  const ageMin = Math.max(0, (nowMs - new Date(iso).getTime()) / 60_000);
+  if (ageMin < 1) return 'just now';
+  if (ageMin < 60) return `${Math.round(ageMin)}m ago`;
+  const ageHours = ageMin / 60;
+  if (ageHours < 24) return `${Math.round(ageHours)}h ago`;
+  return `${Math.round(ageHours / 24)}d ago`;
 }
 
 function formatGameTime(utc: string | null): string {
@@ -265,6 +277,16 @@ export function PickCard({ pick, userTier }: PickCardProps) {
           )}
           {hasProData && oddsStale && !lineLocked && (
             <p className="mt-1 text-xs text-amber-400 font-sans">Line may be stale</p>
+          )}
+          {hasProData && pick.odds_snapshot_at && (
+            <p
+              className={`mt-0.5 text-xs font-sans ${
+                oddsStale ? 'text-amber-500/80' : 'text-gray-500'
+              }`}
+              title={new Date(pick.odds_snapshot_at).toLocaleString()}
+            >
+              Odds updated {formatRelativeOddsAge(pick.odds_snapshot_at, Date.now())}
+            </p>
           )}
         </div>
 

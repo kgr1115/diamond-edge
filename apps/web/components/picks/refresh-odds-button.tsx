@@ -18,7 +18,7 @@ export function RefreshOddsButton({ userTier }: Props) {
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<
     | { kind: 'idle' }
-    | { kind: 'success'; rows: number; durationMs: number }
+    | { kind: 'success'; rows: number; graded: number; durationMs: number }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
 
@@ -30,11 +30,11 @@ export function RefreshOddsButton({ userTier }: Props) {
       <button
         type="button"
         disabled
-        title="Manual odds refresh is an Elite feature."
-        aria-label="Manual odds refresh is an Elite feature."
+        title="On-demand odds refresh + pick grading is an Elite feature."
+        aria-label="On-demand odds refresh + pick grading is an Elite feature."
         className="text-xs px-3 py-1.5 rounded border border-gray-800 bg-gray-900/60 text-gray-600 cursor-not-allowed"
       >
-        Refresh odds (Elite)
+        Refresh odds + grade (Elite)
       </button>
     );
   }
@@ -54,6 +54,7 @@ export function RefreshOddsButton({ userTier }: Props) {
       setStatus({
         kind: 'success',
         rows: data.rowsInserted ?? 0,
+        graded: data.gradedCount ?? 0,
         durationMs: data.durationMs ?? 0,
       });
       startTransition(() => router.refresh());
@@ -68,10 +69,12 @@ export function RefreshOddsButton({ userTier }: Props) {
   const label = isPending
     ? 'Refreshing…'
     : status.kind === 'success'
-      ? `Updated (${status.rows} rows)`
+      ? status.rows === 0 && status.graded === 0
+        ? 'Already current'
+        : `Updated (${status.rows} odds${status.graded > 0 ? `, ${status.graded} graded` : ''})`
       : status.kind === 'error'
         ? 'Retry'
-        : 'Refresh odds';
+        : 'Refresh odds + grade';
 
   return (
     <div className="flex flex-col items-end gap-1">

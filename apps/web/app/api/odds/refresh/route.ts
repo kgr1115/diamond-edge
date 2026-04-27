@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { runOddsPoll } from '@/lib/ingestion/odds/poll';
+import { runOutcomeGrader } from '@/lib/outcome-grader/lib';
 import { cacheInvalidate, CacheKeys } from '@/lib/redis/cache';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import type { Database } from '@/lib/types/database';
@@ -76,18 +77,41 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Drain any pending pick grading in the same call. runOutcomeGrader is
+  // idempotent (only acts on picks for games finalized ≥6h ago that don't
+  // already have an outcome), so calling it here every time the user hits
+  // refresh costs ~1 DB query when there's nothing pending. The grader has
+  // its own try/catch and surfaces errors via the response — we don't want
+  // grading failure to mask a successful odds poll, so we never throw.
+  let gradedCount = 0;
+  let gradeErrors: string[] = [];
+  try {
+    const graderRes = await runOutcomeGrader();
+    const graderJson = (await graderRes.json()) as {
+      graded?: number;
+      errors?: string[];
+    };
+    gradedCount = graderJson.graded ?? 0;
+    gradeErrors = graderJson.errors ?? [];
+  } catch (err) {
+    gradeErrors = [err instanceof Error ? err.message : String(err)];
+  }
+
   const durationMs = Date.now() - startMs;
   console.info(JSON.stringify({
-    level: result.errors.length > 0 ? 'warn' : 'info',
+    level: result.errors.length > 0 || gradeErrors.length > 0 ? 'warn' : 'info',
     event: 'manual_odds_refresh_complete',
     durationMs,
     ...result,
+    gradedCount,
+    gradeErrors,
   }));
 
   return NextResponse.json({
-    ok: result.errors.length === 0,
+    ok: result.errors.length === 0 && gradeErrors.length === 0,
     rowsInserted: result.rowsInserted,
+    gradedCount,
     durationMs,
-    errors: result.errors,
+    errors: [...result.errors, ...gradeErrors],
   });
 }
