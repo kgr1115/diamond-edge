@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { paidTiersEnabled } from '@/lib/feature-flags';
+import { normalizeShapAttributions } from '@/lib/picks/load-slate';
 import type { SubscriptionTier, MarketType, PickResult } from '@/lib/types/database';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,13 @@ interface PickRow {
   model_probability: number | null;
   expected_value: number | null;
   rationale_id: string | null;
+  feature_attributions: Array<{
+    feature_name: string;
+    feature_value: number | string;
+    shap_value: number;
+    direction: 'positive' | 'negative';
+    label: string;
+  }> | null;
   game_id: string;
   games: {
     id: string;
@@ -162,6 +170,7 @@ export async function GET(
       model_probability,
       expected_value,
       rationale_id,
+      feature_attributions,
       games!inner (
         id,
         game_time_utc,
@@ -344,6 +353,8 @@ export async function GET(
   // Elite-only fields
   if (level >= 2) {
     if (pick.expected_value != null) response.pick.expected_value = pick.expected_value;
+    const shap = normalizeShapAttributions(pick.feature_attributions);
+    if (shap) response.pick.shap_attributions = shap;
   }
 
   // Graded outcome — visible to all tiers (including anon) since pick_outcomes
@@ -356,7 +367,7 @@ export async function GET(
     status: 200,
     headers: {
       // Short TTL — odds move. 60s is fine for a detail page.
-      'Cache-Control': 'private, max-age=60',
+      'Cache-Control': 'private, max-age=10',
     },
   });
 }

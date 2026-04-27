@@ -135,7 +135,7 @@ function rationalePreview(text: string): string {
   return sentences.slice(0, 2).join(' ').trim();
 }
 
-function normalizeShapAttributions(
+export function normalizeShapAttributions(
   raw: PickRow['feature_attributions'],
 ): ShapAttribution[] | undefined {
   if (!raw || raw.length === 0) return undefined;
