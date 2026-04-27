@@ -2,6 +2,7 @@
  * Geo-block screen. Rendered when middleware redirects a user from an unsupported state.
  * Static Server Component — no interactivity required.
  */
+import { FALLBACK_HELPLINE } from '@/components/picks/responsible-gambling-banner';
 
 const ALLOW_STATES = [
   { code: 'AZ', name: 'Arizona' },
@@ -59,7 +60,7 @@ export default function GeoBlockedPage() {
 
         <p className="text-xs text-gray-600 text-center">
           Problem gambling? Call{' '}
-          <a href="tel:18005224700" className="underline">1-800-522-4700</a> (24/7, free).
+          <a href={FALLBACK_HELPLINE.tel} className="underline">{FALLBACK_HELPLINE.display}</a> (24/7, free).
         </p>
       </div>
     </div>

@@ -6,13 +6,13 @@ import { paidTiersEnabled } from '@/lib/feature-flags';
 // Marketing pages, stats, and public history are intentionally excluded per geo-block-spec.md.
 const GEO_PROTECTED_PREFIXES = ['/api/picks', '/api/bankroll', '/picks', '/bankroll'];
 
-// ALLOW list — canonical 25 jurisdictions (24 states + DC) where both DK and FD are
+// ALLOW list — canonical 26 jurisdictions (25 states + DC) where both DK and FD are
 // fully operational as of 2026-04-22 per docs/compliance/state-matrix.md.
 // GEO_ALLOW_STATES env var can override at runtime if needed (v1.1 DB-driven refresh);
 // otherwise the compiled-in default applies.
 const DEFAULT_ALLOW_STATES = [
   'AZ', 'AR', 'CO', 'CT', 'DC', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA',
-  'MA', 'MD', 'MI', 'MO', 'NC', 'NJ', 'NY', 'OH', 'PA', 'VA', 'VT', 'WV', 'WY',
+  'MA', 'MD', 'MI', 'MO', 'NC', 'NJ', 'NY', 'OH', 'PA', 'TN', 'VA', 'VT', 'WV', 'WY',
 ];
 
 function getAllowedStates(): Set<string> {
