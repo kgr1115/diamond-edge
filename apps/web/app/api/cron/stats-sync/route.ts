@@ -39,7 +39,7 @@
  *
  *   SELECT cron.schedule(
  *     'lineup-sync-15min',
- *     '* /15 17-23 * * *',
+ *     '* /15 15-23 * * *',
  *     $$ SELECT net.http_post(
  *       url     := current_setting('app.vercel_url') || '/api/cron/stats-sync?stage=lineup',
  *       headers := jsonb_build_object(

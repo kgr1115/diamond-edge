@@ -172,6 +172,11 @@ function ZeroState({
               </>
             )}
           </ul>
+          {!meta.pipeline_ran && (
+            <div className="mt-2 inline-block bg-amber-950/40 border border-amber-900/60 rounded px-2 py-1 text-xs text-amber-300">
+              Picks run at 12:00 PM ET daily (11:00 AM ET in winter). Today&apos;s picks appear here after that.
+            </div>
+          )}
         </div>
       ) : !filtered ? (
         <p className="text-sm text-gray-500">

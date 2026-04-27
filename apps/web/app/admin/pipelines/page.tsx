@@ -28,6 +28,7 @@ const EXPECTED_CADENCE_MIN: Record<string, number | null> = {
   'odds-refresh-daytime': 30,
   'odds-refresh-evening': 30,
   'stats-sync': 24 * 60,
+  'stats-sync-lineup': 15,
   'clv-compute': 24 * 60,
   'schedule-sync': 24 * 60,
   'pick-pipeline': 24 * 60,

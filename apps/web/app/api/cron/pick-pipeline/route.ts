@@ -7,7 +7,7 @@ export const maxDuration = 10; // This route returns immediately — the heavy w
 
 /**
  * Vercel Cron handler: GET /api/cron/pick-pipeline
- * Scheduled: daily at 9:00 AM ET (after morning lines settle).
+ * Scheduled: daily at 16:00 UTC (12:00 PM ET / 11:00 AM EST). Fires after schedule-sync (14:00 UTC) and stats-sync (14:30 UTC).
  *
  * This route is a thin trigger: it calls supabase.functions.invoke('pick-pipeline')
  * and returns immediately. The Supabase Edge Function does the heavy work asynchronously.
