@@ -1,14 +1,31 @@
 name: Database Migrations
 
+# DISABLED 2026-04-27 — auto-triggers gated to workflow_dispatch only.
+#
+# Two known gaps before re-enabling auto-triggers (push / pull_request):
+#
+#   1. The Supabase CLI 2.x removed `supabase db push --project-ref`.
+#      Commands have been rewritten below to use `supabase link --project-ref`
+#      followed by `supabase db push --linked`. The CLI flags now match
+#      Supabase CLI v2.x — re-enabling auto-triggers will not regress on syntax.
+#
+#   2. The required GitHub Actions secrets are not provisioned in this repo:
+#        - SUPABASE_ACCESS_TOKEN
+#        - STAGING_SUPABASE_PROJECT_REF
+#        - STAGING_SUPABASE_DB_PASSWORD
+#        - PROD_SUPABASE_PROJECT_REF
+#        - PROD_SUPABASE_DB_PASSWORD
+#      Provision these in repo Settings → Secrets and variables → Actions.
+#      Without them every run fails with empty `--project-ref` and exits 1.
+#
+# Until both gaps are closed, this workflow is manual-dispatch only to stop
+# the per-push failure email noise. Migrations have historically been applied
+# by hand from the local Supabase CLI; that path remains available.
+#
+# To run manually:
+#   GitHub Actions → Workflows → Database Migrations → Run workflow → choose env.
+
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "supabase/migrations/**"
-  push:
-    branches: [main]
-    paths:
-      - "supabase/migrations/**"
   workflow_dispatch:
     inputs:
       environment:
@@ -27,8 +44,7 @@ jobs:
   validate:
     name: Validate migrations (dry run)
     runs-on: ubuntu-latest
-    # Run on every PR touching migrations
-    if: github.event_name == 'pull_request'
+    if: github.event.inputs.environment == 'staging'
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +55,7 @@ jobs:
 
       - name: Validate migration file naming
         # Migration files may use either of two sequencing conventions:
-        #   - NNNN_description.sql (4-digit sequence — current repo style through 0014_*)
+        #   - NNNN_description.sql (4-digit sequence — current repo style through 0019_*)
         #   - YYYYMMDDHHMMSS_description.sql (14-digit timestamp — Supabase CLI default)
         # Description is lowercase alnum + underscore. Both prefixes coexist in history.
         run: |
@@ -58,18 +74,23 @@ jobs:
           fi
           echo "All migration filenames are valid."
 
+      - name: Link Supabase project (staging)
+        run: |
+          supabase link --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
       - name: Lint SQL migrations
         run: |
-          supabase db lint --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+          supabase db lint --linked
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
       - name: Dry-run migration diff against staging
         # Checks what supabase db push would apply — does NOT execute
         run: |
-          supabase db push \
-            --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} \
-            --dry-run
+          supabase db push --linked --dry-run
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
@@ -77,8 +98,8 @@ jobs:
   apply-staging:
     name: Apply migrations to staging
     runs-on: ubuntu-latest
-    # Only auto-apply on merge to main
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event.inputs.environment == 'staging'
+    needs: [validate]
     environment: staging
     steps:
       - uses: actions/checkout@v4
@@ -88,20 +109,23 @@ jobs:
         with:
           version: latest
 
+      - name: Link Supabase project (staging)
+        run: |
+          supabase link --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
       - name: Apply migrations to staging
         run: |
-          supabase db push \
-            --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} \
-            --include-all
+          supabase db push --linked --include-all
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
 
       - name: Verify staging schema post-migration
         run: |
-          supabase db diff \
-            --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} \
-            --schema public
+          supabase db diff --linked --schema public
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
@@ -121,7 +145,7 @@ jobs:
   apply-prod:
     name: Apply migrations to production
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    if: github.event.inputs.environment == 'prod'
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -137,20 +161,23 @@ jobs:
           echo "Pre-flight checklist must be completed before this step."
           echo "See workflow comments for required steps."
 
+      - name: Link Supabase project (production)
+        run: |
+          supabase link --project-ref ${{ secrets.PROD_SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
+
       - name: Apply migrations to production
         run: |
-          supabase db push \
-            --project-ref ${{ secrets.PROD_SUPABASE_PROJECT_REF }} \
-            --include-all
+          supabase db push --linked --include-all
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
 
       - name: Verify production schema post-migration
         run: |
-          supabase db diff \
-            --project-ref ${{ secrets.PROD_SUPABASE_PROJECT_REF }} \
-            --schema public
+          supabase db diff --linked --schema public
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.PROD_SUPABASE_DB_PASSWORD }}
@@ -165,3 +192,23 @@ jobs:
 # Required GitHub environments (repo Settings → Environments):
 #   staging    — auto-approve
 #   production — require manual approval from a repo admin
+#
+# Re-enabling auto-triggers (push / PR):
+#   Once the secrets above are provisioned and a manual workflow_dispatch run
+#   completes successfully against staging, replace the `on:` block with:
+#
+#     on:
+#       pull_request:
+#         branches: [main]
+#         paths:
+#           - "supabase/migrations/**"
+#       push:
+#         branches: [main]
+#         paths:
+#           - "supabase/migrations/**"
+#       workflow_dispatch:
+#         inputs:
+#           environment: { ... }
+#
+#   And remove the `if: github.event.inputs.environment == 'staging'` guards
+#   from the validate + apply-staging jobs (keep the prod 'if' check).
