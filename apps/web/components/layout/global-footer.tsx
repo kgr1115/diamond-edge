@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { FALLBACK_HELPLINE } from '@/components/picks/responsible-gambling-banner';
 
 /**
  * Surface 4 — Site-wide footer with responsible gambling copy.
@@ -13,8 +14,8 @@ export function GlobalFooter() {
           Diamond Edge is an information service. We do not place bets or hold funds on your behalf.{' '}
           <strong className="text-gray-300">21+ only.</strong> Available only where DraftKings and FanDuel legally
           operate. Problem gambling? Call{' '}
-          <a href="tel:18005224700" className="underline hover:text-white">
-            1-800-522-4700
+          <a href={FALLBACK_HELPLINE.tel} className="underline hover:text-white">
+            {FALLBACK_HELPLINE.display}
           </a>{' '}
           (24/7, free, confidential).
         </p>

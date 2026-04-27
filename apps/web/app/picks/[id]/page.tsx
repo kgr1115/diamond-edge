@@ -1,7 +1,10 @@
 import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
-import { ResponsibleGamblingBanner } from '@/components/picks/responsible-gambling-banner';
+import {
+  ResponsibleGamblingBanner,
+  resolveHelpline,
+} from '@/components/picks/responsible-gambling-banner';
 import { ConfidenceBadge } from '@/components/picks/confidence-badge';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
 import { PickJournal } from '@/components/picks/pick-journal';
@@ -95,7 +98,12 @@ interface JournalData {
   user_tags: string[];
 }
 
-async function fetchJournalData(pickId: string): Promise<JournalData | null> {
+interface JournalAndGeo {
+  journal: JournalData | null;
+  geoState: string | null;
+}
+
+async function fetchJournalData(pickId: string): Promise<JournalAndGeo> {
   const cookieStore = await cookies();
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -108,7 +116,14 @@ async function fetchJournalData(pickId: string): Promise<JournalData | null> {
     }
   );
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) return { journal: null, geoState: null };
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('geo_state')
+    .eq('id', user.id)
+    .single();
+  const geoState = profile?.geo_state ?? null;
 
   // Read directly from service-role — picks has RLS for visibility=live, journal fields
   // are non-sensitive but we still go via anon key; no RLS issue since visibility=live
@@ -119,17 +134,20 @@ async function fetchJournalData(pickId: string): Promise<JournalData | null> {
     .eq('id', pickId)
     .single();
 
-  if (!data) return null;
+  if (!data) return { journal: null, geoState };
   const row = data as unknown as { user_note: string | null; user_tags: string[] | null };
   return {
-    user_note: row.user_note,
-    user_tags: row.user_tags ?? [],
+    journal: {
+      user_note: row.user_note,
+      user_tags: row.user_tags ?? [],
+    },
+    geoState,
   };
 }
 
 export default async function PickDetailPage({ params }: PageProps) {
   const { id } = await params;
-  const [data, journal] = await Promise.all([
+  const [data, journalAndGeo] = await Promise.all([
     fetchPickDetail(id),
     fetchJournalData(id),
   ]);
@@ -139,6 +157,8 @@ export default async function PickDetailPage({ params }: PageProps) {
   }
 
   const { pick } = data;
+  const { journal, geoState } = journalAndGeo;
+  const sidebarHelpline = resolveHelpline(geoState);
   const isGraded = pick.result !== 'pending' && pick.outcome != null;
   const isGradedRacing = pick.result !== 'pending' && pick.outcome == null;
   const modelHeader = isGraded ? 'Model view at pick time' : 'Pick';
@@ -241,7 +261,7 @@ export default async function PickDetailPage({ params }: PageProps) {
               )}
               {pick.expected_value !== undefined && (
                 <span className="text-sm text-emerald-400">
-                  EV: +{(pick.expected_value * 100).toFixed(1)}%
+                  EV: {pick.expected_value >= 0 ? '+' : ''}{(pick.expected_value * 100).toFixed(1)}%
                 </span>
               )}
             </div>
@@ -320,8 +340,8 @@ export default async function PickDetailPage({ params }: PageProps) {
             </ul>
             <p className="text-xs text-gray-600">
               Struggling?{' '}
-              <a href="tel:18005224700" className="text-amber-600 hover:underline">
-                1-800-522-4700
+              <a href={sidebarHelpline.tel} className="text-amber-600 hover:underline">
+                {sidebarHelpline.display}
               </a>
             </p>
           </div>
@@ -330,7 +350,7 @@ export default async function PickDetailPage({ params }: PageProps) {
 
       {/* Surface 1 footer disclaimer */}
       <div className="mt-8">
-        <ResponsibleGamblingBanner surface="footer" />
+        <ResponsibleGamblingBanner surface="footer" geoState={geoState} />
       </div>
     </div>
   );

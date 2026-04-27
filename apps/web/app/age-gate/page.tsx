@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
+import { FALLBACK_HELPLINE } from '@/components/picks/responsible-gambling-banner';
 
 function AgeGateForm() {
   const searchParams = useSearchParams();
@@ -50,7 +51,7 @@ function AgeGateForm() {
         </div>
         <p className="text-sm text-gray-500">
           If you or someone you know needs support, call{' '}
-          <a href="tel:18005224700" className="underline">1-800-522-4700</a> (National Problem
+          <a href={FALLBACK_HELPLINE.tel} className="underline">{FALLBACK_HELPLINE.display}</a> (National Problem
           Gambling Helpline, 24/7, free).
         </p>
       </div>
@@ -141,7 +142,7 @@ export default function AgeGatePage() {
 
         <p className="text-xs text-gray-600 text-center">
           Problem gambling?{' '}
-          <a href="tel:18005224700" className="underline">1-800-522-4700</a>
+          <a href={FALLBACK_HELPLINE.tel} className="underline">{FALLBACK_HELPLINE.display}</a>
         </p>
       </div>
     </div>

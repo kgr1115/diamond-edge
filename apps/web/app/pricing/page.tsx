@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import type { Database } from '@/lib/types/database';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
+import { FALLBACK_HELPLINE } from '@/components/picks/responsible-gambling-banner';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -113,7 +114,7 @@ export default async function PricingPage() {
         wins, profits, or any specific outcome. Sports betting is inherently uncertain — even
         high-confidence picks lose. A subscription is an investment in information, not in returns.
         Never bet more than you can afford to lose. Problem gambling?{' '}
-        <a href="tel:18005224700" className="underline">1-800-522-4700</a> (24/7, free).
+        <a href={FALLBACK_HELPLINE.tel} className="underline">{FALLBACK_HELPLINE.display}</a> (24/7, free).
       </div>
 
       <div className="grid gap-6 md:grid-cols-3">
