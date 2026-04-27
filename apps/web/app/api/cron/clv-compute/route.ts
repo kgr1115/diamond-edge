@@ -144,24 +144,53 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: { code: 'CONFIG_ERROR', message: msg } }, { status: 500 });
   }
 
+  // Server-side exclusion: fetch all pick_ids already present in pick_clv so the
+  // picks query excludes them BEFORE the 200-row limit. Keeps the batch healthy
+  // — without this, a backlog of already-computed picks could fill the limit and
+  // starve newly-final games.
+  const existingFetchStart = Date.now();
+  const { data: existingClv, error: existingError } = await pickClvFrom(supabase)
+    .select('pick_id');
+
+  if (existingError) {
+    console.error(JSON.stringify({ level: 'error', event: 'clv_compute_existing_fetch_error', error: existingError.message, ms: Date.now() - existingFetchStart }));
+    return NextResponse.json({ error: { code: 'DB_ERROR', message: existingError.message } }, { status: 500 });
+  }
+  const existingIds = (existingClv ?? []).map((r: { pick_id: string }) => r.pick_id);
+  console.info(JSON.stringify({ level: 'info', event: 'clv_compute_existing_fetch', count: existingIds.length, ms: Date.now() - existingFetchStart }));
+
   // Find picks missing CLV where game is final
   // Left-join semantics via !inner: picks without pick_clv rows are returned
   const pickFetchStart = Date.now();
-  const { data: rawPicks, error: pickError } = await supabase
+  let pickQuery = supabase
     .from('picks')
     .select(
       'id, game_id, market, pick_side, market_novig_prior, ' +
         'games!inner(game_time_utc, status)',
     )
     .eq('games.status', 'final')
-    .not('market_novig_prior', 'is', null)
-    .limit(200);
+    .not('market_novig_prior', 'is', null);
+
+  if (existingIds.length > 0) {
+    pickQuery = pickQuery.not('id', 'in', `(${existingIds.join(',')})`);
+  }
+
+  const { data: rawPicks, error: pickError } = await pickQuery.limit(200);
 
   if (pickError) {
     console.error(JSON.stringify({ level: 'error', event: 'clv_compute_pick_fetch_error', error: pickError.message, ms: Date.now() - pickFetchStart }));
     return NextResponse.json({ error: { code: 'DB_ERROR', message: pickError.message } }, { status: 500 });
   }
   console.info(JSON.stringify({ level: 'info', event: 'clv_compute_pick_fetch', count: rawPicks?.length ?? 0, ms: Date.now() - pickFetchStart }));
+
+  if (rawPicks?.length === 200) {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'clv_compute_batch_saturated',
+      count: rawPicks.length,
+      note: 'hit 200-row batch ceiling; backlog likely exists',
+    }));
+  }
 
   const picks = (rawPicks as unknown as PickRow[]) ?? [];
 
@@ -170,13 +199,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ computed: 0, skipped: 0 }, { status: 200 });
   }
 
-  // Filter out picks already in pick_clv
-  const pickIds = picks.map((p) => p.id);
-  const { data: existingClv } = await pickClvFrom(supabase)
-    .select('pick_id')
-    .in('pick_id', pickIds);
-
-  const existingSet = new Set((existingClv ?? []).map((r: { pick_id: string }) => r.pick_id));
+  // Defensive assertion: all rows from the picks query should already be missing
+  // from pick_clv (server-side .not('id', 'in', ...) above). The client-side set
+  // is retained as a belt-and-braces guard against drift between the two reads.
+  const existingSet = new Set(existingIds);
   const unprocessedPicks = picks.filter((p) => !existingSet.has(p.id));
 
   if (unprocessedPicks.length === 0) {
