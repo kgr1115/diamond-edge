@@ -91,3 +91,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   await finishCronRun(runHandle, { status: 'success', errorMsg: null });
   return NextResponse.json({ triggered: true, date: today, pipeline: { ok: true, errors: [] } }, { status: 200 });
 }
+
+export const POST = GET;

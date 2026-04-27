@@ -184,3 +184,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     { status: hadErrors ? 207 : 200 },
   );
 }
+
+export const POST = GET;

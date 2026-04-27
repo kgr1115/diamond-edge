@@ -261,3 +261,5 @@ async function handleLineupOnly(
     durationMs: Date.now() - startMs,
   }, { status: result.errors.length ? 207 : 200 });
 }
+
+export const POST = GET;

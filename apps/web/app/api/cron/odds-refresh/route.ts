@@ -117,3 +117,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     { status: pollResult.ok ? 200 : 207 },
   );
 }
+
+export const POST = GET;
