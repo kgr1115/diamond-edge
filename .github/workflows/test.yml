@@ -22,14 +22,19 @@
 
 name: QA Tests
 
+# DISABLED 2026-04-27 — workflow was scaffolded in commit 910c6d9 but never completed.
+# Two known gaps before re-enabling automatic triggers:
+#   1. `${{ env.SUPABASE_ANON_KEY_LOCAL }}` and `${{ env.SUPABASE_SERVICE_KEY_LOCAL }}`
+#      are referenced throughout but never defined. Need to capture them after
+#      `supabase start` (e.g., `supabase status -o env >> $GITHUB_ENV`).
+#   2. `secrets.SLACK_WEBHOOK_URL` is missing — pipeline-validation Slack alert step
+#      always fails. Either provision the secret or guard the step on
+#      `if: secrets.SLACK_WEBHOOK_URL != ''`.
+# Until the above are fixed and the integration suite is verified green, this
+# workflow is manual-dispatch only to stop the daily failure email noise.
+# Re-enable push/PR/schedule triggers once the test infra is properly wired.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  # Daily pipeline validation — catches ingestion drift and model drift
-  schedule:
-    - cron: '0 8 * * *'   # 8:00 AM UTC daily (3 AM ET in summer)
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
