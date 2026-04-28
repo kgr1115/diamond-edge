@@ -1,6 +1,8 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { HistoryFilters } from '@/components/history/history-filters';
+import { LeadTimeGrid } from '@/components/history/lead-time-grid';
+import { SlateNav } from '@/components/picks/slate-nav';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +15,16 @@ interface HistoryResponse {
     win_rate: number;
     roi_pct: number;
     by_market: Record<string, { picks: number; wins: number; win_rate: number; roi_pct: number }>;
-    by_confidence: Record<string, { picks: number; wins: number; win_rate: number }>;
+    by_confidence: Record<string, { picks: number; wins: number; losses: number; pushes: number; win_rate: number; roi_pct: number }>;
+    by_lead_time: Record<'same_day' | 'next_day' | 'multi_day', Record<string, {
+      picks: number; wins: number; losses: number; pushes: number;
+      win_rate: number; roi_pct: number; has_min_sample: boolean; graded: number;
+    }>>;
+    lead_time_meta: {
+      sample_min: number;
+      excluded_no_lead_time: number;
+      bucket_definitions: Record<string, string>;
+    };
   };
   picks: Array<{
     id: string;
@@ -24,6 +35,7 @@ interface HistoryResponse {
     confidence_tier: number;
     result: string;
     best_line_price: number | null;
+    final_score: { home: number; away: number; total: number; runline: number } | null;
   }>;
   pagination: { page: number; per_page: number; total: number; total_pages: number };
 }
@@ -107,15 +119,50 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">By Market</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {Object.entries(stats.by_market).map(([mkt, s]) => (
-              <div key={mkt}>
-                <p className="text-xs text-gray-500 uppercase">{mkt}</p>
+              <Link
+                key={mkt}
+                href={buildFilterHref(filters, { market: mkt })}
+                className="block rounded border border-transparent hover:border-gray-700 hover:bg-gray-800/40 px-2 py-1 -mx-2 -my-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <p className="text-xs text-gray-500 uppercase">{marketLabel(mkt)}</p>
                 <p className="text-sm text-gray-200">
-                  {s.picks} picks · {(s.win_rate * 100).toFixed(0)}% W · {s.roi_pct >= 0 ? '+' : ''}{s.roi_pct.toFixed(1)}% ROI
+                  {s.picks} picks · {(s.win_rate * 100).toFixed(0)}% W ·{' '}
+                  <span className={s.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                    {s.roi_pct >= 0 ? '+' : ''}{s.roi_pct.toFixed(1)}% ROI
+                  </span>
                 </p>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
+      )}
+
+      {/* Confidence-tier breakdown */}
+      {Object.keys(stats.by_confidence).length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">By Confidence Tier</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {Object.entries(stats.by_confidence)
+              .sort(([a], [b]) => Number(b) - Number(a))
+              .map(([tier, s]) => (
+                <div key={tier}>
+                  <p className="text-xs text-gray-500 uppercase">Tier {tier}</p>
+                  <p className="text-sm text-gray-200">
+                    {s.picks} picks · {s.wins}–{s.losses}
+                    {s.pushes > 0 ? `–${s.pushes}` : ''} · {(s.win_rate * 100).toFixed(0)}% W ·{' '}
+                    <span className={s.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {s.roi_pct >= 0 ? '+' : ''}{s.roi_pct.toFixed(1)}% ROI
+                    </span>
+                  </p>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Lead-time grid — collapsible */}
+      {stats.by_lead_time && stats.lead_time_meta && (
+        <LeadTimeGrid byLeadTime={stats.by_lead_time} meta={stats.lead_time_meta} />
       )}
 
       {/* Pick table */}
@@ -134,6 +181,7 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
                 <th className="py-2 pr-4">Pick</th>
                 <th className="py-2 pr-4">Confidence</th>
                 <th className="py-2 pr-4">Odds</th>
+                <th className="py-2 pr-4">Final</th>
                 <th className="py-2">Result</th>
               </tr>
             </thead>
@@ -158,6 +206,21 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
                     {pick.best_line_price != null
                       ? (pick.best_line_price >= 0 ? `+${pick.best_line_price}` : `${pick.best_line_price}`)
                       : '—'}
+                  </td>
+                  <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">
+                    {pick.final_score ? (
+                      <>
+                        <span className="text-gray-200">
+                          {pick.final_score.away}–{pick.final_score.home}
+                        </span>
+                        <span className="text-gray-500 ml-2">
+                          T {pick.final_score.total} · RL {pick.final_score.runline >= 0 ? '+' : ''}
+                          {pick.final_score.runline}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
                   </td>
                   <td className="py-3">
                     <ResultBadge result={pick.result} />
@@ -208,6 +271,29 @@ function buildPageHref(filters: FilterState, page: number): string {
   return `/history?${params.toString()}`;
 }
 
+function buildFilterHref(filters: FilterState, overrides: Partial<FilterState>): string {
+  const next: FilterState = { ...filters, ...overrides, page: 1 };
+  const params = new URLSearchParams();
+  if (next.market) params.set('market', next.market);
+  if (next.result) params.set('result', next.result);
+  if (next.date_from) params.set('date_from', next.date_from);
+  if (next.date_to) params.set('date_to', next.date_to);
+  const qs = params.toString();
+  return qs ? `/history?${qs}` : '/history';
+}
+
+const MARKET_LABELS: Record<string, string> = {
+  moneyline: 'Moneyline',
+  run_line: 'Run Line',
+  total: 'Totals',
+  prop: 'Props',
+  parlay: 'Parlay',
+  future: 'Futures',
+};
+function marketLabel(mkt: string): string {
+  return MARKET_LABELS[mkt] ?? mkt;
+}
+
 interface PageProps {
   searchParams: Promise<{
     page?: string;
@@ -230,9 +316,13 @@ export default async function HistoryPage({ searchParams }: PageProps) {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
+      <SlateNav />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Pick Performance</h1>
-        <p className="text-sm text-gray-400 mt-1">Historical pick results and ROI by market.</p>
+        <p className="text-sm text-gray-400 mt-1">
+          Historical pick results and ROI. Most picks below were generated day-of at ~12:00 PM ET
+          (lead time under 6 hours). See the lead-time analysis card for breakdown by lead time.
+        </p>
       </div>
 
       {/* Filters are a Client Component — URL-driven via router.push */}

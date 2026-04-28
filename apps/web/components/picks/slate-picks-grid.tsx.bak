@@ -2,7 +2,9 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { GameStrip } from './game-strip';
+import { PickCard } from './pick-card';
+import { ShapAttributionRow } from './shap-attribution-row';
+import { LineMovementSparkline } from './line-movement-sparkline';
 import { SlateFilters, useSlateFilters } from './slate-filters';
 import type {
   MarketFilter,
@@ -13,7 +15,14 @@ import type {
 import { DailyExposureMeter } from './daily-exposure-meter';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
 
+// Render the thin-slate transparency diagnostic above the grid when the server
+// returned fewer live picks than this threshold (strictly less than). The count
+// is on live picks only so Pro/Elite (who see live+shadow) get a truthful read.
 const THIN_SLATE_THRESHOLD = 4;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface ShapAttribution {
   feature: string;
@@ -52,7 +61,6 @@ interface PickData {
   line_snapshots?: OddsSnapshot[];
   has_note?: boolean;
   odds_stale?: boolean;
-  odds_snapshot_at?: string;
 }
 
 interface SlatePicksGridProps {
@@ -61,18 +69,17 @@ interface SlatePicksGridProps {
   meta?: {
     pipeline_ran: boolean;
     games_analyzed: number;
-    games_scheduled_count?: number;
     below_threshold: number;
     ev_threshold: number;
     confidence_threshold: number;
     last_odds_snapshot_at: string | null;
     odds_stale: boolean;
   };
-  /** Date being rendered (YYYY-MM-DD, ET). Used for empty-state copy. */
-  pickDate?: string;
-  /** Tab context — affects empty-state messaging. */
-  mode?: 'today' | 'upcoming';
 }
+
+// ---------------------------------------------------------------------------
+// Client-side filter + sort
+// ---------------------------------------------------------------------------
 
 function applyFilters(
   picks: PickData[],
@@ -109,121 +116,73 @@ function applyFilters(
   });
 }
 
-interface GameGroup {
-  game: PickData['game'];
-  picks: PickData[];
-  earliestStart: number;
-  bestTier: number;
-  bestEv: number;
+// ---------------------------------------------------------------------------
+// Shadow badge
+// ---------------------------------------------------------------------------
+
+function ShadowBadge() {
+  return (
+    <span
+      className="text-xs px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 border border-amber-800/60 font-medium"
+      title="Shadow pick — below publish threshold (EV < 8% or confidence < Strong)"
+    >
+      Shadow
+    </span>
+  );
 }
 
-function groupByGame(picks: PickData[]): GameGroup[] {
-  const map = new Map<string, GameGroup>();
-  for (const p of picks) {
-    const key = p.game.id;
-    let group = map.get(key);
-    if (!group) {
-      group = {
-        game: p.game,
-        picks: [],
-        earliestStart: p.game.game_time_utc ? new Date(p.game.game_time_utc).getTime() : Infinity,
-        bestTier: 0,
-        bestEv: -Infinity,
-      };
-      map.set(key, group);
-    }
-    group.picks.push(p);
-    if (p.confidence_tier > group.bestTier) group.bestTier = p.confidence_tier;
-    if ((p.expected_value ?? -Infinity) > group.bestEv) group.bestEv = p.expected_value ?? -Infinity;
-  }
-  return Array.from(map.values());
-}
-
-function sortGroups(groups: GameGroup[], sort: SortFilter): GameGroup[] {
-  const out = [...groups];
-  if (sort === 'ev') out.sort((a, b) => b.bestEv - a.bestEv);
-  else if (sort === 'confidence') out.sort((a, b) => b.bestTier - a.bestTier);
-  else out.sort((a, b) => a.earliestStart - b.earliestStart);
-  return out;
-}
+// ---------------------------------------------------------------------------
+// Zero state
+// ---------------------------------------------------------------------------
 
 function ZeroState({
   userTier,
   meta,
   filtered,
-  pickDate,
-  mode,
 }: {
   userTier: 'anon' | 'free' | 'pro' | 'elite';
   meta?: SlatePicksGridProps['meta'];
   filtered: boolean;
-  pickDate?: string;
-  mode?: 'today' | 'upcoming';
 }) {
-  // Distinguish "no MLB games scheduled for this date" from "games exist but
-  // pipeline hasn't generated picks yet." The first is a calendar fact (off-day,
-  // All-Star break); the second is a process gap (cron hasn't fired).
-  const noGamesScheduled = !!meta && (meta.games_scheduled_count ?? meta.games_analyzed) === 0;
-  const hasGamesNoPicks = !!meta && !noGamesScheduled && !meta.pipeline_ran;
-
-  let headline = 'No qualifying picks today.';
-  if (filtered) {
-    headline = 'No picks match your filters.';
-  } else if (noGamesScheduled) {
-    headline = mode === 'upcoming'
-      ? 'No MLB games scheduled for this date.'
-      : 'No MLB games scheduled today.';
-  } else if (hasGamesNoPicks) {
-    headline = mode === 'upcoming'
-      ? 'Picks not yet generated for this date.'
-      : 'Picks not yet generated for today.';
-  }
-
   return (
     <div className="text-center py-16 space-y-4 max-w-md mx-auto">
-      <p className="text-gray-300 font-semibold text-lg">{headline}</p>
+      <p className="text-gray-300 font-semibold text-lg">
+        {filtered ? 'No picks match your filters.' : 'No qualifying picks today.'}
+      </p>
 
-      {!filtered && noGamesScheduled && (
-        <p className="text-sm text-gray-500">
-          {mode === 'upcoming'
-            ? 'Pick another date with the date selector above.'
-            : 'No games on the schedule. Check back tomorrow.'}
-        </p>
-      )}
-
-      {!filtered && hasGamesNoPicks && (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-left space-y-2 text-sm">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Pipeline status</p>
-          <ul className="space-y-1 text-gray-400">
-            <li>
-              Games scheduled:{' '}
-              <span className="text-white">{meta?.games_scheduled_count ?? meta?.games_analyzed ?? 0}</span>
-            </li>
-            <li>Pipeline ran for this date: <span className="text-red-400">No</span></li>
-          </ul>
-          <div className="mt-2 inline-block bg-amber-950/40 border border-amber-900/60 rounded px-2 py-1 text-xs text-amber-300">
-            The pipeline runs daily at 12:00 PM ET. Picks for {pickDate ? `${pickDate}` : 'this date'} appear here after that.
-          </div>
-        </div>
-      )}
-
-      {!filtered && !noGamesScheduled && !hasGamesNoPicks && meta && (
+      {!filtered && meta ? (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-left space-y-2 text-sm">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Pipeline diagnostic</p>
           <ul className="space-y-1 text-gray-400">
-            <li>Games analyzed: <span className="text-white">{meta.games_analyzed}</span></li>
             <li>
-              Below threshold: <span className="text-white">{meta.below_threshold}</span>
-              <span className="text-gray-600 text-xs ml-1">
-                (EV &lt; {(meta.ev_threshold * 100).toFixed(0)}% or Tier &lt; {meta.confidence_threshold})
+              Pipeline ran:{' '}
+              <span className={meta.pipeline_ran ? 'text-emerald-400' : 'text-red-400'}>
+                {meta.pipeline_ran ? 'Yes' : 'No — check back later'}
               </span>
             </li>
+            {meta.pipeline_ran && (
+              <>
+                <li>Games analyzed: <span className="text-white">{meta.games_analyzed}</span></li>
+                <li>
+                  Below threshold: <span className="text-white">{meta.below_threshold}</span>
+                  <span className="text-gray-600 text-xs ml-1">
+                    (EV &lt; {(meta.ev_threshold * 100).toFixed(0)}% or Tier &lt; {meta.confidence_threshold})
+                  </span>
+                </li>
+              </>
+            )}
           </ul>
-          <p className="text-xs text-gray-500 mt-2">
-            Our model requires EV &gt; 4% — on lighter slates, no picks qualify.
-          </p>
+          {!meta.pipeline_ran && (
+            <div className="mt-2 inline-block bg-amber-950/40 border border-amber-900/60 rounded px-2 py-1 text-xs text-amber-300">
+              Picks run at 12:00 PM ET daily (11:00 AM ET in winter). Today&apos;s picks appear here after that.
+            </div>
+          )}
         </div>
-      )}
+      ) : !filtered ? (
+        <p className="text-sm text-gray-500">
+          Our model requires EV &gt; 4% — on lighter slates, no picks qualify.
+        </p>
+      ) : null}
 
       <div className="flex items-center justify-center gap-4 flex-wrap pt-2">
         <Link href="/history" className="text-sm text-blue-400 hover:underline">
@@ -238,6 +197,10 @@ function ZeroState({
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Thin-slate transparency diagnostic
+// ---------------------------------------------------------------------------
 
 function ThinSlateDiagnostic({
   userTier,
@@ -299,7 +262,11 @@ function ThinSlateDiagnostic({
   );
 }
 
-export function SlatePicksGrid({ picks, userTier, meta, pickDate, mode }: SlatePicksGridProps) {
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+export function SlatePicksGrid({ picks, userTier, meta }: SlatePicksGridProps) {
   const { market, minStrength, visibility, sort, minEv } = useSlateFilters();
   const canSeeShadow = userTier === 'pro' || userTier === 'elite';
 
@@ -307,8 +274,6 @@ export function SlatePicksGrid({ picks, userTier, meta, pickDate, mode }: SlateP
     () => applyFilters(picks, market, minStrength, visibility, sort, minEv),
     [picks, market, minStrength, visibility, sort, minEv]
   );
-
-  const groups = useMemo(() => sortGroups(groupByGame(filtered), sort), [filtered, sort]);
 
   const isActiveFilter =
     market !== 'all' ||
@@ -344,18 +309,38 @@ export function SlatePicksGrid({ picks, userTier, meta, pickDate, mode }: SlateP
         <ThinSlateDiagnostic userTier={userTier} meta={meta} liveCount={liveCount} />
       )}
 
-      {groups.length === 0 ? (
-        <ZeroState
-          userTier={userTier}
-          meta={meta}
-          filtered={isActiveFilter}
-          pickDate={pickDate}
-          mode={mode}
-        />
+      {filtered.length === 0 ? (
+        <ZeroState userTier={userTier} meta={meta} filtered={isActiveFilter} />
       ) : (
-        <div className="space-y-3">
-          {groups.map((group) => (
-            <GameStrip key={group.game.id} game={group.game} picks={group.picks} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((pick) => (
+            <article key={pick.id} className="flex flex-col">
+              {pick.visibility === 'shadow' && (
+                <div className="mb-1 flex justify-end">
+                  <ShadowBadge />
+                </div>
+              )}
+
+              <PickCard pick={pick} userTier={userTier} />
+
+              {userTier === 'elite' && pick.shap_attributions && pick.shap_attributions.length > 0 && (
+                <div className="mt-1 px-4 pb-3 bg-gray-900 border border-t-0 border-gray-800 rounded-b-lg">
+                  <ShapAttributionRow attributions={pick.shap_attributions} limit={3} />
+                </div>
+              )}
+
+              {(userTier === 'pro' || userTier === 'elite') &&
+                pick.line_snapshots &&
+                pick.line_snapshots.length >= 2 && (
+                  <div className="mt-1 px-4 py-2 bg-gray-900/60 border border-t-0 border-gray-800/60 rounded-b-lg">
+                    <p className="text-xs text-gray-600 mb-1">Line movement</p>
+                    <LineMovementSparkline
+                      snapshots={pick.line_snapshots}
+                      pickSide={pick.pick_side}
+                    />
+                  </div>
+                )}
+            </article>
           ))}
         </div>
       )}

@@ -5,7 +5,7 @@
  * Triggered by /api/cron/pick-pipeline via supabase.functions.invoke().
  *
  * Pipeline stages (per docs/runbooks/pick-pipeline-failure.md log event names):
- *   1. game_fetch       — Load today's scheduled games
+ *   1. game_fetch       — Load scheduled games for a date
  *   2. odds_fetch       — Load latest odds for each game
  *   3. news_fetch       — Load recent news_signals per game (T-6h window)
  *   4. worker_call      — POST /predict to Fly.io worker
@@ -13,6 +13,11 @@
  *   6. rationale_call   — Get or generate rationale for Pro/Elite picks
  *   7. db_write         — Batch insert picks to Supabase
  *   8. cache_invalidate — Invalidate Redis picks:today keys
+ *
+ * Multi-date lookahead (added 2026-04-28):
+ *   The pipeline runs for today + LOOKAHEAD_DAYS forward dates. Each date is
+ *   processed independently — a failure on one date does not abort the others.
+ *   Dates with zero scheduled games are skipped without LLM/worker spend.
  *
  * Two-gate visibility (ADR-002 Phase 5):
  *   SHADOW: EV >= 0.04 AND confidence_tier >= 3
@@ -23,13 +28,11 @@
  * Error handling rules (per TASK-010-pre spec):
  *   - Single game /predict failure: log + skip that game, continue
  *   - Rationale failure: log + write pick with rationale_id = null
- *   - DB write failure: log + return 500 (hard failure)
- *   - Redis invalidation failure: log warning, return 200 (stale cache acceptable)
+ *   - DB write failure: log + record per-date error, continue with next date
+ *   - Redis invalidation failure: log warning, continue
  */
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-// feature-builder.ts is deprecated — feature engineering moved to worker/app/features.py
-// import { buildFeatureVector } from './feature-builder.ts';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { callPredict } from './worker-client.ts';
 import { getOrGenerateRationale } from './rationale.ts';
 import { invalidatePicksCache } from './redis.ts';
@@ -39,13 +42,13 @@ import type { GameRow, OddsRow, PickCandidate, PreparedPick } from './types.ts';
 // Thresholds (ADR-002 Phase 5)
 // ---------------------------------------------------------------------------
 
-/** Minimum to store at all — shadow picks for CLV data accumulation. */
 const SHADOW_EV_MIN = 0.04;
 const SHADOW_TIER_MIN = 3;
-
-/** Minimum for user-visible live picks. */
 const LIVE_EV_MIN = 0.08;
 const LIVE_TIER_MIN = 5;
+
+/** Number of days past today to also pipeline. 0 = today only, 7 = today+7. */
+const LOOKAHEAD_DAYS = 7;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,6 +58,20 @@ function todayInET(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
+/**
+ * Returns [today, today+1, …, today+LOOKAHEAD_DAYS] as YYYY-MM-DD strings in ET.
+ * Computed via UTC arithmetic + Intl formatting to dodge DST edge cases.
+ */
+function dateRangeFromToday(lookahead: number): string[] {
+  const out: string[] = [];
+  const base = new Date();
+  for (let i = 0; i <= lookahead; i++) {
+    const d = new Date(base.getTime() + i * 86_400_000);
+    out.push(d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
+  }
+  return out;
+}
+
 function log(event: string, payload: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...payload }));
 }
@@ -62,15 +79,6 @@ function log(event: string, payload: Record<string, unknown> = {}): void {
 function requiredTierFor(confidenceTier: number): 'pro' | 'elite' {
   return confidenceTier >= 5 ? 'elite' : 'pro';
 }
-
-function assignVisibility(ev: number, tier: number): 'shadow' | 'live' {
-  if (ev >= LIVE_EV_MIN && tier >= LIVE_TIER_MIN) return 'live';
-  return 'shadow';
-}
-
-// ---------------------------------------------------------------------------
-// news_signals row (minimal shape needed for feature aggregation)
-// ---------------------------------------------------------------------------
 
 interface NewsSignalRow {
   signal_type: string;
@@ -82,16 +90,25 @@ interface NewsSignalRow {
   } | null;
 }
 
+interface DateResult {
+  date: string;
+  games_analyzed: number;
+  picks_written: number;
+  live: number;
+  shadow: number;
+  skipped?: boolean;
+  reason?: string;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
-// Main handler
+// Top-level handler
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (_req: Request): Promise<Response> => {
   try {
     return await runPipeline();
   } catch (err) {
-    // Top-level catch: should never fire (all stages have inner guards), but
-    // ensures Deno.serve always returns a structured response instead of crashing.
     const msg = err instanceof Error ? err.message : String(err);
     console.error(JSON.stringify({ event: 'pipeline_unhandled_error', error: msg }));
     return new Response(JSON.stringify({ error: 'pipeline_unhandled_error', message: msg }), {
@@ -102,17 +119,92 @@ Deno.serve(async (_req: Request): Promise<Response> => {
 });
 
 async function runPipeline(): Promise<Response> {
-  const today = todayInET();
-  log('pipeline_start', { date: today });
+  const dates = dateRangeFromToday(LOOKAHEAD_DAYS);
+  log('pipeline_start_multi', { dates, lookahead_days: LOOKAHEAD_DAYS });
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
 
-  // ---------------------------------------------------------------------------
-  // Stage 1: Fetch today's scheduled games
-  // ---------------------------------------------------------------------------
+  const byDate: DateResult[] = [];
+  let totalWritten = 0;
+  let totalLive = 0;
+  let totalShadow = 0;
+
+  for (const date of dates) {
+    try {
+      const r = await runPipelineForDate(date, supabase);
+      byDate.push(r);
+      totalWritten += r.picks_written;
+      totalLive += r.live;
+      totalShadow += r.shadow;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log('pipeline_date_error', { date, error: msg });
+      byDate.push({ date, games_analyzed: 0, picks_written: 0, live: 0, shadow: 0, error: msg });
+    }
+  }
+
+  log('pipeline_complete_multi', {
+    dates_processed: byDate.length,
+    total_picks_written: totalWritten,
+    total_live: totalLive,
+    total_shadow: totalShadow,
+  });
+
+  return new Response(
+    JSON.stringify({
+      picks_written: totalWritten,
+      live: totalLive,
+      shadow: totalShadow,
+      by_date: byDate,
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Single-date pipeline (the original logic, parameterized by `date`)
+// ---------------------------------------------------------------------------
+
+async function runPipelineForDate(date: string, supabase: SupabaseClient): Promise<DateResult> {
+  log('pipeline_start', { date });
+
+  // Retry guard: if any pick was inserted for this pick_date within the last
+  // RETRY_GUARD_MIN minutes, treat this as a duplicate cron / manual trigger
+  // and skip. Preserves DIFFERENT-day lead-time observations (which are the
+  // signal we want for /history lead-time grading) while killing same-run
+  // retries (which are pure noise).
+  const RETRY_GUARD_MIN = 10;
+  const cutoffISO = new Date(Date.now() - RETRY_GUARD_MIN * 60_000).toISOString();
+  const { count: recentCount, error: recentErr } = await supabase
+    .from('picks')
+    .select('id', { count: 'exact', head: true })
+    .eq('pick_date', date)
+    .gte('generated_at', cutoffISO);
+
+  if (recentErr) {
+    log('retry_guard_query_failed', { date, error: recentErr.message });
+  } else if ((recentCount ?? 0) > 0) {
+    log('pipeline_skip', {
+      date,
+      reason: 'retry_guard',
+      recent_count: recentCount,
+      window_min: RETRY_GUARD_MIN,
+    });
+    return {
+      date,
+      games_analyzed: 0,
+      picks_written: 0,
+      live: 0,
+      shadow: 0,
+      skipped: true,
+      reason: `retry_guard:${recentCount}_picks_in_last_${RETRY_GUARD_MIN}min`,
+    };
+  }
+
+  // Stage 1
   const gameFetchStart = Date.now();
   const { data: gamesData, error: gamesError } = await supabase
     .from('games')
@@ -125,25 +217,23 @@ async function runPipeline(): Promise<Response> {
       home_team:home_team_id ( id, name, abbreviation ),
       away_team:away_team_id ( id, name, abbreviation )
     `)
-    .eq('game_date', today)
+    .eq('game_date', date)
     .in('status', ['scheduled', 'live']);
 
   if (gamesError) {
-    log('game_fetch', { ok: false, error: gamesError.message, ms: Date.now() - gameFetchStart });
-    return new Response(JSON.stringify({ error: 'game_fetch_failed' }), { status: 500 });
+    log('game_fetch', { ok: false, date, error: gamesError.message, ms: Date.now() - gameFetchStart });
+    return { date, games_analyzed: 0, picks_written: 0, live: 0, shadow: 0, error: gamesError.message };
   }
 
   const games = (gamesData ?? []) as GameRow[];
-  log('game_fetch', { ok: true, count: games.length, date: today, ms: Date.now() - gameFetchStart });
+  log('game_fetch', { ok: true, date, count: games.length, ms: Date.now() - gameFetchStart });
 
   if (games.length === 0) {
-    log('pipeline_complete', { picks_written: 0, reason: 'no_games_today' });
-    return new Response(JSON.stringify({ picks_written: 0 }), { status: 200 });
+    log('pipeline_skip', { date, reason: 'no_games' });
+    return { date, games_analyzed: 0, picks_written: 0, live: 0, shadow: 0, skipped: true, reason: 'no_games' };
   }
 
-  // ---------------------------------------------------------------------------
-  // Stage 2: Fetch latest odds for each game
-  // ---------------------------------------------------------------------------
+  // Stage 2
   const gameIds = games.map((g) => g.id);
   const oddsFetchStart = Date.now();
   const { data: oddsData, error: oddsError } = await supabase
@@ -158,8 +248,7 @@ async function runPipeline(): Promise<Response> {
     .order('snapshotted_at', { ascending: false });
 
   if (oddsError) {
-    log('odds_fetch', { ok: false, error: oddsError.message, ms: Date.now() - oddsFetchStart });
-    // Non-fatal: proceed with empty odds (worker will return no candidates)
+    log('odds_fetch', { ok: false, date, error: oddsError.message, ms: Date.now() - oddsFetchStart });
   }
 
   const allOdds = (oddsData ?? []) as (OddsRow & { game_id: string })[];
@@ -174,18 +263,21 @@ async function runPipeline(): Promise<Response> {
   if (gamesWithoutOdds.length > 0) {
     log('odds_fetch_missing', {
       ok: true,
+      date,
       games_without_odds: gamesWithoutOdds.length,
       game_ids: gamesWithoutOdds,
-      note: 'odds-refresh cron may not have run yet for these games; EV computation will fail at ev_filter',
     });
   }
 
-  log('odds_fetch', { ok: !oddsError, game_count: gamesWithOdds, games_without_odds: gamesWithoutOdds.length, ms: Date.now() - oddsFetchStart });
+  log('odds_fetch', { ok: !oddsError, date, game_count: gamesWithOdds, games_without_odds: gamesWithoutOdds.length, ms: Date.now() - oddsFetchStart });
 
-  // ---------------------------------------------------------------------------
-  // Stage 3: Fetch recent news_signals per game (T-6h window)
-  // Non-fatal — if news pipeline hasn't run, features default to 0.
-  // ---------------------------------------------------------------------------
+  // If no game has any odds, skip — worker would return zero candidates anyway
+  if (gamesWithOdds === 0) {
+    log('pipeline_skip', { date, reason: 'no_odds_for_any_game' });
+    return { date, games_analyzed: games.length, picks_written: 0, live: 0, shadow: 0, skipped: true, reason: 'no_odds' };
+  }
+
+  // Stage 3
   const newsFetchStart = Date.now();
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
   const { data: signalsData, error: signalsError } = await supabase
@@ -195,7 +287,7 @@ async function runPipeline(): Promise<Response> {
     .gte('created_at', sixHoursAgo);
 
   if (signalsError) {
-    log('news_fetch', { ok: false, error: signalsError.message, note: 'news features will default to 0', ms: Date.now() - newsFetchStart });
+    log('news_fetch', { ok: false, date, error: signalsError.message, ms: Date.now() - newsFetchStart });
   }
 
   const signalsByGame: Record<string, NewsSignalRow[]> = {};
@@ -204,41 +296,23 @@ async function runPipeline(): Promise<Response> {
     signalsByGame[row.game_id].push(row);
   }
 
-  const signalGameCount = Object.keys(signalsByGame).length;
   log('news_fetch', {
     ok: !signalsError,
-    games_with_signals: signalGameCount,
+    date,
+    games_with_signals: Object.keys(signalsByGame).length,
     total_signals: (signalsData ?? []).length,
     ms: Date.now() - newsFetchStart,
   });
 
-  // ---------------------------------------------------------------------------
-  // Stage 4: Call /predict for each game
-  //
-  // Feature engineering has moved to the worker (worker/app/features.py).
-  // The worker queries Supabase with its own service-role key, builds the full
-  // 90-feature vector, and runs inference.  The Edge Function sends only
-  // { game_id, markets } — no features dict.
-  //
-  // The odds/news stages above are still logged for diagnostic visibility but
-  // are no longer needed as inputs to the worker call.
-  // ---------------------------------------------------------------------------
+  // Stage 4
   const allCandidates: PickCandidate[] = [];
-
   for (const game of games) {
     const gameOdds = oddsByGame[game.id] ?? [];
     const gameSignals = signalsByGame[game.id] ?? [];
     const workerCallStart = Date.now();
 
-    // Log when a game has no odds in Edge Function — the worker will also log
-    // this when it queries odds from Supabase.  Not a skip condition anymore:
-    // the worker may have fresher odds than the Edge Function fetched above.
     if (gameOdds.length === 0) {
-      log('worker_call_no_odds_in_edge', {
-        ok: true,
-        game_id: game.id,
-        note: 'no odds rows visible to Edge Function; worker will query Supabase directly',
-      });
+      log('worker_call_no_odds_in_edge', { ok: true, date, game_id: game.id });
     }
 
     try {
@@ -246,10 +320,10 @@ async function runPipeline(): Promise<Response> {
         game_id: game.id,
         markets: ['moneyline', 'run_line', 'total'],
       });
-
       allCandidates.push(...candidates);
       log('worker_call', {
         ok: true,
+        date,
         game_id: game.id,
         candidates: candidates.length,
         news_signal_count: gameSignals.length,
@@ -258,6 +332,7 @@ async function runPipeline(): Promise<Response> {
     } catch (err) {
       log('worker_call', {
         ok: false,
+        date,
         game_id: game.id,
         error: err instanceof Error ? err.message : String(err),
         stage: 'predict',
@@ -266,29 +341,16 @@ async function runPipeline(): Promise<Response> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Stage 5: Two-gate EV/tier filter → shadow or live visibility
-  //
-  // SHADOW: EV >= 4% AND tier >= 3 → stored for CLV accumulation, not shown to users
-  // LIVE:   EV >= 8% AND tier >= 5 → user-visible; meets the previously temp gate
-  //
-  // The TEMP comment from the prior implementation is now formalized:
-  // 8%/tier-5 is the live gate; 4%/tier-3 is the shadow gate.
-  // Shadow picks are model feedback data — they cost nothing extra to store.
-  //
-  // Guard: candidates with missing/non-numeric expected_value or confidence_tier
-  // (e.g., from malformed worker response when odds rows were absent) are logged
-  // explicitly rather than silently dropped by the numeric comparison.
-  // ---------------------------------------------------------------------------
+  // Stage 5
   const malformedCandidates = allCandidates.filter(
     (c) => typeof c.expected_value !== 'number' || typeof c.confidence_tier !== 'number'
   );
   if (malformedCandidates.length > 0) {
     log('ev_filter_malformed', {
       ok: false,
+      date,
       count: malformedCandidates.length,
       game_ids: malformedCandidates.map((c) => c.game_id),
-      note: 'candidates missing expected_value or confidence_tier — likely missing odds rows for these games',
     });
   }
 
@@ -308,46 +370,25 @@ async function runPipeline(): Promise<Response> {
 
   log('ev_filter', {
     ok: true,
+    date,
     total: allCandidates.length,
     valid: validCandidates.length,
     malformed: malformedCandidates.length,
     shadow: shadowCandidates.length,
     live: liveCandidates.size,
-    dropped_below_shadow_gate: validCandidates.length - shadowCandidates.length,
-    shadow_ev_min: SHADOW_EV_MIN,
-    shadow_tier_min: SHADOW_TIER_MIN,
-    live_ev_min: LIVE_EV_MIN,
-    live_tier_min: LIVE_TIER_MIN,
   });
 
   if (shadowCandidates.length === 0) {
-    log('pipeline_complete', { picks_written: 0, reason: 'no_qualified_picks' });
-    return new Response(JSON.stringify({ picks_written: 0 }), { status: 200 });
+    log('pipeline_complete', { date, picks_written: 0, reason: 'no_qualified_picks' });
+    return { date, games_analyzed: games.length, picks_written: 0, live: 0, shadow: 0 };
   }
 
-  // ---------------------------------------------------------------------------
-  // Dedup: one pick per (game_id, market) — highest EV wins.
-  //
-  // The worker returns one candidate per (game_id, market, pick_side): both
-  // home and away for moneyline/run_line, both over and under for totals.
-  // Both sides can independently pass the EV gate, producing duplicate picks
-  // for the same game+market.  We keep only the strongest signal per market.
-  //
-  // Tiebreaker order (all rare in practice):
-  //   1. Higher expected_value (primary)
-  //   2. 'live' visibility over 'shadow'
-  //   3. best_line.sportsbook_key === 'draftkings' (arbitrary, stable tiebreaker)
-  // ---------------------------------------------------------------------------
+  // Dedup
   const deduped = new Map<string, PickCandidate>();
-
   for (const candidate of shadowCandidates) {
     const key = `${candidate.game_id}:${candidate.market}`;
     const existing = deduped.get(key);
-
-    if (!existing) {
-      deduped.set(key, candidate);
-      continue;
-    }
+    if (!existing) { deduped.set(key, candidate); continue; }
 
     const existingIsLive = liveCandidates.has(`${existing.game_id}:${existing.market}:${existing.pick_side}`);
     const incomingIsLive = liveCandidates.has(`${candidate.game_id}:${candidate.market}:${candidate.pick_side}`);
@@ -359,28 +400,16 @@ async function runPipeline(): Promise<Response> {
       if (incomingIsLive && !existingIsLive) {
         prefer = true;
       } else if (incomingIsLive === existingIsLive) {
-        // Stable tiebreaker: prefer DraftKings
         prefer = candidate.best_line.sportsbook_key === 'draftkings' &&
                  existing.best_line.sportsbook_key !== 'draftkings';
       }
     }
-
-    if (prefer) {
-      deduped.set(key, candidate);
-    }
+    if (prefer) deduped.set(key, candidate);
   }
-
   const dedupedCandidates = Array.from(deduped.values());
-  log('ev_filter_deduped', {
-    input_count: shadowCandidates.length,
-    output_count: dedupedCandidates.length,
-  });
+  log('ev_filter_deduped', { date, input_count: shadowCandidates.length, output_count: dedupedCandidates.length });
 
-  // ---------------------------------------------------------------------------
-  // Stage 6: Rationale generation for LIVE picks only
-  // Shadow picks skip rationale to save LLM cost.
-  // ---------------------------------------------------------------------------
-
+  // Stage 6 — game_context for rationale
   // deno-lint-ignore no-explicit-any
   const gameContextByGameId: Record<string, any> = {};
   for (const game of gamesData ?? []) {
@@ -391,34 +420,18 @@ async function runPipeline(): Promise<Response> {
       away_team: any;
     };
     gameContextByGameId[g.id] = {
-      home_team: {
-        name: g.home_team?.name ?? 'Home',
-        abbreviation: g.home_team?.abbreviation ?? 'HM',
-        record: '0-0',
-      },
-      away_team: {
-        name: g.away_team?.name ?? 'Away',
-        abbreviation: g.away_team?.abbreviation ?? 'AW',
-        record: '0-0',
-      },
+      home_team: { name: g.home_team?.name ?? 'Home', abbreviation: g.home_team?.abbreviation ?? 'HM', record: '0-0' },
+      away_team: { name: g.away_team?.name ?? 'Away', abbreviation: g.away_team?.abbreviation ?? 'AW', record: '0-0' },
       game_time_local: g.game_time_utc
         ? new Date(g.game_time_utc).toLocaleString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            timeZone: 'America/New_York',
-            timeZoneName: 'short',
+            hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', timeZoneName: 'short',
           })
         : 'TBD',
       venue: g.venue_name ?? 'Unknown Venue',
       probable_home_pitcher: null,
       probable_away_pitcher: null,
       weather: g.weather_condition
-        ? {
-            condition: g.weather_condition,
-            temp_f: g.weather_temp_f ?? 72,
-            wind_mph: g.weather_wind_mph ?? 0,
-            wind_dir: g.weather_wind_dir ?? 'N',
-          }
+        ? { condition: g.weather_condition, temp_f: g.weather_temp_f ?? 72, wind_mph: g.weather_wind_mph ?? 0, wind_dir: g.weather_wind_dir ?? 'N' }
         : null,
     };
   }
@@ -428,87 +441,54 @@ async function runPipeline(): Promise<Response> {
   }
 
   const preparedPicks: PreparedPickWithVisibility[] = [];
-
   for (const candidate of dedupedCandidates) {
     const candidateKey = `${candidate.game_id}:${candidate.market}:${candidate.pick_side}`;
     const visibility = liveCandidates.has(candidateKey) ? 'live' : 'shadow';
     const requiredTier = requiredTierFor(candidate.confidence_tier);
     let rationaleResult = { rationale_cache_id: null as string | null, cache_hit: false };
 
-    // Only call LLM for live picks — shadow picks accumulate for free.
     if (visibility === 'live') {
       try {
         const gameContext = gameContextByGameId[candidate.game_id];
         if (gameContext) {
-          rationaleResult = await getOrGenerateRationale(
-            candidate,
-            gameContext,
-            requiredTier,
-            supabase
-          );
+          rationaleResult = await getOrGenerateRationale(candidate, gameContext, requiredTier, supabase);
         }
-        log('rationale_call', {
-          ok: true,
-          game_id: candidate.game_id,
-          tier: requiredTier,
-          cache_hit: rationaleResult.cache_hit,
-        });
+        log('rationale_call', { ok: true, date, game_id: candidate.game_id, tier: requiredTier, cache_hit: rationaleResult.cache_hit });
       } catch (err) {
-        log('rationale_call', {
-          ok: false,
-          game_id: candidate.game_id,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        log('rationale_call', { ok: false, date, game_id: candidate.game_id, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
-    preparedPicks.push({
-      candidate,
-      required_tier: requiredTier,
-      rationale_cache_id: rationaleResult.rationale_cache_id,
-      visibility,
-    });
+    preparedPicks.push({ candidate, required_tier: requiredTier, rationale_cache_id: rationaleResult.rationale_cache_id, visibility });
   }
 
-  // ---------------------------------------------------------------------------
-  // Stage 7: Batch insert picks to DB
-  // ---------------------------------------------------------------------------
+  // Stage 7 — DB write
   const sbFetchStart = Date.now();
   const { data: sbData, error: sbError } = await supabase.from('sportsbooks').select('id, key');
   if (sbError) {
-    log('db_write_sportsbooks_fetch', { ok: false, error: sbError.message, ms: Date.now() - sbFetchStart });
-    // Non-fatal: best_line_book_id will be null for all picks — acceptable degradation.
+    log('db_write_sportsbooks_fetch', { ok: false, date, error: sbError.message, ms: Date.now() - sbFetchStart });
   } else {
-    log('db_write_sportsbooks_fetch', { ok: true, count: sbData?.length ?? 0, ms: Date.now() - sbFetchStart });
+    log('db_write_sportsbooks_fetch', { ok: true, date, count: sbData?.length ?? 0, ms: Date.now() - sbFetchStart });
   }
   const sbByKey: Record<string, string> = {};
-  for (const sb of sbData ?? []) {
-    sbByKey[sb.key] = sb.id;
-  }
+  for (const sb of sbData ?? []) sbByKey[sb.key] = sb.id;
 
   const dbWriteStart = Date.now();
 
-  // Defensive: the ev_filter stage drops tier < SHADOW_TIER_MIN before dedup,
-  // so nothing with tier 1 or 2 should reach this write path. Log (don't throw)
-  // if the invariant breaks — an overeager assertion would block all picks.
-  // UI label vocabulary in confidence-badge.tsx + slate-filters.tsx is aligned
-  // to this tier floor; a leak here would manifest as a tier-1/2 badge on
-  // /picks/today.
   const belowGate = preparedPicks.filter((p) => p.candidate.confidence_tier < SHADOW_TIER_MIN);
   if (belowGate.length > 0) {
     log('ev_filter_invariant_violation', {
       ok: false,
+      date,
       count: belowGate.length,
       game_ids: belowGate.map((p) => p.candidate.game_id),
       tiers: belowGate.map((p) => p.candidate.confidence_tier),
-      shadow_tier_min: SHADOW_TIER_MIN,
-      note: 'candidate passed dedup with tier < SHADOW_TIER_MIN; UI tier vocabulary assumes tier >= 3',
     });
   }
 
   const insertRows = preparedPicks.map(({ candidate, required_tier, rationale_cache_id, visibility }) => ({
     game_id: candidate.game_id,
-    pick_date: today,
+    pick_date: date,
     market: candidate.market,
     pick_side: candidate.pick_side,
     model_probability: candidate.model_probability,
@@ -522,7 +502,6 @@ async function runPipeline(): Promise<Response> {
     result: 'pending',
     generated_at: candidate.generated_at,
     visibility,
-    // ADR-002 columns — null until v5 delta model is live (v2 artifacts don't produce these)
     market_novig_prior: null,
     model_delta: null,
     news_signals_applied: false,
@@ -531,42 +510,34 @@ async function runPipeline(): Promise<Response> {
   const { error: insertError } = await supabase.from('picks').insert(insertRows);
 
   if (insertError) {
-    log('db_write', { ok: false, error: insertError.message, count: insertRows.length, ms: Date.now() - dbWriteStart });
-    return new Response(JSON.stringify({ error: 'db_write_failed' }), { status: 500 });
+    log('db_write', { ok: false, date, error: insertError.message, count: insertRows.length, ms: Date.now() - dbWriteStart });
+    return { date, games_analyzed: games.length, picks_written: 0, live: 0, shadow: 0, error: insertError.message };
   }
 
   const liveCount = preparedPicks.filter((p) => p.visibility === 'live').length;
   const shadowCount = preparedPicks.filter((p) => p.visibility === 'shadow').length;
-  log('db_write', { ok: true, count: insertRows.length, live: liveCount, shadow: shadowCount, date: today, ms: Date.now() - dbWriteStart });
+  log('db_write', { ok: true, date, count: insertRows.length, live: liveCount, shadow: shadowCount, ms: Date.now() - dbWriteStart });
 
-  // ---------------------------------------------------------------------------
-  // Stage 8: Invalidate Redis cache (only needed when live picks were written)
-  // ---------------------------------------------------------------------------
+  // Stage 8 — invalidate cache
   if (liveCount > 0) {
     try {
-      await invalidatePicksCache(today);
-      log('cache_invalidate', { ok: true, date: today });
+      await invalidatePicksCache(date);
+      log('cache_invalidate', { ok: true, date });
     } catch (err) {
       log('cache_invalidate', {
         ok: false,
-        date: today,
+        date,
         error: err instanceof Error ? err.message : String(err),
-        warning: 'picks cache may be stale until TTL expires',
       });
     }
   } else {
-    log('cache_invalidate', { ok: true, skipped: true, reason: 'no live picks written' });
+    log('cache_invalidate', { ok: true, date, skipped: true, reason: 'no live picks written' });
   }
 
-  log('pipeline_complete', {
-    picks_written: preparedPicks.length,
-    live: liveCount,
-    shadow: shadowCount,
-    date: today,
-  });
+  log('pipeline_complete', { date, picks_written: preparedPicks.length, live: liveCount, shadow: shadowCount });
 
-  return new Response(
-    JSON.stringify({ picks_written: preparedPicks.length, live: liveCount, shadow: shadowCount }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
-  );
+  return { date, games_analyzed: games.length, picks_written: preparedPicks.length, live: liveCount, shadow: shadowCount };
 }
+
+// Re-export for any external imports (e.g. tests)
+export { todayInET };

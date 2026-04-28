@@ -87,11 +87,17 @@ export interface PickResponse {
   /** ISO timestamp of the pinned odds snapshot this pick was priced against.
    *  Lets the card render "Odds updated 12m ago" without re-querying. */
   odds_snapshot_at?: string;
+  /** ISO timestamp when the pipeline generated THIS pick. Used by the slate
+   *  card to compute lead time = (game_time_utc − generated_at). */
+  generated_at?: string;
 }
 
 export interface PicksMeta {
   pipeline_ran: boolean;
   games_analyzed: number;
+  /** Total games on the schedule for this pick_date — independent of pipeline state.
+   *  Used to distinguish "no games today" from "games exist but pipeline hasn't run." */
+  games_scheduled_count: number;
   below_threshold: number;
   ev_threshold: number;
   confidence_threshold: number;
@@ -177,6 +183,7 @@ function maskPick(
     result: row.result,
     odds_stale: oddsStale,
     ...(oddsSnapshotAt ? { odds_snapshot_at: oddsSnapshotAt } : {}),
+    ...(row.generated_at ? { generated_at: row.generated_at } : {}),
   };
 
   // Line values (total / run-line spread) are the public line numbers — always
@@ -305,7 +312,29 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
 
   // Supabase v2's strict join-type inference doesn't resolve aliased FK joins cleanly;
   // cast to the known PickRow shape which matches the select() exactly.
-  const picks = picksRaw as unknown as PickRow[] | null;
+  const picksAll = picksRaw as unknown as PickRow[] | null;
+
+  // Slate-display dedup: when the multi-day pipeline writes picks for the same
+  // (game_id, market, pick_date) on multiple cron runs (D-3 noon, D-2 noon,
+  // D-1 noon, D-0 noon — each is a separate lead-time observation), the user
+  // viewing this single date sees only the FRESHEST pick per (game, market).
+  // The other rows still exist for /history lead-time grading and per-pick ROI
+  // math; they just don't render on the slate.
+  const picks = (() => {
+    if (!picksAll || picksAll.length === 0) return picksAll;
+    const freshest = new Map<string, PickRow>();
+    for (const p of picksAll) {
+      const gameId = p.games?.id ?? '';
+      // Key on (game, market) only — if the model flipped sides between cron
+      // runs (e.g. NYY at D-3, BOS at D-0), surface only the freshest call.
+      const key = `${gameId}::${p.market}`;
+      const existing = freshest.get(key);
+      const pTime = p.generated_at ? new Date(p.generated_at).getTime() : 0;
+      const eTime = existing?.generated_at ? new Date(existing.generated_at).getTime() : 0;
+      if (!existing || pTime > eTime) freshest.set(key, p);
+    }
+    return Array.from(freshest.values());
+  })();
 
   // Odds rows fetched for ALL tiers so we can surface the line number
   // (O/U total, RL spread) on the pick card. The `line_snapshots` array
@@ -468,6 +497,7 @@ export async function loadPicksSlate(opts: LoadPicksSlateOptions): Promise<Picks
   const meta: PicksMeta = {
     pipeline_ran: pipelineRan,
     games_analyzed: gamesAnalyzed,
+    games_scheduled_count: gamesAnalyzed,
     below_threshold: belowThreshold,
     ev_threshold: 0.08,
     confidence_threshold: 5,

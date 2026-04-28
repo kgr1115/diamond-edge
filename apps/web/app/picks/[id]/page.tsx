@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
+import Link from 'next/link';
 import { createServerClient } from '@supabase/ssr';
 import {
   ResponsibleGamblingBanner,
@@ -9,6 +10,7 @@ import { ConfidenceBadge } from '@/components/picks/confidence-badge';
 import { UpgradeCta } from '@/components/billing/upgrade-cta';
 import { PickJournal } from '@/components/picks/pick-journal';
 import { PickOutcomePanel } from '@/components/picks/pick-outcome-panel';
+import { createServiceRoleClient } from '@/lib/supabase/server';
 import type { Database } from '@/lib/types/database';
 
 export const dynamic = 'force-dynamic';
@@ -103,6 +105,91 @@ interface JournalAndGeo {
   geoState: string | null;
 }
 
+interface BucketStats {
+  picks: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  win_rate: number;
+  roi_pct: number;
+}
+
+interface BucketBreakdown {
+  market: BucketStats;
+  tier: BucketStats;
+}
+
+const MARKET_LABELS: Record<string, string> = {
+  moneyline: 'Moneyline',
+  run_line: 'Run Line',
+  total: 'Totals',
+  prop: 'Props',
+  parlay: 'Parlay',
+  future: 'Futures',
+};
+
+function unitProfit(price: number | null): number {
+  const p = price ?? -110;
+  return p >= 100 ? p / 100 : 100 / Math.abs(p);
+}
+
+function summarize(rows: Array<{ result: string | null; best_line_price: number | null }>): BucketStats {
+  let wins = 0, losses = 0, pushes = 0, returnUnits = 0, risked = 0;
+  for (const r of rows) {
+    if (r.result === 'win') {
+      wins++;
+      returnUnits += unitProfit(r.best_line_price);
+      risked++;
+    } else if (r.result === 'loss') {
+      losses++;
+      returnUnits -= 1;
+      risked++;
+    } else if (r.result === 'push') {
+      pushes++;
+    }
+  }
+  const graded = wins + losses;
+  return {
+    picks: rows.length,
+    wins,
+    losses,
+    pushes,
+    win_rate: graded > 0 ? wins / graded : 0,
+    roi_pct: risked > 0 ? Math.round((returnUnits / risked) * 10000) / 100 : 0,
+  };
+}
+
+async function fetchBucketBreakdown(
+  pickId: string,
+  market: string,
+  tier: number,
+): Promise<BucketBreakdown | null> {
+  try {
+    const service = createServiceRoleClient();
+    const [{ data: marketRows }, { data: tierRows }] = await Promise.all([
+      service
+        .from('picks')
+        .select('result, best_line_price')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .eq('market', market as any)
+        .neq('id', pickId)
+        .limit(5000),
+      service
+        .from('picks')
+        .select('result, best_line_price')
+        .eq('confidence_tier', tier)
+        .neq('id', pickId)
+        .limit(5000),
+    ]);
+    return {
+      market: summarize((marketRows ?? []) as Array<{ result: string | null; best_line_price: number | null }>),
+      tier: summarize((tierRows ?? []) as Array<{ result: string | null; best_line_price: number | null }>),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchJournalData(pickId: string): Promise<JournalAndGeo> {
   const cookieStore = await cookies();
   const supabase = createServerClient<Database>(
@@ -157,6 +244,7 @@ export default async function PickDetailPage({ params }: PageProps) {
   }
 
   const { pick } = data;
+  const bucket = await fetchBucketBreakdown(pick.id, pick.market, pick.confidence_tier);
   const { journal, geoState } = journalAndGeo;
   const sidebarHelpline = resolveHelpline(geoState);
   const isGraded = pick.result !== 'pending' && pick.outcome != null;
@@ -269,6 +357,52 @@ export default async function PickDetailPage({ params }: PageProps) {
               Generated {new Date(pick.generated_at).toLocaleString()}
             </p>
           </div>
+
+          {/* Bucket performance — how the rest of this market/tier has done */}
+          {bucket && (bucket.market.picks > 0 || bucket.tier.picks > 0) && (
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                Historical performance — same market &amp; tier
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase mb-1">
+                    {MARKET_LABELS[pick.market] ?? pick.market}{' '}
+                    <Link
+                      href={`/history?market=${encodeURIComponent(pick.market)}`}
+                      className="text-blue-400 hover:underline normal-case"
+                    >
+                      view
+                    </Link>
+                  </p>
+                  <p className="text-sm text-gray-200">
+                    {bucket.market.picks} picks · {bucket.market.wins}–{bucket.market.losses}
+                    {bucket.market.pushes > 0 ? `–${bucket.market.pushes}` : ''} ·{' '}
+                    {(bucket.market.win_rate * 100).toFixed(0)}% W ·{' '}
+                    <span className={bucket.market.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {bucket.market.roi_pct >= 0 ? '+' : ''}{bucket.market.roi_pct.toFixed(1)}% ROI
+                    </span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 uppercase mb-1">
+                    Tier {pick.confidence_tier}
+                  </p>
+                  <p className="text-sm text-gray-200">
+                    {bucket.tier.picks} picks · {bucket.tier.wins}–{bucket.tier.losses}
+                    {bucket.tier.pushes > 0 ? `–${bucket.tier.pushes}` : ''} ·{' '}
+                    {(bucket.tier.win_rate * 100).toFixed(0)}% W ·{' '}
+                    <span className={bucket.tier.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {bucket.tier.roi_pct >= 0 ? '+' : ''}{bucket.tier.roi_pct.toFixed(1)}% ROI
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-600 mt-3">
+                Excludes this pick. Past performance does not predict future results.
+              </p>
+            </div>
+          )}
 
           {/* AI Rationale */}
           <div className={`bg-gray-900 border border-gray-800 rounded-lg p-5 ${isGraded ? 'opacity-75' : ''}`}>
