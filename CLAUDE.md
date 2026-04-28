@@ -91,6 +91,24 @@ Skills: `pick-research`, `pick-scope-gate-review`, `pick-implement`, `pick-test`
 
 All pipeline agents live in `.claude/agents/`; skills in `.claude/skills/<name>/SKILL.md`.
 
+### Pipeline auto-chain rule (locked 2026-04-28)
+
+When a pipeline stage completes successfully, **auto-invoke the next stage**. Do not stop and ask the user "want me to kick off the next stage?" — that adds friction without adding decision value, since the next stage is deterministic from the pipeline definition.
+
+- `research → scope-gate`: as soon as the research doc is written, invoke `scope-gate-review` (or `pick-scope-gate-review`) on it.
+- `scope-gate → implement`: if any proposal is APPROVED, invoke `implement-change` (or `pick-implement`) immediately on the approved set.
+- `implement → test`: as soon as the implementer hands off, invoke `test-change` (or `pick-test`).
+- `test → publish` (PASS): on PASS, invoke `publish-change` (or `pick-publish`).
+- `test → debug` (FAIL): on FAIL, invoke `debug` (or `pick-debug`); after fix, re-test.
+
+**Pause points** (where the chain stops and waits for the user):
+- All proposals DENIED at scope-gate (no approved work to implement).
+- Tester returns FAIL twice on the same change (escalate to user, don't loop forever).
+- Pre-deploy steps that require explicit user invocation per CLAUDE.md (`/deploy-edge`, `/deploy-worker`).
+- User explicitly requests review / pause between stages.
+
+This rule applies to BOTH the system-improvement pipeline and the pick-improvement pipeline.
+
 ## User
 
 Kyle Rauch (kyle.g.rauch@gmail.com) — founder, product owner, likely primary engineer. Prefers skimmable output (headers, bullets, no prose walls). On escalation, always bring **options + a recommendation**, never an open question. Senior-level technical collaborator; no need to explain basic concepts.

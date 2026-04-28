@@ -10,6 +10,7 @@ const QUERY_SCHEMA = z.object({
   market: z.enum(['moneyline', 'run_line', 'total', 'prop', 'parlay', 'future']).optional(),
   result: z.enum(['win', 'loss', 'push', 'void', 'pending']).optional(),
   visibility: z.enum(['live', 'shadow']).optional(),
+  confidence_tier: z.coerce.number().int().min(1).max(5).optional(),
   date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
@@ -23,6 +24,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     market: searchParams.get('market') ?? undefined,
     result: searchParams.get('result') ?? undefined,
     visibility: searchParams.get('visibility') ?? undefined,
+    confidence_tier: searchParams.get('confidence_tier') ?? undefined,
     date_from: searchParams.get('date_from') ?? undefined,
     date_to: searchParams.get('date_to') ?? undefined,
   });
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const { page, per_page, market, result, date_from, date_to } = parsed.data;
+  const { page, per_page, market, result, confidence_tier, date_from, date_to } = parsed.data;
   const offset = (page - 1) * per_page;
 
   const service = createServiceRoleClient();
@@ -43,8 +45,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .from('picks')
     .select(
       `id, pick_date, market, pick_side, confidence_tier, result, best_line_price,
+       generated_at, best_line_book_id,
        games!inner (
-         status, home_score, away_score,
+         id, status, home_score, away_score,
          home_team:home_team_id ( name ),
          away_team:away_team_id ( name )
        )`,
@@ -55,6 +58,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (market) query = query.eq('market', market);
   if (result) query = query.eq('result', result);
+  if (confidence_tier) query = query.eq('confidence_tier', confidence_tier);
   if (date_from) query = query.gte('pick_date', date_from);
   if (date_to) query = query.lte('pick_date', date_to);
 
@@ -79,6 +83,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (market) statsQuery = statsQuery.eq('market', market);
   if (result) statsQuery = statsQuery.eq('result', result);
+  if (confidence_tier) statsQuery = statsQuery.eq('confidence_tier', confidence_tier);
   if (date_from) statsQuery = statsQuery.gte('pick_date', date_from);
   if (date_to) statsQuery = statsQuery.lte('pick_date', date_to);
 
@@ -269,6 +274,56 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ? Math.round((totalReturn / totalUnitsRisked) * 10000) / 100
     : 0;
 
+  // Per-pick line lookup (total_line for totals, run_line_spread for run-line picks).
+  // Mirrors the per-pick odds-pinning logic in lib/picks/load-slate.ts: match the
+  // pick's best_line_book_id + newest snapshot at-or-before generated_at, falling
+  // back to most-recent-pre-pick row of any book, then to most-recent overall.
+  const lineByPickId = new Map<string, { total_line: number | null; run_line_spread: number | null }>();
+  if (picks.length > 0) {
+    const gameIds = [...new Set(picks.map((p) => p.games?.id).filter(Boolean))] as string[];
+    if (gameIds.length > 0) {
+      const { data: oddsRows } = await service
+        .from('odds')
+        .select('game_id, sportsbook_id, market, total_line, run_line_spread, snapshotted_at')
+        .in('game_id', gameIds)
+        .in('market', ['total', 'run_line'])
+        .order('snapshotted_at', { ascending: false });
+      type OddsRow = {
+        game_id: string;
+        sportsbook_id: string | null;
+        market: string;
+        total_line: number | null;
+        run_line_spread: number | null;
+        snapshotted_at: string;
+      };
+      const byGM = new Map<string, OddsRow[]>();
+      for (const r of (oddsRows ?? []) as OddsRow[]) {
+        const k = `${r.game_id}:${r.market}`;
+        if (!byGM.has(k)) byGM.set(k, []);
+        byGM.get(k)!.push(r);
+      }
+      for (const p of picks) {
+        const gid = p.games?.id;
+        if (!gid) continue;
+        if (p.market !== 'total' && p.market !== 'run_line') continue;
+        const bucket = byGM.get(`${gid}:${p.market}`) ?? [];
+        if (bucket.length === 0) continue;
+
+        const generatedMs = p.generated_at ? new Date(p.generated_at).getTime() : NaN;
+        const cutoff = Number.isFinite(generatedMs) ? generatedMs + 5 * 60_000 : Infinity;
+        const eligible = (r: OddsRow) => new Date(r.snapshotted_at).getTime() <= cutoff;
+        const sameBook = p.best_line_book_id
+          ? bucket.find((r) => r.sportsbook_id === p.best_line_book_id && eligible(r))
+          : undefined;
+        const matched = sameBook ?? bucket.find(eligible) ?? bucket[0];
+        lineByPickId.set(p.id, {
+          total_line: matched.total_line,
+          run_line_spread: matched.run_line_spread,
+        });
+      }
+    }
+  }
+
   const shapedPicks = picks.map((p) => {
     const home = p.games?.home_score;
     const away = p.games?.away_score;
@@ -276,6 +331,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       typeof home === 'number' && typeof away === 'number'
         ? { home, away, total: home + away, runline: home - away }
         : null;
+    const line = lineByPickId.get(p.id);
+    let runLineSpread: number | null = null;
+    if (p.market === 'run_line' && line && line.run_line_spread !== null) {
+      // odds.run_line_spread is stored from home's perspective; flip for away
+      // picks so the displayed value matches the side the pick actually took.
+      runLineSpread = p.pick_side === 'away' ? -line.run_line_spread : line.run_line_spread;
+    }
     return {
       id: p.id,
       pick_date: p.pick_date,
@@ -289,6 +351,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       result: p.result,
       best_line_price: p.best_line_price,
       final_score: final,
+      total_line: p.market === 'total' ? line?.total_line ?? null : null,
+      run_line_spread: runLineSpread,
     };
   });
 
