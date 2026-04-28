@@ -47,6 +47,21 @@ const SHADOW_TIER_MIN = 3;
 const LIVE_EV_MIN = 0.08;
 const LIVE_TIER_MIN = 5;
 
+/**
+ * Per-market visibility blocklist — picks in these markets are gated to
+ * `visibility = 'shadow'` regardless of EV/tier. See
+ * docs/ml/tier-calibration.md (Layer 2) and
+ * docs/improvement-pipeline/pick-scope-gate-2026-04-28.md Proposal 3.
+ *
+ * AUTO-REVERT TRIGGER: remove a market from this set when the next monthly
+ * retrain produces a candidate where the market's 60-day backtest log-loss
+ * improves by ≥10% AND the market's shadow-run win rate hits 50% on N≥30.
+ *
+ * 2026-04-28: moneyline added — predicted 50–55% prob band actuals 16.7%
+ * on N=12 (33pp gap, far outside variance bounds; the model is broken on ML).
+ */
+const LIVE_MARKET_BLOCKLIST: ReadonlySet<string> = new Set(['moneyline']);
+
 /** Number of days past today to also pipeline. 0 = today only, 7 = today+7. */
 const LOOKAHEAD_DAYS = 7;
 
@@ -362,11 +377,24 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
     (c) => c.expected_value >= SHADOW_EV_MIN && c.confidence_tier >= SHADOW_TIER_MIN
   );
 
+  // LIVE eligibility = EV + tier gate AND market not in blocklist.
+  // Blocked markets land as shadow regardless of EV/tier — see
+  // LIVE_MARKET_BLOCKLIST docstring above.
   const liveCandidates = new Set(
     shadowCandidates
-      .filter((c) => c.expected_value >= LIVE_EV_MIN && c.confidence_tier >= LIVE_TIER_MIN)
+      .filter((c) =>
+        c.expected_value >= LIVE_EV_MIN &&
+        c.confidence_tier >= LIVE_TIER_MIN &&
+        !LIVE_MARKET_BLOCKLIST.has(c.market)
+      )
       .map((c) => `${c.game_id}:${c.market}:${c.pick_side}`)
   );
+
+  const blockedFromLive = shadowCandidates.filter((c) =>
+    c.expected_value >= LIVE_EV_MIN &&
+    c.confidence_tier >= LIVE_TIER_MIN &&
+    LIVE_MARKET_BLOCKLIST.has(c.market)
+  ).length;
 
   log('ev_filter', {
     ok: true,
@@ -376,6 +404,8 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
     malformed: malformedCandidates.length,
     shadow: shadowCandidates.length,
     live: liveCandidates.size,
+    live_blocked_by_market: blockedFromLive,
+    market_blocklist: Array.from(LIVE_MARKET_BLOCKLIST),
   });
 
   if (shadowCandidates.length === 0) {

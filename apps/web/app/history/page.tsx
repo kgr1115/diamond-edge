@@ -1,8 +1,13 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { HistoryFilters } from '@/components/history/history-filters';
 import { LeadTimeGrid } from '@/components/history/lead-time-grid';
 import { SlateNav } from '@/components/picks/slate-nav';
+
+/** Sample-size minimum before per-tier metrics display. Mirrors the lead-time
+ *  grid's threshold so analytics surfaces are consistent. */
+const TIER_SAMPLE_MIN = 30;
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +41,8 @@ interface HistoryResponse {
     result: string;
     best_line_price: number | null;
     final_score: { home: number; away: number; total: number; runline: number } | null;
+    total_line: number | null;
+    run_line_spread: number | null;
   }>;
   pagination: { page: number; per_page: number; total: number; total_pages: number };
 }
@@ -43,6 +50,7 @@ interface HistoryResponse {
 interface FilterState {
   market: string;
   result: string;
+  confidence_tier: string;
   date_from: string;
   date_to: string;
   page: number;
@@ -50,12 +58,20 @@ interface FilterState {
 
 async function fetchHistory(filters: FilterState): Promise<HistoryResponse | null> {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+    // Self-referencing fetch — derive the origin from the inbound request so
+    // dev (localhost:3001) and prod (www.diamond-edge.co) both hit their own
+    // /api/history. NEXT_PUBLIC_APP_URL is unreliable for this — it can point
+    // at a stale Vercel preview and cause filtered picks to fall back to prod.
+    const h = await headers();
+    const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
+    const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
+    const baseUrl = `${proto}://${host}`;
     const params = new URLSearchParams();
     params.set('page', String(filters.page));
     params.set('per_page', '50');
     if (filters.market) params.set('market', filters.market);
     if (filters.result) params.set('result', filters.result);
+    if (filters.confidence_tier) params.set('confidence_tier', filters.confidence_tier);
     if (filters.date_from) params.set('date_from', filters.date_from);
     if (filters.date_to) params.set('date_to', filters.date_to);
 
@@ -90,7 +106,7 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
   }
 
   const { stats } = data;
-  const hasFilter = filters.market || filters.result || filters.date_from || filters.date_to;
+  const hasFilter = filters.market || filters.result || filters.confidence_tier || filters.date_from || filters.date_to;
 
   return (
     <>
@@ -137,25 +153,46 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
         </div>
       )}
 
-      {/* Confidence-tier breakdown */}
+      {/* Confidence-tier breakdown — gated on N≥30 graded outcomes per tier
+          to mirror the lead-time grid's honesty-when-noisy pattern (see
+          docs/improvement-pipeline/pick-scope-gate-2026-04-28.md Proposal 9). */}
       {Object.keys(stats.by_confidence).length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-6">
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-3">By Confidence Tier</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {Object.entries(stats.by_confidence)
               .sort(([a], [b]) => Number(b) - Number(a))
-              .map(([tier, s]) => (
-                <div key={tier}>
-                  <p className="text-xs text-gray-500 uppercase">Tier {tier}</p>
-                  <p className="text-sm text-gray-200">
-                    {s.picks} picks · {s.wins}–{s.losses}
-                    {s.pushes > 0 ? `–${s.pushes}` : ''} · {(s.win_rate * 100).toFixed(0)}% W ·{' '}
-                    <span className={s.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                      {s.roi_pct >= 0 ? '+' : ''}{s.roi_pct.toFixed(1)}% ROI
-                    </span>
-                  </p>
-                </div>
-              ))}
+              .map(([tier, s]) => {
+                const graded = s.wins + s.losses;
+                const hasMinSample = graded >= TIER_SAMPLE_MIN;
+                return (
+                  <div key={tier}>
+                    <p className="text-xs text-gray-500 uppercase">Tier {tier}</p>
+                    {hasMinSample ? (
+                      <p className="text-sm text-gray-200">
+                        {s.picks} picks · {s.wins}–{s.losses}
+                        {s.pushes > 0 ? `–${s.pushes}` : ''} · {(s.win_rate * 100).toFixed(0)}% W ·{' '}
+                        <span className={s.roi_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                          {s.roi_pct >= 0 ? '+' : ''}{s.roi_pct.toFixed(1)}% ROI
+                        </span>
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-xs text-gray-500">
+                          [N={graded}/{TIER_SAMPLE_MIN}]
+                        </p>
+                        <div className="mt-1 h-1 bg-gray-800 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-gray-600"
+                            style={{ width: `${Math.min(100, Math.round((graded / TIER_SAMPLE_MIN) * 100))}%` }}
+                            aria-label={`${graded} of ${TIER_SAMPLE_MIN} graded outcomes`}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}
@@ -179,6 +216,7 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
                 <th className="py-2 pr-4">Matchup</th>
                 <th className="py-2 pr-4">Market</th>
                 <th className="py-2 pr-4">Pick</th>
+                <th className="py-2 pr-4">Line</th>
                 <th className="py-2 pr-4">Confidence</th>
                 <th className="py-2 pr-4">Odds</th>
                 <th className="py-2 pr-4">Final</th>
@@ -200,6 +238,13 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
                     >
                       {pick.pick_side}
                     </Link>
+                  </td>
+                  <td className="py-3 pr-4 font-mono text-amber-300 text-xs whitespace-nowrap">
+                    {pick.market === 'total' && pick.total_line != null
+                      ? pick.total_line.toFixed(1)
+                      : pick.market === 'run_line' && pick.run_line_spread != null
+                        ? (pick.run_line_spread >= 0 ? `+${pick.run_line_spread}` : `${pick.run_line_spread}`)
+                        : <span className="text-gray-700">—</span>}
                   </td>
                   <td className="py-3 pr-4 text-gray-400 text-xs">Tier {pick.confidence_tier}</td>
                   <td className="py-3 pr-4 font-mono text-gray-300 text-xs">
@@ -266,6 +311,7 @@ function buildPageHref(filters: FilterState, page: number): string {
   params.set('page', String(page));
   if (filters.market) params.set('market', filters.market);
   if (filters.result) params.set('result', filters.result);
+  if (filters.confidence_tier) params.set('confidence_tier', filters.confidence_tier);
   if (filters.date_from) params.set('date_from', filters.date_from);
   if (filters.date_to) params.set('date_to', filters.date_to);
   return `/history?${params.toString()}`;
@@ -276,6 +322,7 @@ function buildFilterHref(filters: FilterState, overrides: Partial<FilterState>):
   const params = new URLSearchParams();
   if (next.market) params.set('market', next.market);
   if (next.result) params.set('result', next.result);
+  if (next.confidence_tier) params.set('confidence_tier', next.confidence_tier);
   if (next.date_from) params.set('date_from', next.date_from);
   if (next.date_to) params.set('date_to', next.date_to);
   const qs = params.toString();
@@ -299,6 +346,7 @@ interface PageProps {
     page?: string;
     market?: string;
     result?: string;
+    confidence_tier?: string;
     date_from?: string;
     date_to?: string;
   }>;
@@ -310,6 +358,7 @@ export default async function HistoryPage({ searchParams }: PageProps) {
     page: Math.max(1, parseInt(params.page ?? '1', 10)),
     market: params.market ?? '',
     result: params.result ?? '',
+    confidence_tier: params.confidence_tier ?? '',
     date_from: params.date_from ?? '',
     date_to: params.date_to ?? '',
   };
@@ -331,6 +380,7 @@ export default async function HistoryPage({ searchParams }: PageProps) {
           <HistoryFilters
             market={filters.market}
             result={filters.result}
+            confidenceTier={filters.confidence_tier}
             dateFrom={filters.date_from}
             dateTo={filters.date_to}
           />

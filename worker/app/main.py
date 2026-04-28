@@ -54,30 +54,84 @@ try:
 except ImportError:
     _SHAP_AVAILABLE = False
 
+# Layer-3 isotonic recalibrator — see docs/ml/tier-calibration.md and
+# worker/app/calibration_fit.py. Lazy-loaded per market on first /predict call;
+# absent calibrator → identity (raw probability passes through unchanged).
+_LIVE_CALIBRATORS: dict[str, Any] = {}
+_CALIBRATOR_LOAD_ATTEMPTED: set[str] = set()
+
+
+def _load_live_calibrator(market: str) -> Any:
+    """Lazy-load the live isotonic calibrator for `market`. Returns None if absent."""
+    if market in _LIVE_CALIBRATORS:
+        return _LIVE_CALIBRATORS[market]
+    if market in _CALIBRATOR_LOAD_ATTEMPTED:
+        return None
+    _CALIBRATOR_LOAD_ATTEMPTED.add(market)
+
+    path = Path(__file__).resolve().parent.parent / "models" / "calibration" / f"{market}_isotonic.pkl"
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as f:
+            cal = pickle.load(f)
+        _LIVE_CALIBRATORS[market] = cal
+        return cal
+    except Exception as exc:  # pragma: no cover — bad artifact shouldn't crash predict
+        print(json.dumps({
+            "event": "calibrator_load_failed",
+            "market": market,
+            "error": str(exc),
+        }))
+        return None
+
 # ---------------------------------------------------------------------------
 # Confidence tier assignment
 # ---------------------------------------------------------------------------
 # Tiers have two properties the UI depends on:
 #   - T5 must be genuinely rare (the "strong" label)
-#   - Obviously-artifact-driven EV must never map to T5
+#   - Obviously-artifact-driven EV must never reach the user
 #
-# Thresholds below are more sensitive than v1 (which mapped everything > 9% EV
-# to T5). Realistic MLB edges from a well-calibrated model fall in 2–8%. EVs
-# above 15% are rare-but-possible. EVs above 20% are almost certainly a
-# pipeline/model artifact (missing features, uncalibrated odds, etc.) — we
-# DEMOTE those to T3 so the UI doesn't label noise as "strong".
+# Per-market rejection ceilings replace the prior single global cap that
+# demoted >20% EV picks to T3 (which polluted T3 — see
+# pick-scope-gate-2026-04-28 Proposal 1). Above-ceiling picks now go to T1
+# and get filtered out by the Edge Function's SHADOW_TIER_MIN=3 gate.
 #
-# TODO (auto-calibration): a nightly job should fit tier boundaries against
-# actual win rate deciles from pick_outcomes. See docs/ml/tier-calibration.md.
+# See docs/ml/tier-calibration.md for the full spec, including:
+#   - per-market EV ceilings (Layer 1, this file)
+#   - per-market visibility blocklist (Layer 2, in the Edge Function)
+#   - isotonic recalibration with promotion gate (Layer 3, calibration_fit.py)
+#   - sample-size rules for adjusting any of the above
 # ---------------------------------------------------------------------------
-def assign_confidence_tier(ev: float, uncertainty: float = 0.0) -> int:
+# Per-market EV ceilings — picks scoring above these are model artifacts, not
+# signal (per pick-research-2026-04-28: RL >50% EV picks N=17 win 29%, vs 20–50%
+# EV picks N=34 win 67–70%). Above-ceiling picks are routed to Tier 1, which
+# is below the Edge Function's SHADOW_TIER_MIN=3 and is therefore filtered out
+# entirely — not stored as live, not stored as shadow. See
+# docs/ml/tier-calibration.md (Layer 1).
+EV_REJECT_CEILING_BY_MARKET: dict[str, float] = {
+    "run_line": 0.50,
+    "total": 0.30,
+    "moneyline": 0.25,
+}
+EV_REJECT_CEILING_DEFAULT = 0.50
+
+
+def assign_confidence_tier(
+    ev: float, market: str = "run_line", uncertainty: float = 0.0
+) -> int:
+    """Map EV → confidence tier (1–5), with a per-market rejection ceiling.
+
+    Picks above the per-market ceiling are routed to Tier 1 (filtered out by
+    the Edge Function). See docs/ml/tier-calibration.md.
+    """
     if ev <= 0:
         return 0
 
-    # Realism cap: EVs above 20% are treated as suspect, not strong.
-    # This prevents degenerate model outputs from showing up as T5 "strong" picks.
-    if ev > 0.20:
-        base = 3
+    # Per-market rejection ceiling (Layer 1 of tier-calibration spec).
+    ceiling = EV_REJECT_CEILING_BY_MARKET.get(market, EV_REJECT_CEILING_DEFAULT)
+    if ev > ceiling:
+        base = 1
     elif ev > 0.15:
         base = 5
     elif ev > 0.10:
@@ -89,8 +143,9 @@ def assign_confidence_tier(ev: float, uncertainty: float = 0.0) -> int:
     else:
         base = 1
 
-    # Uncertainty penalties (was: single -1 at >=0.06)
-    # Now: graduated penalty so confidence reflects the model's conviction.
+    # Uncertainty penalties: graduated penalty so confidence reflects the
+    # model's conviction. `uncertainty` is currently always 0.0 in production —
+    # see open question in docs/ml/tier-calibration.md.
     if uncertainty >= 0.08:
         return max(1, base - 2)
     if uncertainty >= 0.05:
@@ -508,6 +563,16 @@ def run_inference(
         cal_prob = float(b2_calibrator.transform([cal_prob])[0])
         cal_prob = float(np.clip(cal_prob, prob_clip_lo, prob_clip_hi))
 
+    # Layer 3: per-market isotonic recalibrator (Proposal 4, P1).
+    # Applies on top of Platt + delta-prior + B2 isotonic. Absent → identity.
+    # Normalize 'totals' → 'total' to match calibrator artifact filenames and
+    # the Edge Function's market enum.
+    _norm_market_for_cal = market if market != "totals" else "total"
+    _live_cal = _load_live_calibrator(_norm_market_for_cal)
+    if _live_cal is not None:
+        cal_prob = float(_live_cal.predict(np.asarray([cal_prob]))[0])
+        cal_prob = float(np.clip(cal_prob, prob_clip_lo, prob_clip_hi))
+
     # Determine pick sides and best odds
     candidates = []
     now_ts = datetime.now(timezone.utc).isoformat()
@@ -546,7 +611,10 @@ def run_inference(
         if ev <= 0:
             continue
 
-        tier = assign_confidence_tier(ev)
+        # Normalize 'totals' → 'total' to match the per-market ceiling table
+        # and the PickCandidate market field below.
+        normalized_market = market if market != "totals" else "total"
+        tier = assign_confidence_tier(ev, normalized_market)
         if tier < 1:
             continue
 
