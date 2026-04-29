@@ -208,73 +208,132 @@ async function HistoryContent({ filters }: { filters: FilterState }) {
           No picks match your filters.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
-                <th className="py-2 pr-4">Date</th>
-                <th className="py-2 pr-4">Matchup</th>
-                <th className="py-2 pr-4">Market</th>
-                <th className="py-2 pr-4">Pick</th>
-                <th className="py-2 pr-4">Line</th>
-                <th className="py-2 pr-4">Confidence</th>
-                <th className="py-2 pr-4">Odds</th>
-                <th className="py-2 pr-4">Final</th>
-                <th className="py-2">Result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.picks.map((pick) => (
-                <tr key={pick.id} className="border-b border-gray-800/50 hover:bg-gray-900/50">
-                  <td className="py-3 pr-4 text-gray-400 whitespace-nowrap text-xs">{pick.pick_date}</td>
-                  <td className="py-3 pr-4 text-gray-200 text-xs whitespace-nowrap">
-                    {pick.game.away_team} @ {pick.game.home_team}
-                  </td>
-                  <td className="py-3 pr-4 text-gray-400 uppercase text-xs">{pick.market}</td>
-                  <td className="py-3 pr-4 text-white font-medium text-xs">
-                    <Link
-                      href={`/picks/${pick.id}`}
-                      className="hover:underline focus:underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
-                    >
-                      {pick.pick_side}
-                    </Link>
-                  </td>
-                  <td className="py-3 pr-4 font-mono text-amber-300 text-xs whitespace-nowrap">
-                    {pick.market === 'total' && pick.total_line != null
-                      ? pick.total_line.toFixed(1)
-                      : pick.market === 'run_line' && pick.run_line_spread != null
-                        ? (pick.run_line_spread >= 0 ? `+${pick.run_line_spread}` : `${pick.run_line_spread}`)
-                        : <span className="text-gray-700">—</span>}
-                  </td>
-                  <td className="py-3 pr-4 text-gray-400 text-xs">Tier {pick.confidence_tier}</td>
-                  <td className="py-3 pr-4 font-mono text-gray-300 text-xs">
-                    {pick.best_line_price != null
-                      ? (pick.best_line_price >= 0 ? `+${pick.best_line_price}` : `${pick.best_line_price}`)
-                      : '—'}
-                  </td>
-                  <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">
-                    {pick.final_score ? (
-                      <>
-                        <span className="text-gray-200">
-                          {pick.final_score.away}–{pick.final_score.home}
-                        </span>
-                        <span className="text-gray-500 ml-2">
-                          T {pick.final_score.total} · RL {pick.final_score.runline >= 0 ? '+' : ''}
-                          {pick.final_score.runline}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-gray-600">—</span>
-                    )}
-                  </td>
-                  <td className="py-3">
+        <>
+          {/* Mobile: card-stack — 9-col table is unreadable below sm */}
+          <div className="sm:hidden space-y-2">
+            {data.picks.map((pick) => {
+              const lineLabel =
+                pick.market === 'total' && pick.total_line != null
+                  ? pick.total_line.toFixed(1)
+                  : pick.market === 'run_line' && pick.run_line_spread != null
+                    ? pick.run_line_spread >= 0
+                      ? `+${pick.run_line_spread}`
+                      : `${pick.run_line_spread}`
+                    : null;
+              const oddsLabel =
+                pick.best_line_price != null
+                  ? pick.best_line_price >= 0
+                    ? `+${pick.best_line_price}`
+                    : `${pick.best_line_price}`
+                  : null;
+              return (
+                <Link
+                  key={pick.id}
+                  href={`/picks/${pick.id}`}
+                  className="block bg-gray-900 border border-gray-800 rounded-lg p-3 hover:bg-gray-900/80 active:bg-gray-800/40 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-400">{pick.pick_date}</span>
                     <ResultBadge result={pick.result} />
-                  </td>
+                  </div>
+                  <p className="text-sm font-medium text-white">
+                    {pick.game.away_team} @ {pick.game.home_team}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    <span className="uppercase text-gray-500">{pick.market}</span>
+                    <span className="mx-1.5 text-gray-700">·</span>
+                    <span className="text-white font-medium">{pick.pick_side}</span>
+                    {lineLabel && (
+                      <span className="font-mono text-amber-300 ml-1.5">{lineLabel}</span>
+                    )}
+                    {oddsLabel && (
+                      <span className="font-mono text-gray-300 ml-2">{oddsLabel}</span>
+                    )}
+                  </p>
+                  {pick.final_score && (
+                    <p className="text-xs font-mono text-gray-500 mt-1">
+                      Final {pick.final_score.away}–{pick.final_score.home}
+                      <span className="text-gray-700 mx-1">·</span>
+                      T {pick.final_score.total}
+                      <span className="text-gray-700 mx-1">·</span>
+                      RL {pick.final_score.runline >= 0 ? '+' : ''}{pick.final_score.runline}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">Tier {pick.confidence_tier}</p>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Desktop: full 9-col table */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
+                  <th className="py-2 pr-4">Date</th>
+                  <th className="py-2 pr-4">Matchup</th>
+                  <th className="py-2 pr-4">Market</th>
+                  <th className="py-2 pr-4">Pick</th>
+                  <th className="py-2 pr-4">Line</th>
+                  <th className="py-2 pr-4">Confidence</th>
+                  <th className="py-2 pr-4">Odds</th>
+                  <th className="py-2 pr-4">Final</th>
+                  <th className="py-2">Result</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {data.picks.map((pick) => (
+                  <tr key={pick.id} className="border-b border-gray-800/50 hover:bg-gray-900/50">
+                    <td className="py-3 pr-4 text-gray-400 whitespace-nowrap text-xs">{pick.pick_date}</td>
+                    <td className="py-3 pr-4 text-gray-200 text-xs whitespace-nowrap">
+                      {pick.game.away_team} @ {pick.game.home_team}
+                    </td>
+                    <td className="py-3 pr-4 text-gray-400 uppercase text-xs">{pick.market}</td>
+                    <td className="py-3 pr-4 text-white font-medium text-xs">
+                      <Link
+                        href={`/picks/${pick.id}`}
+                        className="hover:underline focus:underline focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                      >
+                        {pick.pick_side}
+                      </Link>
+                    </td>
+                    <td className="py-3 pr-4 font-mono text-amber-300 text-xs whitespace-nowrap">
+                      {pick.market === 'total' && pick.total_line != null
+                        ? pick.total_line.toFixed(1)
+                        : pick.market === 'run_line' && pick.run_line_spread != null
+                          ? (pick.run_line_spread >= 0 ? `+${pick.run_line_spread}` : `${pick.run_line_spread}`)
+                          : <span className="text-gray-700">—</span>}
+                    </td>
+                    <td className="py-3 pr-4 text-gray-400 text-xs">Tier {pick.confidence_tier}</td>
+                    <td className="py-3 pr-4 font-mono text-gray-300 text-xs">
+                      {pick.best_line_price != null
+                        ? (pick.best_line_price >= 0 ? `+${pick.best_line_price}` : `${pick.best_line_price}`)
+                        : '—'}
+                    </td>
+                    <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">
+                      {pick.final_score ? (
+                        <>
+                          <span className="text-gray-200">
+                            {pick.final_score.away}–{pick.final_score.home}
+                          </span>
+                          <span className="text-gray-500 ml-2">
+                            T {pick.final_score.total} · RL {pick.final_score.runline >= 0 ? '+' : ''}
+                            {pick.final_score.runline}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-gray-600">—</span>
+                      )}
+                    </td>
+                    <td className="py-3">
+                      <ResultBadge result={pick.result} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* Pagination */}
