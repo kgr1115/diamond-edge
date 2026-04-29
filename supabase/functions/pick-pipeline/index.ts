@@ -537,7 +537,10 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
     news_signals_applied: false,
   }));
 
-  const { error: insertError } = await supabase.from('picks').insert(insertRows);
+  const { data: upsertResult, error: insertError } = await supabase
+    .from('picks')
+    .upsert(insertRows, { onConflict: 'game_id,market,pick_side,pick_date', ignoreDuplicates: false })
+    .select();
 
   if (insertError) {
     log('db_write', { ok: false, date, error: insertError.message, count: insertRows.length, ms: Date.now() - dbWriteStart });
@@ -546,7 +549,8 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
 
   const liveCount = preparedPicks.filter((p) => p.visibility === 'live').length;
   const shadowCount = preparedPicks.filter((p) => p.visibility === 'shadow').length;
-  log('db_write', { ok: true, date, count: insertRows.length, live: liveCount, shadow: shadowCount, ms: Date.now() - dbWriteStart });
+  // affected_rows = inserts + updates after upsert; per-row insert-vs-update breakdown not exposed by PostgREST
+  log('db_write', { ok: true, date, count: insertRows.length, affected_rows: upsertResult?.length ?? 0, live: liveCount, shadow: shadowCount, ms: Date.now() - dbWriteStart });
 
   // Stage 8 — invalidate cache
   if (liveCount > 0) {
