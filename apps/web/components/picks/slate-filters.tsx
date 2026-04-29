@@ -266,6 +266,9 @@ export function SlateFilters({ totalPicks, visiblePicks, canSeeShadow }: SlateFi
                 Published only
               </button>
             </div>
+            <p className="text-[11px] text-gray-500 mt-2 leading-snug">
+              Shadow picks fall just under our publishing threshold (EV / confidence). Tracked for transparency and ROI study, not promoted as recommendations.
+            </p>
           </div>
         )}
       </div>
