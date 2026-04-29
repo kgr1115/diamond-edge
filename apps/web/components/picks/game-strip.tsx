@@ -266,15 +266,50 @@ export function GameStrip({ game, picks }: GameStripProps) {
         <p className="text-[10px] text-gray-600 mb-3 leading-tight">{leadTimeLabel}</p>
       )}
 
-      {/* Sportsbook-style grid: team | ML | RL | Total */}
-      <div className="grid grid-cols-[minmax(64px,88px)_repeat(3,minmax(0,1fr))] gap-x-2 gap-y-1 items-stretch">
-        {/* Column headers */}
+      {/* Mobile layout: Team | ML | RL grid, then Total full-width below.
+          Avoids cramming 3 pick cols + team col into a 375px viewport
+          (which leaves ~71px per cell). Stacking Total gives ML/RL ~125px
+          and Total the full row. */}
+      <div className="sm:hidden">
+        <div className="grid grid-cols-[minmax(56px,72px)_repeat(2,minmax(0,1fr))] gap-x-2 gap-y-1 items-stretch">
+          <div className="text-[10px] uppercase tracking-wide text-gray-600">Team</div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-600 text-center">ML</div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-600 text-center">RL</div>
+
+          <div className="text-sm text-gray-200 self-center">
+            <span className="font-semibold">{game.away_team.abbreviation}</span>
+            <span className="text-[10px] text-gray-500 ml-1">Away</span>
+          </div>
+          <PickCell pick={awayML} />
+          <PickCell pick={awayRL} />
+
+          <div className="text-sm text-gray-200 self-center">
+            <span className="font-semibold">{game.home_team.abbreviation}</span>
+            <span className="text-[10px] text-gray-500 ml-1">Home</span>
+          </div>
+          <PickCell pick={homeML} />
+          <PickCell pick={homeRL} />
+        </div>
+
+        <div className="mt-2 space-y-1">
+          <div className="text-[10px] uppercase tracking-wide text-gray-600">Total</div>
+          <PickCell pick={totalPick} />
+        </div>
+
+        <div className="mt-2 grid grid-cols-3 gap-x-2 text-[10px] text-gray-500 text-center">
+          <ColumnFooter snapshots={mlSnapshots} label="ML" />
+          <ColumnFooter snapshots={rlSnapshots} label="RL" />
+          <ColumnFooter snapshots={totalSnapshots} label="Total" />
+        </div>
+      </div>
+
+      {/* Desktop layout: classic sportsbook grid (team | ML | RL | Total) */}
+      <div className="hidden sm:grid grid-cols-[minmax(64px,88px)_repeat(3,minmax(0,1fr))] gap-x-2 gap-y-1 items-stretch">
         <div className="text-[10px] uppercase tracking-wide text-gray-600">Team</div>
         <div className="text-[10px] uppercase tracking-wide text-gray-600 text-center">ML</div>
         <div className="text-[10px] uppercase tracking-wide text-gray-600 text-center">RL</div>
         <div className="text-[10px] uppercase tracking-wide text-gray-600 text-center">Total</div>
 
-        {/* Away row */}
         <div className="text-sm text-gray-200 self-center">
           <span className="font-semibold">{game.away_team.abbreviation}</span>
           <span className="text-[10px] text-gray-500 ml-1">Away</span>
@@ -285,16 +320,13 @@ export function GameStrip({ game, picks }: GameStripProps) {
           <PickCell pick={totalPick} className="h-full flex items-center justify-center" />
         </div>
 
-        {/* Home row */}
         <div className="text-sm text-gray-200 self-center">
           <span className="font-semibold">{game.home_team.abbreviation}</span>
           <span className="text-[10px] text-gray-500 ml-1">Home</span>
         </div>
         <PickCell pick={homeML} />
         <PickCell pick={homeRL} />
-        {/* Total cell already placed via row-span-2 above */}
 
-        {/* Footer row: per-column update times */}
         <div className="text-[10px] text-gray-700 text-right pt-1 self-center">Updated</div>
         <ColumnFooter snapshots={mlSnapshots} label="ML" />
         <ColumnFooter snapshots={rlSnapshots} label="RL" />
