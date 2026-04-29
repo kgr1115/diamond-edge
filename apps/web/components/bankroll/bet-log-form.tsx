@@ -72,7 +72,7 @@ export function BetLogForm({ onSuccess }: BetLogFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="text-xs text-gray-400 block mb-1">Date *</label>
           <input
@@ -111,7 +111,7 @@ export function BetLogForm({ onSuccess }: BetLogFormProps) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="text-xs text-gray-400 block mb-1">Sportsbook</label>
           <select

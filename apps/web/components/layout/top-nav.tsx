@@ -136,7 +136,7 @@ export function TopNav() {
         <div className="flex items-center gap-3">
           {PAID_TIERS_ENABLED && loaded && tier !== 'anon' && (
             <span
-              className={`hidden sm:inline text-xs px-2 py-0.5 rounded font-medium ${
+              className={`inline text-xs px-2 py-0.5 rounded font-medium ${
                 tier === 'elite'
                   ? 'bg-amber-900/60 text-amber-300'
                   : tier === 'pro'

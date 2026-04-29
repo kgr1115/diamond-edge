@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { GlobalFooter } from '@/components/layout/global-footer';
@@ -10,6 +10,12 @@ export const metadata: Metadata = {
   title: 'Diamond Edge — MLB Betting Picks',
   description:
     'Statistically-grounded, AI-explained MLB betting picks. Moneyline, run line, totals, and props.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({

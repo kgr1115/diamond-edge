@@ -390,7 +390,7 @@ export default async function HistoryPage({ searchParams }: PageProps) {
       <Suspense
         fallback={
           <div className="space-y-3">
-            <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
               {[1, 2, 3, 4].map((i) => (
                 <div key={i} className="bg-gray-900 border border-gray-800 rounded-lg p-4 animate-pulse h-16" />
               ))}

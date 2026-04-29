@@ -64,7 +64,7 @@ export function UnitSizingPanel({ onUnitChange }: UnitSizingPanelProps) {
   return (
     <div className="bg-gray-900 border border-blue-800/60 rounded-lg p-4 space-y-3">
       <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Unit Sizing</h3>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label htmlFor="bankroll-input" className="text-xs text-gray-400 block mb-1">
             Bankroll ($)
