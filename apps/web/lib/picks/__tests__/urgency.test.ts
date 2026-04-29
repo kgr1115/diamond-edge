@@ -113,9 +113,11 @@ describe('resolveUrgency — defensive cases', () => {
     expect(resolveUrgency('scheduled', 'not-a-date', BASE_NOW)).toBeNull();
   });
 
-  it('returns null when scheduled game is in the past (race between status and clock)', () => {
+  it('infers live when scheduled game start time is already in the past (cron lag)', () => {
     const r = resolveUrgency('scheduled', gameAt(-5), BASE_NOW);
-    expect(r).toBeNull();
+    expect(r?.variant).toBe('live');
+    expect(r?.dim).toBe(true);
+    expect(r?.lineLocked).toBe(true);
   });
 
   it('returns null when status is unknown and game is scheduled future', () => {

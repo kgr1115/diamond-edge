@@ -211,9 +211,9 @@ export function PickCard({ pick, userTier }: PickCardProps) {
       <div
         className={`bg-gray-900 rounded-lg p-4 transition-colors min-w-0 ${
           lineLocked
-            ? 'border border-dashed border-gray-700 grayscale-[0.4] cursor-not-allowed'
+            ? 'border border-dashed border-gray-700 grayscale cursor-not-allowed'
             : 'border border-gray-800 hover:border-gray-600'
-        } ${cardDim ? 'opacity-60' : ''}`}
+        } ${cardDim ? 'opacity-40' : ''}`}
       >
         {urgency && <LockedLineBanner state={urgency} />}
         {lineLocked && urgency?.lockedReason && (

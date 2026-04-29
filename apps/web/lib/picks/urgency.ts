@@ -95,7 +95,18 @@ export function resolveUrgency(
   if (Number.isNaN(startMs)) return null;
 
   const minutesUntil = (startMs - now) / 60000;
-  if (minutesUntil <= 0) return null;
+  // First pitch has passed but the DB status is still 'scheduled' — schedule-sync
+  // cron only runs once per day, so we infer "in progress" from the clock so the
+  // card grays out and locks the line instead of looking bettable.
+  if (minutesUntil <= 0) {
+    return {
+      variant: 'live',
+      label: 'Live',
+      dim: true,
+      lineLocked: true,
+      lockedReason: 'GAME IN PROGRESS — line locked',
+    };
+  }
 
   let variant: UrgencyVariant = 'countdown-neutral';
   if (minutesUntil < RED_THRESHOLD_MIN) variant = 'countdown-red';

@@ -2,10 +2,15 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createServerClient } from '@supabase/ssr';
 import type { Database } from '@/lib/types/database';
+import { paidTiersEnabled } from '@/lib/feature-flags';
 
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
+  if (!paidTiersEnabled()) {
+    redirect('/picks/today');
+  }
+
   const cookieStore = await cookies();
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
