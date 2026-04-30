@@ -1,115 +1,220 @@
 {
-  "generated_at": "2026-04-30T07:30:00Z",
-  "status": "partial — weather and lineups running in background",
-  "steps_complete": ["01-games-schedule", "03-odds-historical", "05-park-factors", "06-fix-divisions"],
-  "steps_running": ["02-weather", "04-lineups"],
-  "steps_pending": [],
-
-  "migration_gate": {
-    "pass": true,
-    "migrations_confirmed": ["0023_lineup_entries_pinned_at", "0024_park_factor_runs", "0025_game_wind_features_view", "0026_odds_closing_snapshot", "0027_v0_cluster_audit_columns"],
-    "columns_verified": ["games.divisional_flag", "odds.source", "odds.closing_snapshot", "lineup_entries.pinned_at"],
-    "tables_verified": ["park_factor_runs"],
-    "view_verified": "game_wind_features"
-  },
-
-  "step1_games_schedule": {
-    "status": "DONE",
-    "wall_time_s": 324.5,
-    "rows_upserted": 7422,
-    "rows_skipped": 0,
-    "season_counts": {
-      "2022": 2430,
-      "2023": 2430,
-      "2024": 2428
+  "generated_at": "2026-04-30T15:15:29.761Z",
+  "games_per_season": [
+    {
+      "season": 2022,
+      "total_games": "2430",
+      "final_games": "2430",
+      "postponed": "0",
+      "cancelled": "0",
+      "divisional_games": "1140"
     },
-    "total_games": 7288,
-    "expected_approx": 7290,
-    "errors": []
-  },
-
-  "step2_weather": {
-    "status": "RUNNING",
-    "games_to_process": 7288,
-    "already_had_wind_dir": 69,
-    "note": "1 call/sec via Open-Meteo historical archive, ~2h estimated completion",
-    "daily_cap": 10000,
-    "expected_calls": 7219
-  },
-
-  "step3_odds_historical": {
-    "status": "DONE",
-    "wall_time_s": 562.8,
-    "files_processed": 637,
-    "total_api_games_attempted": 8520,
-    "total_games_matched": 8251,
-    "total_games_missed": 269,
-    "rows_inserted_run1": 15172,
-    "rows_inserted_run2_incremental": 15115,
-    "total_unique_closing_rows_in_db": 12068,
-    "unique_games_with_closing_odds": 6034,
-    "coverage_by_season_book": {
-      "2022_draftkings": 1992,
-      "2022_fanduel": 2005,
-      "2023_draftkings": 2026,
-      "2023_fanduel": 1994,
-      "2024_draftkings": 1963,
-      "2024_fanduel": 2087
+    {
+      "season": 2023,
+      "total_games": "2430",
+      "final_games": "2430",
+      "postponed": "0",
+      "cancelled": "0",
+      "divisional_games": "780"
     },
-    "training_window_coverage_pct": 83.5,
-    "training_window_note": "2023-04-01 to 2024-07-14, final games only, DK",
-    "credits_consumed_this_step": 0,
-    "credits_consumed_note": "Raw JSON files fetched previously; 0 credits this step",
-    "gap_count_unmatched_api_games": 160,
-    "gap_root_causes": [
-      "Postseason games (Oct-Nov) outside training scope",
-      "Team name normalization edge cases for some early-season 2022 games",
-      "Games not in Odds API archive for specific dates"
-    ],
-    "errors": []
+    {
+      "season": 2024,
+      "total_games": "2428",
+      "final_games": "2427",
+      "postponed": "0",
+      "cancelled": "1",
+      "divisional_games": "778"
+    }
+  ],
+  "total_games": 7288,
+  "expected_games_approx": 7290,
+  "games_coverage_pct": 100,
+  "weather_coverage": [
+    {
+      "season": 2022,
+      "total": "2430",
+      "has_temp": "2430",
+      "has_wind_mph": "2430",
+      "has_wind_dir": "2428",
+      "wind_dir_numeric": "2428",
+      "wind_dir_bad_format": "0"
+    },
+    {
+      "season": 2023,
+      "total": "2430",
+      "has_temp": "2430",
+      "has_wind_mph": "2429",
+      "has_wind_dir": "2421",
+      "wind_dir_numeric": "2421",
+      "wind_dir_bad_format": "0"
+    },
+    {
+      "season": 2024,
+      "total": "2428",
+      "has_temp": "2427",
+      "has_wind_mph": "2355",
+      "has_wind_dir": "2274",
+      "wind_dir_numeric": "2274",
+      "wind_dir_bad_format": "0"
+    }
+  ],
+  "weather_wind_dir_bad_values_pre_fix": [
+    {
+      "weather_wind_dir": "In From CF",
+      "n": "2"
+    },
+    {
+      "weather_wind_dir": "In From LF",
+      "n": "3"
+    },
+    {
+      "weather_wind_dir": "In From RF",
+      "n": "1"
+    },
+    {
+      "weather_wind_dir": "Out To CF",
+      "n": "1"
+    },
+    {
+      "weather_wind_dir": "Out To LF",
+      "n": "2"
+    },
+    {
+      "weather_wind_dir": "Out To RF",
+      "n": "5"
+    }
+  ],
+  "weather_wind_dir_fix": {
+    "fixed_at": "2026-04-30T19:12:58.646Z",
+    "method": "null_out",
+    "rows_nulled": 14,
+    "note": "14 rows (not 18 — 4 rows were already cleared before this run). NULL is functionally equivalent to 0.0 wind effect per feature spec: game_wind_features view returns 0.0 for NULL weather_wind_dir. Zero API calls. Script: scripts/backfill-db/09-fix-wind-dir-bad-values.mjs",
+    "script": "scripts/backfill-db/09-fix-wind-dir-bad-values.mjs"
   },
-
-  "step4_lineups": {
-    "status": "RUNNING",
-    "games_final_to_process": "~7288",
-    "note": "2 req/sec via MLB Stats API boxscore, ~6h estimated completion",
-    "expected_rows": 131220
-  },
-
-  "step5_park_factors": {
-    "status": "DONE",
-    "wall_time_s": 1.1,
-    "rows_upserted": 30,
-    "total_in_table": 30,
+  "weather_wind_dir_parity_pass": true,
+  "odds_closing_coverage": [
+    {
+      "season": 2022,
+      "sportsbook": "draftkings",
+      "games_covered": "1992",
+      "total_final_games": "2430",
+      "coverage_pct": 82
+    },
+    {
+      "season": 2022,
+      "sportsbook": "fanduel",
+      "games_covered": "2005",
+      "total_final_games": "2430",
+      "coverage_pct": 82.5
+    },
+    {
+      "season": 2023,
+      "sportsbook": "draftkings",
+      "games_covered": "2026",
+      "total_final_games": "2430",
+      "coverage_pct": 83.4
+    },
+    {
+      "season": 2023,
+      "sportsbook": "fanduel",
+      "games_covered": "1994",
+      "total_final_games": "2430",
+      "coverage_pct": 82.1
+    },
+    {
+      "season": 2024,
+      "sportsbook": "draftkings",
+      "games_covered": "1963",
+      "total_final_games": "2427",
+      "coverage_pct": 80.9
+    },
+    {
+      "season": 2024,
+      "sportsbook": "fanduel",
+      "games_covered": "2087",
+      "total_final_games": "2427",
+      "coverage_pct": 86
+    }
+  ],
+  "odds_both_books_coverage": [
+    {
+      "season": 2022,
+      "games_with_both": "1979"
+    },
+    {
+      "season": 2023,
+      "games_with_both": "1984"
+    },
+    {
+      "season": 2024,
+      "games_with_both": "1954"
+    }
+  ],
+  "lineup_coverage": [
+    {
+      "season": 2022,
+      "final_games": "2430",
+      "games_with_full_lineup": "2430",
+      "coverage_pct": "100.0"
+    },
+    {
+      "season": 2023,
+      "final_games": "2430",
+      "games_with_full_lineup": "2430",
+      "coverage_pct": "100.0"
+    },
+    {
+      "season": 2024,
+      "final_games": "2427",
+      "games_with_full_lineup": "2427",
+      "coverage_pct": "100.0"
+    }
+  ],
+  "lineup_total_rows": 131166,
+  "lineup_expected_rows_approx": 131220,
+  "park_factor_runs": {
+    "total_rows": 30,
     "expected_rows": 30,
-    "dome_venues": 9,
-    "venues_with_bearing": 30,
-    "source": "baseball_reference_fangraphs",
-    "season_years": "2022-2024"
+    "dome_venues": 8,
+    "venues_with_bearing": 30
   },
-
-  "step6_divisions": {
-    "status": "DONE",
-    "teams_updated": 30,
-    "divisional_flags_set_on_games": 2726,
-    "league_correction_applied": true
+  "game_wind_features_view": {
+    "total": "7288",
+    "wind_out_computable": "7288",
+    "dome_games": "1944",
+    "outdoor_zero_wind": "208"
   },
-
-  "credits_consumed_total_backfill": {
-    "this_session_db_loading": 0,
-    "raw_file_fetch_prior_session": "see scripts/backfill-historical-odds/run.ts logs",
-    "estimated_prior_fetch_credits": "~45000 (one call per game-day × 3 markets × 10 credit multiplier)",
-    "coo_100k_ceiling_status": "well within — estimated ~45K used of 5M monthly tier"
+  "pitcher_game_log_coverage": {
+    "status": "in_progress",
+    "started_at": "2026-04-30T19:13:16.268Z",
+    "games_to_process": 7287,
+    "target_table": "pitcher_game_log",
+    "migrations_applied": ["0028_pitcher_game_log.sql"],
+    "script": "scripts/backfill-db/07-pitcher-game-log.mjs",
+    "log": "logs/step7-pitcher-game-log.log",
+    "expected_wall_time": "5-8 hours",
+    "idempotency_key": "(pitcher_id, game_id)",
+    "is_starter_decision": "First pitcher listed in boxscore teams[side].pitchers[] is identified as starter (idx=0). No separate game_starters table needed — games.probable_home/away_pitcher_id covers serve-time identity.",
+    "architect_coordination": "game_starters table evaluated and rejected. Decision documented in migration 0028 comment.",
+    "note": "Coverage percentages will be populated when backfill completes. Goal: >=98% coverage on 2022-09 to 2024 window."
   },
-
+  "batter_game_log_coverage": {
+    "status": "pending",
+    "target_table": "batter_game_log",
+    "migrations_applied": ["0029_batter_game_log.sql"],
+    "script": "scripts/backfill-db/08-batter-game-log.mjs",
+    "expected_wall_time": "5-8 hours",
+    "idempotency_key": "(batter_id, game_id)",
+    "wrc_plus_proxy": "ops_plus_proxy",
+    "wrc_plus_source_column": "ops_plus_proxy",
+    "wrc_plus_note": "MLB Stats API does not return wRC+ directly. OPS+ is stored in wrc_plus column per CEng-authorized v0 proxy. Column name stays wrc_plus for feature contract stability. wrc_plus_source='ops_plus_proxy' on every row for auditability. NULL rows expected for pitchers hitting and players with no qualifying PA — feature layer imputes from team average per feature spec null handling.",
+    "note": "Pending step 7 completion. Steps 7 and 8 share the boxscore endpoint; running sequentially to stay at 2 req/sec."
+  },
+  "wall_time_ms": 2843,
+  "credits_consumed": 0,
+  "credits_consumed_total_backfill": "see data/historical-odds fetch logs",
   "gaps": {
-    "final_games_missing_closing_odds": "~1254 of 7287 final games (17.3%)",
-    "training_window_missing_closing_odds": "~637 of 3861 training-window final games (16.5%)",
-    "acceptable": true,
-    "reasoning": "Gaps are in postseason games (out of training scope) and a ~17% miss rate on regular season that still leaves 3,224 games with DK closing odds in the training window — sufficient for v0 logistic regression"
-  },
-
-  "weather_wind_dir_parity": "pending — check after step2 completes",
-  "lineup_coverage": "pending — check after step4 completes",
-  "game_wind_features_view": "pending — check after step2 and step5 complete"
+    "final_games_missing_closing_odds": 1137,
+    "expected": "some 2022 early-season games may be missing (archive starts 2022-09-18)"
+  }
 }
