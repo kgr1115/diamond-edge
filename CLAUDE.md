@@ -186,6 +186,7 @@ The lens-holders are well-read across their domain but **are not the deepest exp
 ```yaml
 proposal_id: <short-slug-yyyy-mm-dd>
 proposer: <agent-name>
+kind: <model-change | feature-change | calibration | rationale | skill | infra | scope-expansion | compliance | other>
 lens: <CSO | CEng | COO | cross-lens>
 claim: <one sentence — what should change>
 evidence:
@@ -195,7 +196,7 @@ evidence:
 comparison:
   - approach_a: <current production>
   - approach_b: <proposed>
-  - delta_metrics: <ROI, CLV, ECE, log-loss, sample n>
+  - delta_metrics: <ROI, CLV, ECE, log-loss, sample n — or "n/a" for skill/infra proposals>
 risks:
   - <what could go wrong>
   - <how it would be detected>
@@ -206,7 +207,11 @@ scope:
   - markets_affected: [moneyline, run_line, totals, props, parlays, futures]
   - user_facing: <yes | no>
   - irreversible: <yes | no>
+attachments:
+  - <e.g., draft SKILL.md path for kind: skill; backtest report path for kind: model-change>
 ```
+
+**`kind` controls which scope-gate criteria apply.** A `kind: skill` proposal does not need backtest evidence; it needs a draft SKILL.md attachment, a naming-collision check, and a routing-friendly description. A `kind: model-change` proposal needs the full empirical evidence stack. The scope-gate skills route per-kind.
 
 Lens-holder verdicts respond in this shape:
 
