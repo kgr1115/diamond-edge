@@ -1,0 +1,115 @@
+{
+  "generated_at": "2026-04-30T07:30:00Z",
+  "status": "partial — weather and lineups running in background",
+  "steps_complete": ["01-games-schedule", "03-odds-historical", "05-park-factors", "06-fix-divisions"],
+  "steps_running": ["02-weather", "04-lineups"],
+  "steps_pending": [],
+
+  "migration_gate": {
+    "pass": true,
+    "migrations_confirmed": ["0023_lineup_entries_pinned_at", "0024_park_factor_runs", "0025_game_wind_features_view", "0026_odds_closing_snapshot", "0027_v0_cluster_audit_columns"],
+    "columns_verified": ["games.divisional_flag", "odds.source", "odds.closing_snapshot", "lineup_entries.pinned_at"],
+    "tables_verified": ["park_factor_runs"],
+    "view_verified": "game_wind_features"
+  },
+
+  "step1_games_schedule": {
+    "status": "DONE",
+    "wall_time_s": 324.5,
+    "rows_upserted": 7422,
+    "rows_skipped": 0,
+    "season_counts": {
+      "2022": 2430,
+      "2023": 2430,
+      "2024": 2428
+    },
+    "total_games": 7288,
+    "expected_approx": 7290,
+    "errors": []
+  },
+
+  "step2_weather": {
+    "status": "RUNNING",
+    "games_to_process": 7288,
+    "already_had_wind_dir": 69,
+    "note": "1 call/sec via Open-Meteo historical archive, ~2h estimated completion",
+    "daily_cap": 10000,
+    "expected_calls": 7219
+  },
+
+  "step3_odds_historical": {
+    "status": "DONE",
+    "wall_time_s": 562.8,
+    "files_processed": 637,
+    "total_api_games_attempted": 8520,
+    "total_games_matched": 8251,
+    "total_games_missed": 269,
+    "rows_inserted_run1": 15172,
+    "rows_inserted_run2_incremental": 15115,
+    "total_unique_closing_rows_in_db": 12068,
+    "unique_games_with_closing_odds": 6034,
+    "coverage_by_season_book": {
+      "2022_draftkings": 1992,
+      "2022_fanduel": 2005,
+      "2023_draftkings": 2026,
+      "2023_fanduel": 1994,
+      "2024_draftkings": 1963,
+      "2024_fanduel": 2087
+    },
+    "training_window_coverage_pct": 83.5,
+    "training_window_note": "2023-04-01 to 2024-07-14, final games only, DK",
+    "credits_consumed_this_step": 0,
+    "credits_consumed_note": "Raw JSON files fetched previously; 0 credits this step",
+    "gap_count_unmatched_api_games": 160,
+    "gap_root_causes": [
+      "Postseason games (Oct-Nov) outside training scope",
+      "Team name normalization edge cases for some early-season 2022 games",
+      "Games not in Odds API archive for specific dates"
+    ],
+    "errors": []
+  },
+
+  "step4_lineups": {
+    "status": "RUNNING",
+    "games_final_to_process": "~7288",
+    "note": "2 req/sec via MLB Stats API boxscore, ~6h estimated completion",
+    "expected_rows": 131220
+  },
+
+  "step5_park_factors": {
+    "status": "DONE",
+    "wall_time_s": 1.1,
+    "rows_upserted": 30,
+    "total_in_table": 30,
+    "expected_rows": 30,
+    "dome_venues": 9,
+    "venues_with_bearing": 30,
+    "source": "baseball_reference_fangraphs",
+    "season_years": "2022-2024"
+  },
+
+  "step6_divisions": {
+    "status": "DONE",
+    "teams_updated": 30,
+    "divisional_flags_set_on_games": 2726,
+    "league_correction_applied": true
+  },
+
+  "credits_consumed_total_backfill": {
+    "this_session_db_loading": 0,
+    "raw_file_fetch_prior_session": "see scripts/backfill-historical-odds/run.ts logs",
+    "estimated_prior_fetch_credits": "~45000 (one call per game-day × 3 markets × 10 credit multiplier)",
+    "coo_100k_ceiling_status": "well within — estimated ~45K used of 5M monthly tier"
+  },
+
+  "gaps": {
+    "final_games_missing_closing_odds": "~1254 of 7287 final games (17.3%)",
+    "training_window_missing_closing_odds": "~637 of 3861 training-window final games (16.5%)",
+    "acceptable": true,
+    "reasoning": "Gaps are in postseason games (out of training scope) and a ~17% miss rate on regular season that still leaves 3,224 games with DK closing odds in the training window — sufficient for v0 logistic regression"
+  },
+
+  "weather_wind_dir_parity": "pending — check after step2 completes",
+  "lineup_coverage": "pending — check after step4 completes",
+  "game_wind_features_view": "pending — check after step2 and step5 complete"
+}

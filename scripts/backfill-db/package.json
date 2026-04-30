@@ -1,0 +1,22 @@
+{
+  "name": "diamond-edge-backfill-db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One-time DB backfill: MLB schedule, weather, odds, lineups, park factors (2022-2024).",
+  "type": "module",
+  "scripts": {
+    "step1:games": "node 01-games-schedule.mjs",
+    "step2:weather": "node 02-weather.mjs",
+    "step3:odds": "node 03-odds-historical.mjs",
+    "step4:lineups": "node 04-lineups.mjs",
+    "step5:park-factors": "node 05-park-factors.mjs",
+    "step6:divisions": "node 06-fix-divisions.mjs",
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
