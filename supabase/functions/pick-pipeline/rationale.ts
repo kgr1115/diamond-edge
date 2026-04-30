@@ -79,10 +79,16 @@ export async function getOrGenerateRationale(
   const promptHash = await hashRationaleInput(candidate, gameContext, rationaleTarget);
 
   // 1. Check cache
+  // Guard added 2026-04-29 (pick-research-2026-04-29.md P0): the legacy stub
+  // rationale generator wrote rows with tokens_used = 0. Without this filter,
+  // those stub rows are returned as cache hits forever, which is why no real
+  // Anthropic call was ever observed in production despite ANTHROPIC_API_KEY
+  // being configured. Real responses always have tokens_used > 0.
   const { data: existing } = await supabase
     .from('rationale_cache')
     .select('id')
     .eq('prompt_hash', promptHash)
+    .gt('tokens_used', 0)
     .maybeSingle();
 
   if (existing?.id) {

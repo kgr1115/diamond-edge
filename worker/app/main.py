@@ -109,8 +109,15 @@ def _load_live_calibrator(market: str) -> Any:
 # is below the Edge Function's SHADOW_TIER_MIN=3 and is therefore filtered out
 # entirely — not stored as live, not stored as shadow. See
 # docs/ml/tier-calibration.md (Layer 1).
+#
+# 2026-04-29 update (pick-research-2026-04-29.md P5): run_line ceiling tightened
+# 0.50 → 0.35 after observing saturation at model_prob ≈ 0.6629 with 46.2% win
+# rate on N=90 (max_calibration_deviation=0.143). Picks in the 35–50% EV band
+# are dominated by this saturation cluster and add risk without lift. Step 2 of
+# that research (retrain on expanded corpus to break the saturation) is tracked
+# separately; this ceiling change ships standalone.
 EV_REJECT_CEILING_BY_MARKET: dict[str, float] = {
-    "run_line": 0.50,
+    "run_line": 0.35,
     "total": 0.30,
     "moneyline": 0.25,
 }

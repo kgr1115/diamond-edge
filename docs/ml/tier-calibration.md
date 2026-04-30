@@ -33,7 +33,7 @@ The model occasionally emits absurdly high EVs (run-line picks scoring >50% EV a
 ```python
 # worker/app/main.py
 EV_REJECT_CEILING_BY_MARKET = {
-    'run_line':  0.50,
+    'run_line':  0.35,  # tightened 0.50 → 0.35 on 2026-04-29 (see below)
     'total':     0.30,
     'moneyline': 0.25,
 }
@@ -48,6 +48,8 @@ The ceilings are set per market because EV scales differ:
 | run_line | 39.1% | 72.5% | 85.6% | 36 of 90 picks |
 | total | 22.1% | 26.5% | 41.6% | 0 of 72 |
 | moneyline | 11.5% | 19.5% | 32.6% | 0 of 32 |
+
+**2026-04-29 update — run_line ceiling 0.50 → 0.35** (pick-research-2026-04-29.md Proposal 5). The run-line model saturates around `model_prob ≈ 0.6629` with a 46.2% win rate on N=90 graded picks (max calibration deviation 0.143). The 35–50% EV band is dominated by this saturation cluster and adds variance without lift. Tightening to 0.35 routes those saturated picks to Tier 1 (filtered) until a retrain on an expanded corpus breaks the saturation. The retrain (step 2 of the same research note) is tracked separately and is **not** part of this change.
 
 ### Layer 2 — Per-market visibility blocklist (Proposal 3, P0)
 

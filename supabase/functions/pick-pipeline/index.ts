@@ -95,6 +95,76 @@ function requiredTierFor(confidenceTier: number): 'pro' | 'elite' {
   return confidenceTier >= 5 ? 'elite' : 'pro';
 }
 
+/**
+ * Compute current-season W-L record for each team_id in `teamIds`.
+ *
+ * Added 2026-04-29 (pick-research-2026-04-29.md P10): the rationale game_context
+ * previously hardcoded `record: '0-0'` for both teams, which the LLM treated as
+ * literal "0-0" team records and inserted into rationale text. This pulls real
+ * standings from the `games` table — no external API, no Upstash cache.
+ *
+ * Schema note: the `games` table has no `season` column (only `game_date`).
+ * Scope-gate's spec said `season = 2026`; we filter by `game_date >= '2026-01-01'`
+ * to express the same intent.
+ *
+ * Returns a map team_id → "W-L". Teams with zero games played map to "0-0".
+ */
+async function computeTeamRecords(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  teamIds: string[],
+  seasonStart = '2026-01-01'
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const id of teamIds) out.set(id, '0-0');
+
+  if (teamIds.length === 0) return out;
+
+  const { data, error } = await supabase
+    .from('games')
+    .select('home_team_id, away_team_id, home_score, away_score, status, game_date')
+    .or(`home_team_id.in.(${teamIds.join(',')}),away_team_id.in.(${teamIds.join(',')})`)
+    .eq('status', 'final')
+    .gte('game_date', seasonStart)
+    .lt('game_date', new Date().toISOString().slice(0, 10));
+
+  if (error) {
+    log('team_records_query_failed', { error: error.message, team_count: teamIds.length });
+    return out;
+  }
+
+  const wins = new Map<string, number>();
+  const losses = new Map<string, number>();
+  for (const id of teamIds) {
+    wins.set(id, 0);
+    losses.set(id, 0);
+  }
+
+  for (const row of (data ?? []) as Array<{
+    home_team_id: string;
+    away_team_id: string;
+    home_score: number | null;
+    away_score: number | null;
+  }>) {
+    if (row.home_score == null || row.away_score == null) continue;
+    if (row.home_score === row.away_score) continue; // ties are vanishingly rare in MLB but skip
+    const homeWon = row.home_score > row.away_score;
+    if (wins.has(row.home_team_id)) {
+      if (homeWon) wins.set(row.home_team_id, (wins.get(row.home_team_id) ?? 0) + 1);
+      else losses.set(row.home_team_id, (losses.get(row.home_team_id) ?? 0) + 1);
+    }
+    if (wins.has(row.away_team_id)) {
+      if (!homeWon) wins.set(row.away_team_id, (wins.get(row.away_team_id) ?? 0) + 1);
+      else losses.set(row.away_team_id, (losses.get(row.away_team_id) ?? 0) + 1);
+    }
+  }
+
+  for (const id of teamIds) {
+    out.set(id, `${wins.get(id) ?? 0}-${losses.get(id) ?? 0}`);
+  }
+  return out;
+}
+
 interface NewsSignalRow {
   signal_type: string;
   confidence: number;
@@ -230,7 +300,9 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
       weather_condition, weather_temp_f, weather_wind_mph, weather_wind_dir,
       probable_home_pitcher_id, probable_away_pitcher_id,
       home_team:home_team_id ( id, name, abbreviation ),
-      away_team:away_team_id ( id, name, abbreviation )
+      away_team:away_team_id ( id, name, abbreviation ),
+      probable_home_pitcher:probable_home_pitcher_id ( id, full_name ),
+      probable_away_pitcher:probable_away_pitcher_id ( id, full_name )
     `)
     .eq('game_date', date)
     .in('status', ['scheduled', 'live']);
@@ -440,6 +512,14 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
   log('ev_filter_deduped', { date, input_count: shadowCandidates.length, output_count: dedupedCandidates.length });
 
   // Stage 6 — game_context for rationale
+  // Compute team records once for all teams playing today (P10, 2026-04-29).
+  const activeTeamIdSet = new Set<string>();
+  for (const g of (gamesData ?? []) as GameRow[]) {
+    if (typeof g.home_team_id === 'string') activeTeamIdSet.add(g.home_team_id);
+    if (typeof g.away_team_id === 'string') activeTeamIdSet.add(g.away_team_id);
+  }
+  const teamRecords = await computeTeamRecords(supabase, Array.from(activeTeamIdSet));
+
   // deno-lint-ignore no-explicit-any
   const gameContextByGameId: Record<string, any> = {};
   for (const game of gamesData ?? []) {
@@ -448,18 +528,34 @@ async function runPipelineForDate(date: string, supabase: SupabaseClient): Promi
       home_team: any;
       // deno-lint-ignore no-explicit-any
       away_team: any;
+      probable_home_pitcher: { id: string; full_name: string } | null;
+      probable_away_pitcher: { id: string; full_name: string } | null;
     };
     gameContextByGameId[g.id] = {
-      home_team: { name: g.home_team?.name ?? 'Home', abbreviation: g.home_team?.abbreviation ?? 'HM', record: '0-0' },
-      away_team: { name: g.away_team?.name ?? 'Away', abbreviation: g.away_team?.abbreviation ?? 'AW', record: '0-0' },
+      home_team: {
+        name: g.home_team?.name ?? 'Home',
+        abbreviation: g.home_team?.abbreviation ?? 'HM',
+        record: teamRecords.get(g.home_team_id) ?? '0-0',
+      },
+      away_team: {
+        name: g.away_team?.name ?? 'Away',
+        abbreviation: g.away_team?.abbreviation ?? 'AW',
+        record: teamRecords.get(g.away_team_id) ?? '0-0',
+      },
       game_time_local: g.game_time_utc
         ? new Date(g.game_time_utc).toLocaleString('en-US', {
             hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', timeZoneName: 'short',
           })
         : 'TBD',
       venue: g.venue_name ?? 'Unknown Venue',
-      probable_home_pitcher: null,
-      probable_away_pitcher: null,
+      // 2026-04-29 (P1): pass pitcher as { full_name } object so worker rationale.py
+      // template renders the actual name instead of always falling back to 'TBD'.
+      probable_home_pitcher: g.probable_home_pitcher?.full_name
+        ? { full_name: g.probable_home_pitcher.full_name }
+        : null,
+      probable_away_pitcher: g.probable_away_pitcher?.full_name
+        ? { full_name: g.probable_away_pitcher.full_name }
+        : null,
       weather: g.weather_condition
         ? { condition: g.weather_condition, temp_f: g.weather_temp_f ?? 72, wind_mph: g.weather_wind_mph ?? 0, wind_dir: g.weather_wind_dir ?? 'N' }
         : null,
