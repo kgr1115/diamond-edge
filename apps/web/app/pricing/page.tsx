@@ -42,9 +42,7 @@ const TIERS = [
       { label: 'Public pick history', included: true },
       { label: 'Best line + sportsbook', included: false },
       { label: 'Model probability', included: false },
-      { label: 'AI rationale (Haiku)', included: false },
       { label: 'Expected value', included: false },
-      { label: 'SHAP attributions', included: false },
       { label: 'Bankroll tracker', included: false },
     ],
   },
@@ -53,7 +51,7 @@ const TIERS = [
     name: 'Pro',
     price: '$19',
     period: '/month',
-    description: 'Full access to picks with line shopping and AI analysis.',
+    description: 'Full access to picks with line shopping and bankroll tools.',
     highlighted: true,
     features: [
       { label: 'Pick side + confidence tier', included: true },
@@ -61,9 +59,7 @@ const TIERS = [
       { label: 'Public pick history', included: true },
       { label: 'Best line + sportsbook', included: true },
       { label: 'Model probability', included: true },
-      { label: 'AI rationale (Haiku)', included: true },
       { label: 'Expected value', included: false },
-      { label: 'SHAP attributions', included: false },
       { label: 'Bankroll tracker', included: true },
     ],
   },
@@ -72,16 +68,14 @@ const TIERS = [
     name: 'Elite',
     price: '$39',
     period: '/month',
-    description: 'Everything in Pro plus deep model transparency.',
+    description: 'Everything in Pro plus expected-value display and on-demand odds refresh.',
     features: [
       { label: 'Pick side + confidence tier', included: true },
       { label: 'All qualifying picks daily', included: true },
       { label: 'Public pick history', included: true },
       { label: 'Best line + sportsbook', included: true },
       { label: 'Model probability', included: true },
-      { label: 'AI rationale (Sonnet)', included: true },
       { label: 'Expected value', included: true },
-      { label: 'SHAP attributions', included: true },
       { label: 'Bankroll tracker', included: true },
     ],
   },
@@ -103,14 +97,14 @@ export default async function PricingPage() {
       <div className="text-center mb-12 space-y-3">
         <h1 className="text-3xl font-bold text-white">Plans &amp; Pricing</h1>
         <p className="text-gray-400 max-w-xl mx-auto">
-          Statistically-grounded, AI-explained MLB picks. Cancel anytime.
+          Statistically-grounded MLB picks. Cancel anytime.
         </p>
       </div>
 
       {/* Responsible gambling — Surface 2, above CTAs */}
       <div className="mb-8 bg-gray-900 border border-amber-900/40 rounded-lg p-4 text-xs text-gray-400 leading-relaxed">
         <strong className="text-amber-400 block mb-1">Before you subscribe</strong>
-        Diamond Edge provides statistical analysis and AI-generated rationale. We do not guarantee
+        Diamond Edge provides statistical analysis. We do not guarantee
         wins, profits, or any specific outcome. Sports betting is inherently uncertain — even
         high-confidence picks lose. A subscription is an investment in information, not in returns.
         Never bet more than you can afford to lose. Problem gambling?{' '}
