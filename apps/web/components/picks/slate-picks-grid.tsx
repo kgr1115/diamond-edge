@@ -15,12 +15,6 @@ import { UpgradeCta } from '@/components/billing/upgrade-cta';
 
 const THIN_SLATE_THRESHOLD = 4;
 
-interface ShapAttribution {
-  feature: string;
-  value: number;
-  direction: 'positive' | 'negative';
-}
-
 interface OddsSnapshot {
   label: string;
   price: number;
@@ -47,8 +41,6 @@ interface PickData {
   run_line_spread?: number;
   model_probability?: number;
   expected_value?: number;
-  rationale_preview?: string;
-  shap_attributions?: ShapAttribution[];
   line_snapshots?: OddsSnapshot[];
   has_note?: boolean;
   odds_stale?: boolean;

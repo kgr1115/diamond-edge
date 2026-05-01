@@ -24,7 +24,6 @@ interface PickData {
   run_line_spread?: number;
   model_probability?: number;
   expected_value?: number;
-  rationale_preview?: string;
   has_note?: boolean;
   odds_stale?: boolean;
   odds_snapshot_at?: string;

@@ -28,7 +28,6 @@ interface PickCardProps {
     run_line_spread?: number;
     model_probability?: number;
     expected_value?: number;
-    rationale_preview?: string;
     /** True when the user has a journal note saved for this pick. */
     has_note?: boolean;
     /** True when THIS pick's pinned odds snapshot is past the freshness
@@ -300,15 +299,10 @@ export function PickCard({ pick, userTier }: PickCardProps) {
           )}
         </div>
 
-        {/* Rationale preview (pro+) or paywall nudge */}
-        {pick.rationale_preview ? (
-          <p className="mt-3 text-xs text-gray-400 line-clamp-2 border-t border-gray-800 pt-3">
-            {pick.rationale_preview}
-          </p>
-        ) : showPaywall ? (
+        {showPaywall ? (
           <div className="mt-3 border-t border-gray-800 pt-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <p className="text-xs text-gray-500">Full analysis available with Pro</p>
+              <p className="text-xs text-gray-500">Full pick details available with Pro</p>
               <UpgradeCta tier="pro" size="xs" />
             </div>
           </div>

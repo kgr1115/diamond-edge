@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'Diamond Edge — MLB Betting Picks',
   description:
-    'Statistically-grounded, AI-explained MLB betting picks. Moneyline, run line, totals, and props.',
+    'Statistically-grounded MLB betting picks. Moneyline, run line, totals, and props.',
 };
 
 export const viewport: Viewport = {

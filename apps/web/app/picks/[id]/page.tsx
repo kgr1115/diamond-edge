@@ -7,7 +7,6 @@ import {
   resolveHelpline,
 } from '@/components/picks/responsible-gambling-banner';
 import { ConfidenceBadge } from '@/components/picks/confidence-badge';
-import { UpgradeCta } from '@/components/billing/upgrade-cta';
 import { PickJournal } from '@/components/picks/pick-journal';
 import { PickOutcomePanel } from '@/components/picks/pick-outcome-panel';
 import { createServiceRoleClient } from '@/lib/supabase/server';
@@ -49,12 +48,6 @@ interface PickDetailResponse {
     fd_line?: BookLine;
     model_probability?: number;
     expected_value?: number;
-    rationale?: string;
-    shap_attributions?: Array<{
-      feature: string;
-      value: number;
-      direction: 'positive' | 'negative';
-    }>;
     outcome?: {
       result: 'win' | 'loss' | 'push' | 'void';
       home_score: number;
@@ -250,7 +243,6 @@ export default async function PickDetailPage({ params }: PageProps) {
   const isGraded = pick.result !== 'pending' && pick.outcome != null;
   const isGradedRacing = pick.result !== 'pending' && pick.outcome == null;
   const modelHeader = isGraded ? 'Model view at pick time' : 'Pick';
-  const analysisHeader = isGraded ? 'Analysis at pick time' : 'Analysis';
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -404,49 +396,6 @@ export default async function PickDetailPage({ params }: PageProps) {
             </div>
           )}
 
-          {/* AI Rationale */}
-          <div className={`bg-gray-900 border border-gray-800 rounded-lg p-5 ${isGraded ? 'opacity-75' : ''}`}>
-            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-              {analysisHeader}
-            </h2>
-            {pick.rationale ? (
-              <div className="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">
-                {pick.rationale}
-              </div>
-            ) : (
-              <div className="text-center py-8 space-y-3">
-                <p className="text-sm text-gray-400">
-                  Upgrade to Pro to see the full statistical analysis and AI rationale.
-                </p>
-                <UpgradeCta tier="pro" />
-              </div>
-            )}
-          </div>
-
-          {/* SHAP attributions — Elite only */}
-          {pick.shap_attributions && pick.shap_attributions.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
-              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-                Model Feature Drivers
-              </h2>
-              <div className="space-y-2">
-                {pick.shap_attributions.map((attr, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs">
-                    <span className="text-gray-300">{attr.feature}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-500">{attr.value}</span>
-                      <span
-                        className={attr.direction === 'positive' ? 'text-emerald-400' : 'text-red-400'}
-                      >
-                        {attr.direction === 'positive' ? '▲' : '▼'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Journal — authenticated users only */}
           {journal !== null && (
             <PickJournal
@@ -464,7 +413,7 @@ export default async function PickDetailPage({ params }: PageProps) {
           <div className={`bg-gray-900 border border-amber-900/40 rounded-lg p-4 space-y-2 ${isGraded ? 'opacity-60' : ''}`}>
             <h3 className="text-sm font-semibold text-amber-400">A note on risk</h3>
             <p className="text-xs text-gray-400 leading-relaxed">
-              This pick is based on a statistical model and AI analysis. The model identified an edge
+              This pick is based on a statistical model. The model identified an edge
               at the time of generation. Edges erode, lines move, and results vary.
             </p>
             <ul className="text-xs text-gray-500 space-y-1">
