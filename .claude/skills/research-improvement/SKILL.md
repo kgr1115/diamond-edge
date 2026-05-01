@@ -18,7 +18,7 @@ Trace Diamond Edge's core subscriber flow in order. Identify friction at each st
 |---|---|
 | Picks UI | `app/picks/**`, pick-card components, tier-gate logic |
 | Pick detail | Pick detail pages, rationale render, confidence/EV display |
-| Pick pipeline | `supabase/functions/pick-pipeline/**`, `worker/models/**`, `worker/api/**`, `worker/ingest/**` |
+| Pick pipeline | `apps/web/app/api/cron/pick-pipeline/**` (or wherever the analysis layer lives), `models/**` |
 | Schema | `supabase/migrations/**` |
 | Cron coverage | **`supabase/migrations/**` for `cron.schedule(...)` calls** (pg_cron catalog) **AND** `vercel.json` **AND** `apps/web/app/api/cron/**` route handlers. A handler without a schedule in EITHER catalog is unscheduled; a schedule without a handler is dead. A handler scheduled in BOTH catalogs double-invokes. Always inspect all three together before proposing cron-related changes. |
 | Cache / odds | `lib/odds/**`, Upstash Redis wrappers |
@@ -52,14 +52,14 @@ Good search angles:
 - How do paid betting-picks products (Action Network, Sharp App, Pickswise, BetQL) structure pick confidence, bankroll advice, and tier gates?
 - What UX conventions exist for responsible-gambling disclosure that actually get read?
 - What pick-pipeline patterns reduce silent-failure rates at the ML→LLM boundary?
-- What Next.js App Router patterns keep subscriber pages fast under Vercel's 10s cap?
-- What Supabase Edge Function patterns handle long-running ML work without hitting Vercel's 60s function cap?
+- What Next.js App Router patterns keep subscriber pages fast on Vercel?
+- What Vercel Fluid Compute patterns handle long-running ML work within the 300s ceiling?
 - What calibration/backtesting techniques catch model-drift before subscribers notice?
 
 **Hard constraints — never recommend anything that:**
 - Pushes monthly infra over $300/mo or odds API over $100/mo.
 - Adds a non-Anthropic LLM (OpenAI, Google, local models).
-- Adds hosting beyond Vercel / Supabase / Upstash / Fly.io.
+- Adds hosting beyond Vercel / Supabase / Upstash. Re-introducing a separate worker (Fly.io, etc.) is allowed only as a `kind: infra` proposal with cost evidence.
 - Adds a sportsbook beyond DK+FD in v1 UX.
 - Expands state coverage beyond DK+FD overlap.
 - Adds bet placement, fund custody, non-MLB sports, or a mobile app.

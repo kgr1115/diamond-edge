@@ -31,7 +31,7 @@ Read `CLAUDE.md`. Key constraints:
 - **Odds data budget: $100/mo hard cap.** The Odds API entry tier (~$79/mo). Design polling cadence to stay inside its monthly request quota.
 - **No real-time polling.** Cached/scheduled pulls only.
 - **DK + FD only.** Keep the ingestion config data-driven so adding a book is config, not code.
-- Vercel Cron for light pulls; Supabase Edge Functions for heavier (>10s); Fly.io for overflow. Coordinate runtime choice with DevOps.
+- Vercel Cron + Vercel Functions (Fluid Compute, up to 300s) for all pulls — light or heavy. No Fly.io, no Supabase Edge Functions. If a pull genuinely needs >300s, surface a `kind: infra` proposal first.
 
 ## Deliverable Standard
 

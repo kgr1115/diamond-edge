@@ -1,6 +1,6 @@
 ---
 name: pick-publish
-description: Stage 5b of the pick-improvement pipeline. Final stage on `pick-test` PASS. Commits + pushes per Kyle's standing authorization with model-artifact size guard. Invokes the `pick-publisher` agent. Deploys remain user-invoked (`/deploy-edge`, `/deploy-worker`).
+description: Stage 5b of the pick-improvement pipeline. Final stage on `pick-test` PASS. Commits + pushes per Kyle's standing authorization with model-artifact size guard. Invokes the `pick-publisher` agent. Deploy remains user-invoked (`vercel:deploy prod`).
 argument-hint: [optional — change-set identifier]
 ---
 
@@ -10,8 +10,8 @@ Change-set: `$ARGUMENTS` (or auto-detect post-PASS state)
 
 ## Pre-flight checks (refuse if any fail)
 
-- `pick-test` returned PASS on the change-set.
-- Diff does NOT include `worker/models/*/artifacts/v*` (size guard).
+- `pick-test` returned PASS on the change-set (or, for the v0 cold-start path, CEng signed off in writing per the Cold-Start Lane in CLAUDE.md).
+- Diff does NOT include any binary >50MB under `models/*/` (size guard — large artifacts go to Supabase Storage / Vercel Blob; only the manifest commits).
 - Diff does NOT include any `.env` / `*_KEY` / `*_SECRET` patterns.
 - Diff does NOT weaken compliance copy (no "DO NOT BET" → "BET NOW", no removal of RG disclaimer).
 - Current branch is intentional (do NOT push to `main` unless current branch IS main).
@@ -49,7 +49,7 @@ Standing authorization per CLAUDE.md (2026-04-24).
 
 Do not deploy. Surface:
 
-> Pushed `<hash>` to `<branch>`. Deploys are user-invoked: `/deploy-edge` for the Supabase Edge Function, `/deploy-worker` for the Fly.io worker.
+> Pushed `<hash>` to `<branch>`. Deploy is user-invoked: `vercel:deploy prod`.
 
 ## Hard refusals (full list)
 

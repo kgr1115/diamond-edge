@@ -16,7 +16,7 @@ Your mission: make Diamond Edge tighter and more valuable for MLB bettors subscr
 Walk the repo as a paying Diamond Edge subscriber would. Trace the core user flows end-to-end:
 
 - **Pick slate flow** — `/picks/today` → card list → pick detail. Does information surface cleanly? Are tier gates obvious? Does the loading/empty state work?
-- **Pick pipeline** — `worker/` Python ML service → Supabase Edge Function `pick-pipeline` → Supabase writes → Next.js renders. Where does it fail silently? What would the user see if a stage stalls?
+- **Pick pipeline** — Vercel Function pick-pipeline route (under `apps/web/app/api/cron/pick-pipeline/` or wherever the new analysis layer lives) → model inference → rationale generation → Supabase writes → Next.js renders. Where does it fail silently? What would the user see if a stage stalls?
 - **Bankroll & tracking** — bankroll dashboard, bet delete flow, ROI analytics. Friction points?
 - **Subscription** — sign-up → Stripe checkout → tier gates → bankroll dashboard.
 - **Compliance surface** — age gate, geo-block message, responsible-gambling copy on every pick page.
@@ -28,9 +28,9 @@ For each step, ask: **is there friction the user would pay complexity to remove?
 | Surface | Files to read |
 |---|---|
 | Picks UI | `app/picks/**`, pick-card components, tier-gate logic |
-| Pick pipeline | `supabase/functions/pick-pipeline/**`, `worker/models/**`, `worker/api/**` |
+| Pick pipeline | `apps/web/app/api/cron/pick-pipeline/**` (or wherever the analysis layer lives), `models/**` |
 | Schema | `supabase/migrations/**` |
-| Cache / odds ingestion | `lib/odds/**`, Upstash Redis wrappers, `worker/ingest/**` |
+| Cache / odds ingestion | `lib/odds/**`, Upstash Redis wrappers, `apps/web/app/api/cron/{odds-refresh,schedule-sync,stats-sync,news-poll}/**` |
 | Agent profiles / skills | `.claude/agents/*.md`, `.claude/skills/**/SKILL.md` — are descriptions specific enough for routing? |
 | Onboarding docs | `README.md`, `CLAUDE.md`, `docs/briefs/**`, `docs/adr/**` |
 | Billing / auth | Stripe webhook handlers, Supabase Auth flows, RLS policies |
@@ -49,7 +49,7 @@ Good search angles:
 
 **Hard constraints — scope-gate will deny anything that:**
 - Requires a paid service/API that pushes total monthly infra cost over $300/mo (odds API hard-capped at $100/mo).
-- Adds a non-Anthropic LLM, a new odds provider beyond The Odds API, a new database beyond Supabase, or a new hosting platform beyond Vercel + Fly.io + Supabase + Upstash.
+- Adds a non-Anthropic LLM, a new odds provider beyond The Odds API, a new database beyond Supabase, or a new hosting platform beyond Vercel + Supabase + Upstash. Re-introducing a separate worker (Fly.io, etc.) is allowed only as a `kind: infra` proposal with cost evidence.
 - Adds sportsbook coverage beyond DraftKings + FanDuel in v1 (schema may accommodate more, but UX should not surface them).
 - Expands state availability beyond the DK + FD overlap.
 - Adds non-MLB sports, bet placement, fund custody, or a native mobile app.

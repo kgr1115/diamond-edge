@@ -17,11 +17,11 @@ For each APPROVED proposal:
 
 | Touches | Route to |
 |---|---|
-| Model architecture / training / serving | `mlb-model` |
+| Model architecture / training / serving (Vercel Function) | `mlb-model` |
 | Feature definition / parity / leakage | `mlb-feature-eng` |
 | Calibration method / per-tier audit | `mlb-calibrator` |
 | Rationale prompt / grounding / scrub | `mlb-rationale` |
-| EV / tier threshold (Edge Function) | `mlb-backend` |
+| EV / tier threshold (in API route) | `mlb-backend` |
 | Ingestion cadence / cache TTL | `mlb-data-engineer` |
 | Frontend pick attributes | `mlb-frontend` |
 

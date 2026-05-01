@@ -47,7 +47,7 @@ Scan `git status` output. If any of these paths appear, **REFUSE**:
 - `**/prod*backup*.sql`, `**/prod*dump*`
 - `scripts/run-migrations/del-*.mjs` (ad-hoc delete scripts — review first)
 - Any file matching `*.pem`, `*.key`, `*.p12`
-- `worker/models/**/artifacts/v*` directories unless explicitly staged by tester
+- Binaries >50MB under `models/**/` unless explicitly staged by tester (large artifacts go to Supabase Storage / Vercel Blob; only the manifest commits)
 
 If the guard trips, something got un-gitignored — do not push.
 

@@ -40,9 +40,8 @@ Exercise the change via the smallest realistic scenario. **Never use production 
 |---|---|
 | Next.js page/component | `npm run dev`, open the page, exercise the user flow. Check 0/1/many data states per scope-gate's edge cases. |
 | API route | `curl` / `fetch` the route with a fixture payload. Check auth, validation, happy + error paths. |
-| Supabase Edge Function | `supabase functions serve`, POST a fixture, confirm expected Supabase writes land in a dev project (never prod). |
+| Vercel Function (long-running, cron, ML) | `next dev` (or `vercel dev`), POST a fixture, confirm response shape + expected Supabase writes land in a dev project (never prod). |
 | Supabase migration | Apply to a throwaway branch/project. Confirm schema change + any backfill. Roll back. Verify idempotency. |
-| Worker (Fly.io Python) | Local `uv run` (or equivalent), hit `/health` + the changed endpoint with a fixture. Confirm response shape. |
 | Odds/Stats/Savant ingester | Cached fixture payload (never re-fetch live); run handler; confirm Upstash or Supabase state lands correctly. |
 | ML model code | Load a known-frozen dataset slice, run inference, diff output against expected. Don't retrain unless the proposal explicitly does. |
 | Stripe webhook handler | Use `stripe listen` with a fixture event; verify signature check fires, idempotency works, DB state correct. |

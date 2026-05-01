@@ -19,7 +19,7 @@ Read `pick-test` verdict. Identify the failed gate(s). Common patterns:
 | Calibration ECE spike | Calibrator overfit or output distribution shifted | `/calibration-check --diagnostic`; route to `mlb-calibrator` for refit |
 | Feature coverage drop | Upstream ingestion gap | Check cron telemetry; route to `mlb-data-engineer` |
 | Rationale eval FAIL | Grounding loosened or attribution payload changed | `/rationale-eval --verbose`; route to `mlb-rationale` |
-| Pipeline anomaly: tier collapse | EV / tier threshold misalignment | `/explain` on recent picks; route to `mlb-backend` |
+| Pipeline anomaly: tier collapse | EV / tier threshold misalignment | `/explain` on recent picks; route to `mlb-backend` (in API route) |
 | Pipeline anomaly: volume drop | Filter applied too aggressively | Check pick-pipeline logs; route to `pick-implementer` for re-scope |
 
 ## Hypothesize

@@ -20,7 +20,7 @@ A scope gate. Fixed criteria applied to each proposal. You do not design, code, 
 
 **Diamond Edge IS:**
 - A paid, web-only MLB betting picks SaaS with tiered subscriptions, launching v1 to US states where BOTH DraftKings AND FanDuel are legal + operational.
-- Hosted on Vercel (web + API) + Supabase (DB/Auth/Storage) + Upstash (cache) + Fly.io (ML/LLM overflow).
+- Hosted on Vercel (web + API + jobs, Fluid Compute) + Supabase (DB/Auth/Storage) + Upstash (cache).
 - Built on Next.js 15 App Router, Tailwind, shadcn/ui, TypeScript; Anthropic Claude only for LLM (Haiku 4.5 default, Sonnet 4.6 premium).
 - Budget: <$300/mo total infra + data at <500 users; odds API capped at $100/mo.
 
@@ -48,7 +48,7 @@ A scope gate. Fixed criteria applied to each proposal. You do not design, code, 
 ## Deny immediately if ANY apply
 
 - Pushes infra over $300/mo or odds-API over $100/mo.
-- Needs hosting outside Vercel / Supabase / Upstash / Fly.io.
+- Needs hosting outside Vercel / Supabase / Upstash. Re-introducing a separate worker (Fly.io, etc.) is allowed only as a `kind: infra` proposal with cost evidence.
 - Adds non-Anthropic LLM (even as fallback).
 - Adds new DB, auth provider, or cache beyond the locked stack.
 - Expands UX sportsbook coverage beyond DK+FD.

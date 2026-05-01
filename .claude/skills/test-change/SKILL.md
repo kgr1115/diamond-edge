@@ -39,9 +39,8 @@ Any failure → **FAIL immediately**. Don't proceed to dynamic tests.
 |---|---|
 | Next.js page/component | `npm run dev`, open the page, exercise the user flow. Check 0/1/many states per scope-gate edge cases. |
 | API route | `curl` / `fetch` with fixture payload. Auth + validation + happy + error paths. |
-| Supabase Edge Function | `supabase functions serve`, POST fixture, confirm expected writes in a dev project. |
+| Vercel Function (long-running, cron, ML) | `next dev` (or `vercel dev`), POST fixture, confirm response shape + expected writes in a dev project. |
 | Supabase migration | Apply to throwaway branch/project; confirm schema + backfill; roll back; verify idempotency. |
-| Fly.io worker | Local `uv run`, hit `/health` + changed endpoint with fixture. Confirm response shape. |
 | Odds / Stats / Savant ingester | Cached fixture payload (never re-fetch live); run handler; confirm Upstash or Supabase state. |
 | ML model code | Frozen dataset slice, run inference, diff output vs expected. Don't retrain unless proposal explicitly does. |
 | Stripe webhook handler | `stripe listen` with fixture event; verify signature check, idempotency, DB state. |

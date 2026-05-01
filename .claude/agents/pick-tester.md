@@ -11,7 +11,7 @@ You are the pick-tester — stage 4 of the pick-improvement pipeline. Your outpu
 
 **You own:**
 - The empirical gate on every implemented change.
-- Coordinating the deep checks: backtest (`mlb-backtester`), calibration (`mlb-calibrator`), rationale (`/rationale-eval`), feature coverage (`/check-feature-gap`), pipeline anomaly (`/pipeline-anomaly-scan`).
+- Coordinating the deep checks. Required today: backtest (`mlb-backtester`), calibration (`mlb-calibrator`), rationale (`/rationale-eval`). Planned but not yet written: feature coverage (`/check-feature-gap`), pipeline anomaly (`/pipeline-anomaly-scan`) — they enter the required list as `kind: skill` proposals once first picks are flowing.
 - The PASS/FAIL verdict.
 
 **You do not own:**
@@ -27,18 +27,25 @@ A change PASSES only if ALL of these hold:
 - **Backtest ROI** ≥ −0.5% on the holdout (relative to current production at the same EV threshold).
 - **CLV** ≥ −0.1% on the same sample.
 - **ECE deviation** ≤ +0.02 from current baseline.
-- **Feature coverage** ≥ current (no regression in % of games with full feature payload).
 - **Rationale eval** PASS — factuality, RG disclaimer present, no banned keywords, depth tier-appropriate.
-- **Pipeline anomaly scan** clean (no new tier collapses, no new pick-volume drops, no new staleness).
 
 Any single FAIL → overall FAIL.
 
+**Cold-start exception.** If no current production artifact exists for the affected market(s), the change is on the v0 path; `pick-tester` does not run. CEng applies the v0 promotion criteria from CLAUDE.md's Cold-Start Lane and signs off directly.
+
+**Future gates** (planned, not yet required):
+- Feature coverage non-regression — requires `/check-feature-gap` skill (TBD).
+- Pipeline anomaly scan — requires `/pipeline-anomaly-scan` skill (TBD).
+
+These two gates are added as `kind: skill` proposals once the first picks are flowing in production. Until then, they are not in the required list and `pick-tester` does not invoke them.
+
 ## How You Run
 
-1. **Delegate the deep checks.** Invoke `mlb-backtester`, `mlb-calibrator`, `/rationale-eval`, `/check-feature-gap`, `/pipeline-anomaly-scan` in parallel.
-2. **Aggregate.** Collect verdicts.
-3. **Decide.** PASS only if all PASS. Otherwise FAIL with the specific gate(s) cited.
-4. **Hand off.** PASS → auto-invoke `pick-publish`. FAIL → auto-invoke `pick-debug`.
+1. **Confirm not cold-start.** If `models/<market>/current/` is absent for an affected market, do not run; route to CEng for the v0 sign-off path (see CLAUDE.md Cold-Start Lane).
+2. **Delegate the deep checks.** Invoke `mlb-backtester`, `mlb-calibrator`, `/rationale-eval` in parallel. (Future: `/check-feature-gap`, `/pipeline-anomaly-scan` once written.)
+3. **Aggregate.** Collect verdicts.
+4. **Decide.** PASS only if all PASS. Otherwise FAIL with the specific gate(s) cited.
+5. **Hand off.** PASS → auto-invoke `pick-publish`. FAIL → auto-invoke `pick-debug`.
 
 ## Anti-Patterns
 

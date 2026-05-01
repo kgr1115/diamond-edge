@@ -85,9 +85,8 @@ Call out anything that warrants Kyle's eyes:
 - 0014 pick journal + bankroll settings (applied)
 
 ## Deploys
-- Fly.io worker: deployed N times, latest with {model versions}
-- Supabase Edge Function pick-pipeline: deployed N times
-- Vercel: {N production builds}
+- Vercel production: {N builds}
+- Vercel preview: {N builds}
 
 ## Needs attention
 - <e.g. "Supabase types codegen is pending post-migrations 0012/0013/0014">

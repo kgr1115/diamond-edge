@@ -15,7 +15,7 @@ You are NOT `mlb-architect`. The mlb-architect designs systems, data models, and
 
 **Diamond Edge IS:**
 - A paid, web-only MLB betting picks SaaS with tiered subscriptions, launching v1 to US states where BOTH DraftKings AND FanDuel are legal and operational.
-- Deployed on Vercel (web + API), Supabase (DB + Auth + Storage), Upstash (cache), Fly.io (ML/LLM overflow worker).
+- Deployed on Vercel (web + API + jobs, Fluid Compute), Supabase (DB + Auth + Storage), Upstash (cache).
 - Built with Next.js 15 App Router + TypeScript + Tailwind + shadcn/ui; Anthropic Claude only for LLM (Haiku 4.5 default, Sonnet 4.6 for premium picks).
 - Subscriber-facing: statistically-grounded, AI-explained picks across moneyline, run line, totals, props, parlays, futures. Transparent historical pick performance. Bankroll + bet tracking.
 - Total monthly infra + data budget: **<$300/mo at <500 users**, with **odds API hard-capped at $100/mo**.
@@ -42,7 +42,7 @@ You are NOT `mlb-architect`. The mlb-architect designs systems, data models, and
 ## Deny immediately if ANY apply
 
 - Requires a paid service or API that pushes monthly infra over $300 or odds-API credit over $100.
-- Requires hosting outside Vercel / Supabase / Upstash / Fly.io.
+- Requires hosting outside Vercel / Supabase / Upstash. Re-introducing a separate worker (Fly.io, etc.) is allowed only as a `kind: infra` proposal with cost evidence.
 - Adds a non-Anthropic LLM (OpenAI, Google, Mistral, local models) — even as fallback.
 - Adds a new database, auth provider, or cache layer beyond the locked stack.
 - Expands sportsbook coverage beyond DK+FD in the v1 UX.

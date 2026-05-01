@@ -64,9 +64,9 @@ List every file you'll touch. One sentence per file. If >~5 files, hand back to 
 | Supabase migrations, API routes, RLS, Stripe, auth | `mlb-backend` | New schema, new API surface, auth-flow changes |
 | Next.js pages, Server Components, tier-gate UX, shadcn | `mlb-frontend` | New user-facing surface, complex RSC architecture |
 | The Odds API, MLB Stats, Statcast, Upstash cache | `mlb-data-engineer` | New ingestion, new cache key scheme, odds rate-limit tuning |
-| ML features, model training, backtesting, calibration | `mlb-ml-engineer` | Feature eng changes, model artifacts, calibration |
-| Claude prompt design, rationale gen, token budgeting | `mlb-ai-reasoning` | Rationale prompts, cache-hit optimization |
-| Vercel, Supabase config, Fly.io, GitHub Actions, DNS | `mlb-devops` | Infra, CI, secrets, monitoring |
+| Features / training / serving / calibration / backtesting / methodology | `mlb-feature-eng`, `mlb-model`, `mlb-calibrator`, `mlb-backtester`, `mlb-research` | The 5-way analysis substack — pick the agent matching the change |
+| Claude prompt design, rationale gen, token budgeting | `mlb-rationale` | Rationale prompts, cache-hit optimization |
+| Vercel config, Supabase config, GitHub Actions, DNS | `mlb-devops` | Infra, CI, secrets, monitoring |
 | State legality, disclaimers, ToS, responsible gambling | `mlb-compliance` | Any legal/compliance copy change |
 
 For small, obvious edits inside these surfaces, just do it yourself. For new design decisions in the surface, spawn the specialist. You remain accountable for the final diff.
@@ -80,7 +80,7 @@ Populate this table as real incidents compound. Seed entries reflect the locked 
 | Check | Rule |
 |---|---|
 | `--dangerously-skip-permissions` | Never. Use scoped `permissions.allow` in `.claude/settings.local.json`. |
-| Vercel function timeout | 10s default / 60s configured cap. Anything longer → Supabase Edge Function (up to ~150s) or Fly.io worker (no cap). |
+| Vercel function timeout | 60s default; opt in to longer with `export const maxDuration = N` up to 300 (Fluid Compute). >300s is a `kind: infra` proposal. |
 | Supabase RLS | Every new user-scoped table ships RLS policies in the same migration. No exceptions. |
 | Odds-API credit burn | Any code hitting The Odds API routes through `lib/odds/` cache wrapper. Never cold-fetch in a render path. |
 | Stripe webhook | Always verify `Stripe-Signature` first; idempotency key on every DB write. |
@@ -95,11 +95,10 @@ Populate this table as real incidents compound. Seed entries reflect the locked 
 
 - `npx tsc --noEmit` on affected TS/TSX.
 - Project lint (`npm run lint` or equivalent) on the diff.
-- `python -m py_compile` or `ruff check` on affected Python (worker).
+- `python -m py_compile` or `ruff check` on affected Python (Vercel Function routes that run Python).
 - JSON/YAML files: parse with the appropriate loader.
 - Supabase migration: dry-run on a local branch/dev project. NEVER run against prod from this step.
-- Supabase Edge Function: `supabase functions serve` + fixture payload. DO NOT deploy — that's the user-invoked `deploy-edge` skill.
-- Fly.io worker: `uv run` (or equivalent) locally, hit `/health` + changed endpoint with fixture. DO NOT redeploy — user invokes `deploy-worker`.
+- Vercel API route: `next dev` (or `vercel dev`) + fixture body, confirm response shape. DO NOT deploy — `vercel:deploy` is user-invoked.
 - Agent profile or skill: frontmatter parses, `name` matches filename/dir, description ≤3 sentences / ≤500 chars / routing-specific.
 - Stripe change: signature-verification still first check, idempotency keys still present.
 - Compliance copy: grep the diff for deleted disclaimer wording — flag any shrinkage.

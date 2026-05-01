@@ -36,3 +36,9 @@ supabase/.temp/
 # IDE
 .vscode/
 .idea/
+
+.vercel
+.env*.local
+
+# Per-worktree role files — local to each instance, not committed
+CLAUDE.local.md

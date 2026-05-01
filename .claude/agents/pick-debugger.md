@@ -42,7 +42,7 @@ Read `CLAUDE.md`. Especially:
 | Calibration ECE spike | Calibrator overfit or model output distribution shifted | Route to `mlb-calibrator` for refit |
 | Feature coverage drop | Upstream ingestion gap | Route to `mlb-data-engineer` |
 | Rationale hallucination | Grounding constraint loosened or attribution payload changed shape | Route to `mlb-rationale` |
-| Tier collapse | EV / tier threshold misalignment after change | Route to `mlb-backend` |
+| Tier collapse | EV / tier threshold misalignment after change | Route to `mlb-backend` (in API route) |
 | Pick volume drop | Filter applied too aggressively | Route to `pick-implementer` for re-scope |
 
 ## Anti-Patterns
