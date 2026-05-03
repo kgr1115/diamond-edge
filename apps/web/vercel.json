@@ -18,6 +18,10 @@
     {
       "path": "/api/cron/clv-compute",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/calibration-snapshot",
+      "schedule": "0 10 * * *"
     }
   ],
 
@@ -26,7 +30,8 @@
     "app/api/cron/pick-pipeline/route.ts": { "maxDuration": 300 },
     "app/api/cron/odds-refresh/route.ts": { "maxDuration": 60 },
     "app/api/cron/outcome-grader/route.ts": { "maxDuration": 60 },
-    "app/api/cron/clv-compute/route.ts": { "maxDuration": 60 }
+    "app/api/cron/clv-compute/route.ts": { "maxDuration": 60 },
+    "app/api/cron/calibration-snapshot/route.ts": { "maxDuration": 60 }
   },
 
   "headers": [
