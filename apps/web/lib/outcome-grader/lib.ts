@@ -278,7 +278,37 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
 
   console.info(JSON.stringify({ level: 'info', event: 'outcome_grader_picks_loaded', pending_count: picks.length }));
 
-  if (picks.length === 0) {
+  // Second query path: pending picks attached to games that will never reach
+  // 'final' status (postponed / cancelled / suspended). MLB rules void wagers
+  // on these games. Without this path, picks would sit pending forever.
+  // The pending filter is mandatory for idempotency — re-runs must not flip
+  // already-voided picks back through the pipeline.
+  const VOID_STATUSES = ['postponed', 'cancelled', 'suspended'] as const;
+  const { data: voidPicksData, error: voidPicksError } = await supabase
+    .from('picks')
+    .select(`
+      id, game_id,
+      games!inner ( status )
+    `)
+    .eq('result', 'pending')
+    .in('games.status', VOID_STATUSES as unknown as string[]);
+
+  if (voidPicksError) {
+    console.error(JSON.stringify({ level: 'error', event: 'outcome_grader_void_fetch_failed', error: voidPicksError.message }));
+    return NextResponse.json(
+      { graded: 0, wins: 0, losses: 0, pushes: 0, voids: 0, errors: [voidPicksError.message], durationMs: Date.now() - startMs },
+      { status: 500 },
+    );
+  }
+
+  const voidPicks = (voidPicksData ?? []) as unknown as Array<{
+    id: string; game_id: string;
+    games: { status: string };
+  }>;
+
+  console.info(JSON.stringify({ level: 'info', event: 'outcome_grader_void_picks_loaded', void_pending_count: voidPicks.length }));
+
+  if (picks.length === 0 && voidPicks.length === 0) {
     const durationMs = Date.now() - startMs;
     console.info(JSON.stringify({ level: 'info', event: 'outcome_grader_complete', graded: 0, durationMs }));
     return NextResponse.json({ graded: 0, wins: 0, losses: 0, pushes: 0, voids: 0, errors: [], durationMs }, { status: 200 });
@@ -286,6 +316,18 @@ export async function runOutcomeGrader(): Promise<NextResponse<OutcomeGraderResu
 
   const outcomes: GradingOutcome[] = [];
   const errors: string[] = [];
+
+  for (const v of voidPicks) {
+    outcomes.push({
+      pick_id: v.id,
+      game_id: v.game_id,
+      result: 'void',
+      home_score: 0,
+      away_score: 0,
+      pnl_units: 0,
+      notes: `game ${v.games.status}`,
+    });
+  }
 
   for (const row of picks) {
     const { id: pick_id, game_id, market, pick_side, best_line_price } = row;
