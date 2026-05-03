@@ -15,9 +15,9 @@
 
   "functions": {
     "app/api/cron/schedule-sync/route.ts": { "maxDuration": 60 },
-    "app/api/cron/pick-pipeline/route.ts": { "maxDuration": 10 },
+    "app/api/cron/pick-pipeline/route.ts": { "maxDuration": 300 },
     "app/api/cron/odds-refresh/route.ts": { "maxDuration": 60 },
-    "app/api/cron/outcome-grader/route.ts": { "maxDuration": 10 }
+    "app/api/cron/outcome-grader/route.ts": { "maxDuration": 60 }
   },
 
   "headers": [
