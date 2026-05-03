@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createServiceRoleClient } from '@/lib/supabase/server';
+import { unitProfit, unitsRoiPct } from '@/lib/roi/units';
 
 export const dynamic = 'force-dynamic';
 
@@ -99,16 +100,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     games: { game_time_utc: string | null } | null;
   }>;
 
-  const unitProfit = (price: number | null): number => {
-    const p = price ?? -110;
-    return p >= 100 ? p / 100 : 100 / Math.abs(p);
-  };
+  // unitProfit + unitsRoiPct live in lib/roi/units.ts so /api/bankroll computes
+  // ROI identically. Local breakdowns below still use unitProfit directly because
+  // they slice by market / confidence / lead-time.
 
   let wins = 0;
   let losses = 0;
   let pushes = 0;
-  let totalUnitsRisked = 0;
-  let totalReturn = 0;
 
   const byMarket: Record<string, { picks: number; wins: number; win_rate: number; roi_pct: number }> = {};
 
@@ -120,19 +118,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (row.result === 'win') {
       wins++;
       byMarket[mkt].wins++;
-      // Profit in units based on best_line_price; default -110 if null
-      const price = row.best_line_price ?? -110;
-      const profit = price >= 100 ? price / 100 : 100 / Math.abs(price);
-      totalReturn += profit;
     } else if (row.result === 'loss') {
       losses++;
-      totalReturn -= 1;
     } else if (row.result === 'push') {
       pushes++;
-    }
-
-    if (row.result !== 'pending' && row.result !== 'void') {
-      totalUnitsRisked += 1;
     }
   }
 
@@ -270,9 +259,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const gradedTotal = wins + losses;
   const winRate = gradedTotal > 0 ? wins / gradedTotal : 0;
-  const roiPct = totalUnitsRisked > 0
-    ? Math.round((totalReturn / totalUnitsRisked) * 10000) / 100
-    : 0;
+  const roiPct = unitsRoiPct(
+    statsRows.map((r) => ({ outcome: r.result, price: r.best_line_price })),
+  );
 
   // Per-pick line lookup (total_line for totals, run_line_spread for run-line picks).
   // Mirrors the per-pick odds-pinning logic in lib/picks/load-slate.ts: match the

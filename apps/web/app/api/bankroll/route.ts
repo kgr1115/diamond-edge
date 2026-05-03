@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
+import { unitsRoiPct } from '@/lib/roi/units';
 
 export const dynamic = 'force-dynamic';
 
@@ -135,15 +136,22 @@ export async function GET(): Promise<NextResponse> {
 
   const gradedCount = winCount + lossCount;
   const winRate = gradedCount > 0 ? winCount / gradedCount : 0;
-  const roi = totalWageredCents > 0 ? (totalPLCents / totalWageredCents) * 100 : 0;
 
-  // Units are expressed as fraction of a single bet (1u = 1 bet unit). We track units
-  // by normalising each bet to its stake. Without a user-defined unit size, 1u = 1 bet.
-  // The client overlays the dollar unit size to get actual dollar P&L per unit.
+  // ROI must match /api/history exactly — both surfaces label the number "ROI"
+  // and divergence between them is a credibility break. Units-based formula
+  // (1 unit = 1 bet, win profit from American odds, loss = -1u) lives in
+  // lib/roi/units.ts. Dollar totals below remain dollar-weighted because
+  // they're wager totals, not return rates.
+  const roiPct = unitsRoiPct(
+    entries
+      .filter((e) => e.outcome === 'win' || e.outcome === 'loss')
+      .map((e) => ({ outcome: e.outcome, price: e.odds_price })),
+  );
+
   const summary: BankrollSummary = {
     total_wagered_cents: totalWageredCents,
     total_profit_loss_cents: totalPLCents,
-    roi_pct: Math.round(roi * 100) / 100,
+    roi_pct: roiPct,
     win_count: winCount,
     loss_count: lossCount,
     push_count: pushCount,
