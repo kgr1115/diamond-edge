@@ -1,0 +1,259 @@
+{
+  "trained_at_utc": "2026-05-04T04:59:42.501091+00:00",
+  "holdout_declaration_id": "moneyline-v0-holdout-2026-05-03",
+  "architecture": "logistic_regression_anchor_plus_11_residuals",
+  "training_n": 3282,
+  "holdout_n": 609,
+  "label_rate": {
+    "train_home_win": 0.5195003046922608,
+    "holdout_home_win": 0.4975369458128079
+  },
+  "anchor_coefficient_point_estimate": 0.9766701437492082,
+  "anchor_coefficient_ci_95": [
+    0.7813577293499999,
+    1.1719825581484167
+  ],
+  "anchor_coefficient_se_wald": 0.09964919102000426,
+  "sum_abs_residuals_post_scaling": 0.29517062870500027,
+  "variance_collapse_flag": false,
+  "variance_collapse_floor": 0.05,
+  "log_loss": {
+    "train": 0.6747853937503739,
+    "holdout_raw": 0.6757125017897483,
+    "market_prior": 0.6779609825173494,
+    "delta_vs_market_prior": 0.0022484807276010876,
+    "delta_positive_means_model_better": true
+  },
+  "calibration": {
+    "ece_raw_holdout": 0.030377641065184462,
+    "max_calibration_deviation_raw": 0.18730147124789542,
+    "ece_calibrated_holdout": 0.030377641065184462,
+    "max_calibration_deviation_calibrated": 0.18730147124789542,
+    "ece_target": 0.04,
+    "isotonic_applied": false,
+    "reliability_bins_raw": [
+      {
+        "bin": 0,
+        "lo": 0.0,
+        "hi": 0.1,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      },
+      {
+        "bin": 1,
+        "lo": 0.1,
+        "hi": 0.2,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      },
+      {
+        "bin": 2,
+        "lo": 0.2,
+        "hi": 0.30000000000000004,
+        "n": 9,
+        "mean_p": 0.27374339353402505,
+        "obs_rate": 0.2222222222222222
+      },
+      {
+        "bin": 3,
+        "lo": 0.30000000000000004,
+        "hi": 0.4,
+        "n": 39,
+        "mean_p": 0.368867794437481,
+        "obs_rate": 0.2564102564102564
+      },
+      {
+        "bin": 4,
+        "lo": 0.4,
+        "hi": 0.5,
+        "n": 193,
+        "mean_p": 0.4577771646171016,
+        "obs_rate": 0.44041450777202074
+      },
+      {
+        "bin": 5,
+        "lo": 0.5,
+        "hi": 0.6000000000000001,
+        "n": 257,
+        "mean_p": 0.5472005392699146,
+        "obs_rate": 0.5214007782101168
+      },
+      {
+        "bin": 6,
+        "lo": 0.6000000000000001,
+        "hi": 0.7000000000000001,
+        "n": 100,
+        "mean_p": 0.6360860133663384,
+        "obs_rate": 0.62
+      },
+      {
+        "bin": 7,
+        "lo": 0.7000000000000001,
+        "hi": 0.8,
+        "n": 11,
+        "mean_p": 0.7217894378430136,
+        "obs_rate": 0.9090909090909091
+      },
+      {
+        "bin": 8,
+        "lo": 0.8,
+        "hi": 0.9,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      },
+      {
+        "bin": 9,
+        "lo": 0.9,
+        "hi": 1.0,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      }
+    ],
+    "reliability_bins_calibrated": [
+      {
+        "bin": 0,
+        "lo": 0.0,
+        "hi": 0.1,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      },
+      {
+        "bin": 1,
+        "lo": 0.1,
+        "hi": 0.2,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      },
+      {
+        "bin": 2,
+        "lo": 0.2,
+        "hi": 0.30000000000000004,
+        "n": 9,
+        "mean_p": 0.27374339353402505,
+        "obs_rate": 0.2222222222222222
+      },
+      {
+        "bin": 3,
+        "lo": 0.30000000000000004,
+        "hi": 0.4,
+        "n": 39,
+        "mean_p": 0.368867794437481,
+        "obs_rate": 0.2564102564102564
+      },
+      {
+        "bin": 4,
+        "lo": 0.4,
+        "hi": 0.5,
+        "n": 193,
+        "mean_p": 0.4577771646171016,
+        "obs_rate": 0.44041450777202074
+      },
+      {
+        "bin": 5,
+        "lo": 0.5,
+        "hi": 0.6000000000000001,
+        "n": 257,
+        "mean_p": 0.5472005392699146,
+        "obs_rate": 0.5214007782101168
+      },
+      {
+        "bin": 6,
+        "lo": 0.6000000000000001,
+        "hi": 0.7000000000000001,
+        "n": 100,
+        "mean_p": 0.6360860133663384,
+        "obs_rate": 0.62
+      },
+      {
+        "bin": 7,
+        "lo": 0.7000000000000001,
+        "hi": 0.8,
+        "n": 11,
+        "mean_p": 0.7217894378430136,
+        "obs_rate": 0.9090909090909091
+      },
+      {
+        "bin": 8,
+        "lo": 0.8,
+        "hi": 0.9,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      },
+      {
+        "bin": 9,
+        "lo": 0.9,
+        "hi": 1.0,
+        "n": 0,
+        "mean_p": null,
+        "obs_rate": null
+      }
+    ]
+  },
+  "ev_threshold_sweep": {
+    "+1pct": {
+      "ev_threshold": 0.01,
+      "n_picks": 505,
+      "roi_unit_mean": 0.08307676115762223,
+      "roi_ci_lower": -0.015604890431550953,
+      "roi_ci_upper": 0.17634774889963567,
+      "clv_unit_mean": 0.0,
+      "clv_ci_lower": 0.0,
+      "clv_ci_upper": 0.0,
+      "clv_note": "By v0 construction (training source = closing source = DK+FD via The Odds API), CLV is identically 0. Independent CLV grading enters once the live cron starts capturing closing snaps a few minutes apart from the model's anchor pin."
+    },
+    "+2pct": {
+      "ev_threshold": 0.02,
+      "n_picks": 416,
+      "roi_unit_mean": 0.11328438977286634,
+      "roi_ci_lower": 0.006733696696617499,
+      "roi_ci_upper": 0.22647061033825452,
+      "clv_unit_mean": 0.0,
+      "clv_ci_lower": 0.0,
+      "clv_ci_upper": 0.0,
+      "clv_note": "By v0 construction (training source = closing source = DK+FD via The Odds API), CLV is identically 0. Independent CLV grading enters once the live cron starts capturing closing snaps a few minutes apart from the model's anchor pin."
+    },
+    "+3pct": {
+      "ev_threshold": 0.03,
+      "n_picks": 339,
+      "roi_unit_mean": 0.11385496218515712,
+      "roi_ci_lower": 0.003157458942621696,
+      "roi_ci_upper": 0.2330760357953615,
+      "clv_unit_mean": 0.0,
+      "clv_ci_lower": 0.0,
+      "clv_ci_upper": 0.0,
+      "clv_note": "By v0 construction (training source = closing source = DK+FD via The Odds API), CLV is identically 0. Independent CLV grading enters once the live cron starts capturing closing snaps a few minutes apart from the model's anchor pin."
+    }
+  },
+  "default_ev_threshold": 0.02,
+  "sub_300_variance_aware_rule": {
+    "applies": false,
+    "pass": true,
+    "rule": "If 200 <= n_picks < 300, lower CI bound on ROI AND CLV must be >= -1%"
+  },
+  "picks_per_day_distribution_at_default_threshold": {
+    "n_days": 73,
+    "mean": 5.698630136986301,
+    "median": 6.0,
+    "min": 1,
+    "max": 11,
+    "p25": 4.0,
+    "p75": 8.0
+  },
+  "credit_reconciliation_for_backfill": "see docs/audits/moneyline-v0-pergame-repull-receipt-*.json",
+  "promotion_gate_summary": {
+    "roi_holdout_at_default": 0.11328438977286634,
+    "roi_ci_lower": 0.006733696696617499,
+    "ece_calibrated": 0.030377641065184462,
+    "n_picks_default": 416,
+    "sub_300_rule_pass": true,
+    "ece_pass": true,
+    "log_loss_beats_market": true
+  }
+}

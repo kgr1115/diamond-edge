@@ -212,14 +212,24 @@ def main() -> None:
     p_train = model.predict_proba(X_train)[:, 1]
     W = p_train * (1 - p_train)
     XtWX = X_train.T @ (W[:, None] * X_train)
+    # Wald CI via cov = inv(X'WX). If the design matrix has rank-deficient
+    # columns (e.g., a residual that is constant after scaling because the
+    # underlying source is fully imputed to a league average), fall back to
+    # a Moore-Penrose pseudo-inverse so the anchor's CI is still computable.
     try:
         cov = np.linalg.inv(XtWX)
         se_anchor = float(math.sqrt(cov[0, 0]))
-        anchor_ci_lo = anchor_coef - 1.96 * se_anchor
-        anchor_ci_hi = anchor_coef + 1.96 * se_anchor
+        cov_method = "inv"
     except np.linalg.LinAlgError:
-        se_anchor = float("nan")
-        anchor_ci_lo, anchor_ci_hi = float("nan"), float("nan")
+        cov = np.linalg.pinv(XtWX)
+        se_anchor = float(math.sqrt(abs(cov[0, 0])))
+        cov_method = "pinv_fallback"
+    if not math.isfinite(se_anchor):
+        cov = np.linalg.pinv(XtWX)
+        se_anchor = float(math.sqrt(abs(cov[0, 0])))
+        cov_method = "pinv_fallback"
+    anchor_ci_lo = anchor_coef - 1.96 * se_anchor
+    anchor_ci_hi = anchor_coef + 1.96 * se_anchor
 
     print(
         f"[fit] anchor_coef={anchor_coef:.4f}  ci=({anchor_ci_lo:.4f}, {anchor_ci_hi:.4f})  "
@@ -469,7 +479,7 @@ def main() -> None:
 Logistic regression. One anchor feature (`{ANCHOR_FEATURE}`) plus 11 standardized
 residual features. L2 regularization at C=1.0; intercept fit. The anchor is NOT
 standardized — it stays in log-odds space so the coefficient is interpretable
-(coefficient ≈ 1 implies the model accepts the market's information; far from 1
+(coefficient near 1 implies the model accepts the market's information; far from 1
 implies systematic edge or systematic underweight).
 
 ## Source-of-truth invariant
@@ -527,7 +537,7 @@ Applies: **{sub_300_rule_applies}**. Pass: **{sub_300_pass}**.
 - `feature-coefficients.json` — coefficients + variance-collapse flag
 - `holdout-predictions.parquet` — per-game raw + calibrated predictions
 """
-    (ARTIFACT_DIR / "architecture.md").write_text(arch_md)
+    (ARTIFACT_DIR / "architecture.md").write_text(arch_md, encoding="utf-8")
 
     print(f"\n[done] Artifact dir: {ARTIFACT_DIR}")
     print(f"[done] Promotion gate summary:")
