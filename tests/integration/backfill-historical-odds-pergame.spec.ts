@@ -29,8 +29,8 @@ describe('computeSnapshotParam — per-game snapshot offset (bug-fix regression)
     // Night game: 2024-08-15 23:10:00 UTC (7:10pm ET)
     const gameTime = '2024-08-15T23:10:00Z';
     const result = computeSnapshotParam(gameTime);
-    // Expected: 2024-08-15 21:55:00 UTC
-    expect(result).toBe('2024-08-15T21:55:00.000Z');
+    // Expected: 2024-08-15 21:55:00 UTC, in API-accepted format (no milliseconds)
+    expect(result).toBe('2024-08-15T21:55:00Z');
   });
 
   it('correctly handles cross-midnight cases (night game starting after 00:00 UTC)', () => {
@@ -38,14 +38,14 @@ describe('computeSnapshotParam — per-game snapshot offset (bug-fix regression)
     // Subtracting 75min should land us at 2024-08-16 00:55:00 UTC
     const gameTime = '2024-08-16T02:10:00Z';
     const result = computeSnapshotParam(gameTime);
-    expect(result).toBe('2024-08-16T00:55:00.000Z');
+    expect(result).toBe('2024-08-16T00:55:00Z');
   });
 
   it('handles backward-cross-midnight (night game just after midnight UTC)', () => {
     // Game at 2024-08-16 00:30:00 UTC. T-75min = 2024-08-15 23:15:00 UTC
     const gameTime = '2024-08-16T00:30:00Z';
     const result = computeSnapshotParam(gameTime);
-    expect(result).toBe('2024-08-15T23:15:00.000Z');
+    expect(result).toBe('2024-08-15T23:15:00Z');
   });
 
   it('handles afternoon games', () => {
@@ -53,13 +53,23 @@ describe('computeSnapshotParam — per-game snapshot offset (bug-fix regression)
     // T-75min = 2024-07-04 15:50:00 UTC
     const gameTime = '2024-07-04T17:05:00Z';
     const result = computeSnapshotParam(gameTime);
-    expect(result).toBe('2024-07-04T15:50:00.000Z');
+    expect(result).toBe('2024-07-04T15:50:00Z');
   });
 
   it('accepts a Date object input', () => {
     const gameTime = new Date('2024-08-15T23:10:00Z');
     const result = computeSnapshotParam(gameTime);
-    expect(result).toBe('2024-08-15T21:55:00.000Z');
+    expect(result).toBe('2024-08-15T21:55:00Z');
+  });
+
+  it('strips milliseconds from output (API rejects .000Z with INVALID_HISTORICAL_TIMESTAMP)', () => {
+    // The Odds API historical endpoint returns HTTP 422 for any date param
+    // with millisecond precision. Document the constraint via the test so
+    // a future refactor that swaps to an ISO library that emits .000Z
+    // can't silently break the integration.
+    const result = computeSnapshotParam('2024-08-15T23:10:00.123Z');
+    expect(result).not.toMatch(/\.\d+Z$/);
+    expect(result).toBe('2024-08-15T21:55:00Z');
   });
 
   it('throws on invalid input rather than silently returning wall-clock time', () => {
@@ -79,7 +89,7 @@ describe('computeSnapshotParam — per-game snapshot offset (bug-fix regression)
       setTimeout(() => {
         const r2 = computeSnapshotParam(gameTime);
         expect(r2).toBe(r1);
-        expect(r1).toBe('2024-08-15T21:55:00.000Z');
+        expect(r1).toBe('2024-08-15T21:55:00Z');
         resolve();
       }, 50);
     });
@@ -103,9 +113,12 @@ describe('Loader contract: snapshotted_at must come from API response.timestamp'
     // the loader reads. Source: tested against actual responses on 2024-07-23
     // during the snap-param probe.
     const fixturePayload = {
-      timestamp: '2024-08-15T21:55:00.000Z',  // ← THIS is what becomes snapshotted_at
-      previous_timestamp: '2024-08-15T21:50:00.000Z',
-      next_timestamp: '2024-08-15T22:00:00.000Z',
+      // Verbatim shape from a real Odds API historical response (probed
+      // against 2024-07-22T22:50:00Z on 2026-05-03; returned 22:45:37Z).
+      // The API emits second-precision UTC timestamps without milliseconds.
+      timestamp: '2024-08-15T21:55:37Z',  // ← THIS is what becomes snapshotted_at
+      previous_timestamp: '2024-08-15T21:50:37Z',
+      next_timestamp: '2024-08-15T22:00:37Z',
       data: [
         {
           id: 'apigame-uuid',

@@ -28,5 +28,8 @@ export function computeSnapshotParam(gameTimeUtc: Date | string): string {
     throw new Error(`Invalid game_time_utc: ${String(gameTimeUtc)}`);
   }
   const target = new Date(t.getTime() - SNAPSHOT_OFFSET_MIN * 60 * 1000);
-  return target.toISOString();
+  // The Odds API historical endpoint REJECTS millisecond-precision ISO 8601
+  // (returns 422 INVALID_HISTORICAL_TIMESTAMP). Strip the .000 to get the
+  // YYYY-MM-DDTHH:MM:SSZ form the API actually accepts.
+  return target.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }

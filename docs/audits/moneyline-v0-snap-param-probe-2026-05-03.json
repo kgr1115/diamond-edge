@@ -1,0 +1,161 @@
+{
+  "probe_date": "2024-07-23",
+  "probed_at_utc": "2026-05-04T01:50:50.438Z",
+  "initial_credits_used": 39,
+  "final_credits_used": 169,
+  "total_burn": 130,
+  "hard_halt_threshold": 500,
+  "tolerance_minutes": 15,
+  "pass_threshold_pct": 0.8,
+  "results": [
+    {
+      "game": "Chicago White Sox @ Texas Rangers",
+      "gameStart": "2024-07-23 00:05:00+00",
+      "target": "2024-07-22T22:50:00Z",
+      "returnedSnap": "2024-07-22T22:45:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Milwaukee Brewers @ Chicago Cubs",
+      "gameStart": "2024-07-23 00:05:00+00",
+      "target": "2024-07-22T22:50:00Z",
+      "returnedSnap": "2024-07-22T22:45:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Arizona Diamondbacks @ Kansas City Royals",
+      "gameStart": "2024-07-23 00:10:00+00",
+      "target": "2024-07-22T22:55:00Z",
+      "returnedSnap": "2024-07-22T22:50:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Boston Red Sox @ Colorado Rockies",
+      "gameStart": "2024-07-23 00:40:00+00",
+      "target": "2024-07-22T23:25:00Z",
+      "returnedSnap": "2024-07-22T23:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Houston Astros @ Athletics",
+      "gameStart": "2024-07-23 01:40:00+00",
+      "target": "2024-07-23T00:25:00Z",
+      "returnedSnap": "2024-07-23T00:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Los Angeles Angels @ Seattle Mariners",
+      "gameStart": "2024-07-23 01:40:00+00",
+      "target": "2024-07-23T00:25:00Z",
+      "returnedSnap": "2024-07-23T00:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "San Francisco Giants @ Los Angeles Dodgers",
+      "gameStart": "2024-07-23 02:10:00+00",
+      "target": "2024-07-23T00:55:00Z",
+      "returnedSnap": "2024-07-23T00:50:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Baltimore Orioles @ Miami Marlins",
+      "gameStart": "2024-07-23 22:40:00+00",
+      "target": "2024-07-23T21:25:00Z",
+      "returnedSnap": "2024-07-23T21:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Detroit Tigers @ Cleveland Guardians",
+      "gameStart": "2024-07-23 22:40:00+00",
+      "target": "2024-07-23T21:25:00Z",
+      "returnedSnap": "2024-07-23T21:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "St. Louis Cardinals @ Pittsburgh Pirates",
+      "gameStart": "2024-07-23 22:40:00+00",
+      "target": "2024-07-23T21:25:00Z",
+      "returnedSnap": "2024-07-23T21:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "San Diego Padres @ Washington Nationals",
+      "gameStart": "2024-07-23 22:45:00+00",
+      "target": "2024-07-23T21:30:00Z",
+      "returnedSnap": "2024-07-23T21:25:38Z",
+      "deltaMinutes": -4.366666666666666,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "New York Mets @ New York Yankees",
+      "gameStart": "2024-07-23 23:05:00+00",
+      "target": "2024-07-23T21:50:00Z",
+      "returnedSnap": "2024-07-23T21:45:38Z",
+      "deltaMinutes": -4.366666666666666,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Tampa Bay Rays @ Toronto Blue Jays",
+      "gameStart": "2024-07-23 23:07:00+00",
+      "target": "2024-07-23T21:52:00Z",
+      "returnedSnap": "2024-07-23T21:50:37Z",
+      "deltaMinutes": -1.3833333333333333,
+      "status": "PASS",
+      "nGamesInResponse": 23
+    },
+    {
+      "game": "Philadelphia Phillies @ Minnesota Twins",
+      "gameStart": "2024-07-23 23:40:00+00",
+      "target": "2024-07-23T22:25:00Z",
+      "returnedSnap": "2024-07-23T22:20:37Z",
+      "deltaMinutes": -4.383333333333334,
+      "status": "PASS",
+      "nGamesInResponse": 25
+    }
+  ],
+  "summary": {
+    "probed_total": 14,
+    "passes": 14,
+    "fails": 0,
+    "no_snaps": 0,
+    "http_errors": 0,
+    "pass_rate": 1,
+    "distinct_returned_snaps": 10,
+    "distinct_snap_samples": [
+      "2024-07-22T22:45:37Z",
+      "2024-07-22T22:50:37Z",
+      "2024-07-22T23:20:37Z",
+      "2024-07-23T00:20:37Z",
+      "2024-07-23T00:50:37Z",
+      "2024-07-23T21:20:37Z",
+      "2024-07-23T21:25:38Z",
+      "2024-07-23T21:45:38Z",
+      "2024-07-23T21:50:37Z",
+      "2024-07-23T22:20:37Z"
+    ]
+  },
+  "verdict": "PASS",
+  "next_step": "execute_option_b"
+}
