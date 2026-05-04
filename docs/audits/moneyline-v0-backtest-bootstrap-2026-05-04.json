@@ -1,0 +1,50 @@
+{
+  "computed_at_utc": "2026-05-04T05:02:08.061278+00:00",
+  "holdout_n": 609,
+  "n_bootstrap": 1000,
+  "seed": 20260504,
+  "log_loss_delta_vs_market": {
+    "point_estimate": 0.0022484807276010876,
+    "bootstrap_mean": 0.0021408253671219317,
+    "ci_95_lo": -0.0025195537676610505,
+    "ci_95_hi": 0.0070996520881796196,
+    "interpretation": "Positive delta means model improves over the anchor-only market baseline. CI lower bound > 0 supports 'model adds signal' claim."
+  },
+  "ece": {
+    "point_estimate": 0.030377641065184462,
+    "bootstrap_mean": 0.042926096130826076,
+    "ci_95_lo": 0.019959033962675347,
+    "ci_95_hi": 0.0747410384019516,
+    "target": 0.04,
+    "interpretation": "Sample-weighted absolute calibration error across 10 bins. Target <= 0.04. CI upper bound under target supports 'reliably calibrated' claim."
+  },
+  "roi_bootstrap_per_ev_threshold": {
+    "+1pct": {
+      "n_picks": 505,
+      "roi_unit_mean": 0.08307676115762223,
+      "roi_ci_lower": -0.015604890431550953,
+      "roi_ci_upper": 0.17634774889963567
+    },
+    "+2pct": {
+      "n_picks": 416,
+      "roi_unit_mean": 0.11328438977286634,
+      "roi_ci_lower": 0.006733696696617499,
+      "roi_ci_upper": 0.22647061033825452
+    },
+    "+3pct": {
+      "n_picks": 339,
+      "roi_unit_mean": 0.11385496218515712,
+      "roi_ci_lower": 0.003157458942621696,
+      "roi_ci_upper": 0.2330760357953615
+    }
+  },
+  "clv_note": "CLV is identically 0 for v0 by construction: training source = closing source = DK+FD via The Odds API at T-60. Independent CLV grading enters once the live cron captures closing snaps a few minutes apart from the model's anchor pin. Bootstrap CI on a constant-zero series is degenerate (mean=0, CI=(0,0)).",
+  "default_ev_threshold_summary": {
+    "threshold": 0.02,
+    "n_picks": 416,
+    "roi_unit_mean": 0.11328438977286634,
+    "roi_ci_lower": 0.006733696696617499,
+    "sub_300_rule_pass": true,
+    "sub_300_rule_applies": false
+  }
+}
