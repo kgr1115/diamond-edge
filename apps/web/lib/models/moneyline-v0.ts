@@ -114,20 +114,24 @@ export function predictHomeWinProb(features: MoneylineV0Features): number {
 /**
  * EV-to-tier mapping for v0. EV is the model's expected value in units
  * (e.g. +0.025 = +2.5% expected return on a 1-unit bet at the offered price).
- * Returns null when EV is below the +2% publish floor.
+ * Returns null when EV is below the +3% publish floor.
  *
- * Tier ladder (v0 cold-start; tightened later if calibration permits):
+ * Tier ladder (v0 cold-start, tightened to +3% floor per CEng validation
+ * verdict 2026-05-04 — `docs/proposals/moneyline-v0-validation-2026-05-04-
+ * verdict-ceng.md`. The +3% / +10.62% / 7d-block-CI-lower +2.22% cell on
+ * pre-ASB-2024 was the only out-of-sample cell with a positive block-CI
+ * lower bound; +2% sat below it):
  *   EV ≥ 0.06 → tier 5 → required_tier = 'elite'
  *   EV ≥ 0.04 → tier 4 → required_tier = 'pro'
- *   EV ≥ 0.02 → tier 3 → required_tier = 'pro'
- *   EV < 0.02 → not published (returns null)
+ *   EV ≥ 0.03 → tier 3 → required_tier = 'pro'
+ *   EV < 0.03 → not published (returns null)
  */
 export function tierFromEv(ev: number):
   | { confidence_tier: number; required_tier: 'pro' | 'elite' }
   | null {
   if (ev >= 0.06) return { confidence_tier: 5, required_tier: 'elite' };
   if (ev >= 0.04) return { confidence_tier: 4, required_tier: 'pro' };
-  if (ev >= 0.02) return { confidence_tier: 3, required_tier: 'pro' };
+  if (ev >= 0.03) return { confidence_tier: 3, required_tier: 'pro' };
   return null;
 }
 

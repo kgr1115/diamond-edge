@@ -1,5 +1,5 @@
 {
-  "computed_at_utc": "2026-05-04T05:02:08.061278+00:00",
+  "computed_at_utc": "2026-05-04T06:02:18.897021+00:00",
   "holdout_n": 609,
   "n_bootstrap": 1000,
   "seed": 20260504,
@@ -46,5 +46,29 @@
     "roi_ci_lower": 0.006733696696617499,
     "sub_300_rule_pass": true,
     "sub_300_rule_applies": false
-  }
+  },
+  "block_bootstrap_log_loss_delta_sensitivity": [
+    {
+      "block_size_days": 5,
+      "mean": 0.002201635178814006,
+      "ci_95_lo": -0.0026240210892921664,
+      "ci_95_hi": 0.0066734362342236895,
+      "binding": false
+    },
+    {
+      "block_size_days": 7,
+      "mean": 0.0022453337798770913,
+      "ci_95_lo": -0.0022196526561719552,
+      "ci_95_hi": 0.0068085513859156375,
+      "binding": true
+    },
+    {
+      "block_size_days": 10,
+      "mean": 0.0021629784342953704,
+      "ci_95_lo": -0.0014526684562570918,
+      "ci_95_hi": 0.005508701389661625,
+      "binding": false
+    }
+  ],
+  "block_bootstrap_binding_method": "7-day-block per CEng/CSO verdict 2026-05-04 (docs/proposals/moneyline-v0-validation-2026-05-04-verdict-{ceng,cso}.md). i.i.d. retained for backward compat."
 }

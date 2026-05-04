@@ -6,6 +6,14 @@ This script extends with bootstrap CIs on:
   - holdout_log_loss_raw (delta vs market prior)
   - ECE (raw + calibrated, but for v0 they're identical since no isotonic)
 
+7-day block bootstrap is the binding CI going forward (per CEng + CSO
+validation verdicts 2026-05-04). i.i.d. is retained for backward
+compatibility but block-bootstrap is the honest variance accounting because
+betting outcomes within a slate are correlated (same weather, same umpire
+crew, same news cycle). 5-day and 10-day are also computed for sensitivity
+transparency. Future kind:model-change proposals MUST include the block-
+bootstrap output; scope-gate sends back any proposal that omits it.
+
 CLV for v0 is identically 0 by construction (training source = closing source =
 DK + FD via The Odds API at T-60); bootstrap of 0 is 0. Documented as a note.
 
@@ -127,18 +135,16 @@ def block_bootstrap_log_loss_delta(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--block-size",
-        type=int,
-        default=None,
+        "--no-block-bootstrap",
+        action="store_true",
         help=(
-            "If set, ALSO compute block-bootstrap CI on log_loss_delta with the "
-            "given block size (in days, e.g., 7). i.i.d. bootstrap is always "
-            "computed. Block-bootstrap is the right method when slate-correlated "
-            "outcomes inflate i.i.d. CIs. Sensitivity for the validation slice is "
-            "in scripts/model/validate-moneyline-v0.py output."
+            "Skip block-bootstrap entirely. NOT recommended. Block-bootstrap "
+            "is the binding CI per CEng/CSO verdict 2026-05-04; this flag "
+            "exists only for fast iteration during script development."
         ),
     )
     args = parser.parse_args()
+    BLOCK_SIZES_DAYS = [5, 7, 10]
 
     pred = pq.read_table(str(PRED_PATH)).to_pandas()
     print(f"[load] holdout predictions n={len(pred)}")
@@ -164,19 +170,22 @@ def main() -> None:
     ece_mean, ece_lo, ece_hi = bootstrap_ece(y, p_model)
     print(f"[boot] ECE: mean={ece_mean:.4f}  CI=({ece_lo:.4f}, {ece_hi:.4f})  ({N_BOOTSTRAP} iter)")
 
-    block_block = None
-    if args.block_size is not None:
-        bb_mean, bb_lo, bb_hi = block_bootstrap_log_loss_delta(
-            y, p_model, p_market, pred["game_date"].to_numpy(),
-            block_size_days=args.block_size,
-        )
-        print(f"[block] log_loss_delta {args.block_size}d-block: mean={bb_mean:+.4f}  CI=({bb_lo:+.4f}, {bb_hi:+.4f})")
-        block_block = {
-            "block_size_days": args.block_size,
-            "mean": bb_mean,
-            "ci_95_lo": bb_lo,
-            "ci_95_hi": bb_hi,
-        }
+    block_results: list[dict] | None = None
+    if not args.no_block_bootstrap:
+        block_results = []
+        for bs in BLOCK_SIZES_DAYS:
+            bb_mean, bb_lo, bb_hi = block_bootstrap_log_loss_delta(
+                y, p_model, p_market, pred["game_date"].to_numpy(),
+                block_size_days=bs,
+            )
+            print(f"[block] log_loss_delta {bs}d-block: mean={bb_mean:+.4f}  CI=({bb_lo:+.4f}, {bb_hi:+.4f})")
+            block_results.append({
+                "block_size_days": bs,
+                "mean": bb_mean,
+                "ci_95_lo": bb_lo,
+                "ci_95_hi": bb_hi,
+                "binding": bs == 7,
+            })
 
     # CLV note
     clv_note = (
@@ -229,7 +238,8 @@ def main() -> None:
             "sub_300_rule_pass": metrics["sub_300_variance_aware_rule"]["pass"],
             "sub_300_rule_applies": metrics["sub_300_variance_aware_rule"]["applies"],
         },
-        "block_bootstrap_log_loss_delta": block_block,
+        "block_bootstrap_log_loss_delta_sensitivity": block_results,
+        "block_bootstrap_binding_method": "7-day-block per CEng/CSO verdict 2026-05-04 (docs/proposals/moneyline-v0-validation-2026-05-04-verdict-{ceng,cso}.md). i.i.d. retained for backward compat.",
     }
     OUT_PATH.write_text(json.dumps(out, indent=2))
     print(f"\n[done] wrote {OUT_PATH}")
