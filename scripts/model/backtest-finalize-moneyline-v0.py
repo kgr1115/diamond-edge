@@ -15,6 +15,7 @@ Output:
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from datetime import datetime, timezone
@@ -83,7 +84,62 @@ def bootstrap_ece(y_true: np.ndarray, p: np.ndarray, n_iter: int = N_BOOTSTRAP) 
     return float(np.mean(eces)), float(np.quantile(eces, 0.025)), float(np.quantile(eces, 0.975))
 
 
+def block_bootstrap_log_loss_delta(
+    y_true: np.ndarray,
+    p_model: np.ndarray,
+    p_market: np.ndarray,
+    pick_dates: np.ndarray,
+    block_size_days: int,
+    n_iter: int = N_BOOTSTRAP,
+    seed: int = SEED,
+) -> tuple[float, float, float]:
+    """Block-bootstrap CI on log_loss_delta. pick_dates aligns row-for-row with y_true."""
+    df = pd.DataFrame({"y": y_true, "p_model": p_model, "p_market": p_market, "date": pd.to_datetime(pick_dates)})
+    df = df.sort_values("date").reset_index(drop=True)
+    if df.empty:
+        return float("nan"), float("nan"), float("nan")
+    min_date = df["date"].min()
+    df["block_id"] = ((df["date"] - min_date).dt.days // block_size_days).astype(int)
+    blocks = [g.reset_index(drop=True) for _, g in df.groupby("block_id", sort=True)]
+    n = len(df)
+    rng = np.random.default_rng(seed=seed)
+    deltas = np.empty(n_iter)
+    for i in range(n_iter):
+        chosen = []
+        total = 0
+        while total < n:
+            bidx = rng.integers(0, len(blocks))
+            chosen.append(blocks[bidx])
+            total += len(blocks[bidx])
+        sample = pd.concat(chosen).iloc[:n]
+        try:
+            ll_m = log_loss(sample["y"].to_numpy(), np.clip(sample["p_model"].to_numpy(), 1e-15, 1 - 1e-15))
+            ll_p = log_loss(sample["y"].to_numpy(), np.clip(sample["p_market"].to_numpy(), 1e-15, 1 - 1e-15))
+            deltas[i] = ll_p - ll_m
+        except ValueError:
+            deltas[i] = float("nan")
+    deltas = deltas[np.isfinite(deltas)]
+    if len(deltas) == 0:
+        return float("nan"), float("nan"), float("nan")
+    return float(np.mean(deltas)), float(np.quantile(deltas, 0.025)), float(np.quantile(deltas, 0.975))
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=None,
+        help=(
+            "If set, ALSO compute block-bootstrap CI on log_loss_delta with the "
+            "given block size (in days, e.g., 7). i.i.d. bootstrap is always "
+            "computed. Block-bootstrap is the right method when slate-correlated "
+            "outcomes inflate i.i.d. CIs. Sensitivity for the validation slice is "
+            "in scripts/model/validate-moneyline-v0.py output."
+        ),
+    )
+    args = parser.parse_args()
+
     pred = pq.read_table(str(PRED_PATH)).to_pandas()
     print(f"[load] holdout predictions n={len(pred)}")
 
@@ -107,6 +163,20 @@ def main() -> None:
     # Bootstrap ECE
     ece_mean, ece_lo, ece_hi = bootstrap_ece(y, p_model)
     print(f"[boot] ECE: mean={ece_mean:.4f}  CI=({ece_lo:.4f}, {ece_hi:.4f})  ({N_BOOTSTRAP} iter)")
+
+    block_block = None
+    if args.block_size is not None:
+        bb_mean, bb_lo, bb_hi = block_bootstrap_log_loss_delta(
+            y, p_model, p_market, pred["game_date"].to_numpy(),
+            block_size_days=args.block_size,
+        )
+        print(f"[block] log_loss_delta {args.block_size}d-block: mean={bb_mean:+.4f}  CI=({bb_lo:+.4f}, {bb_hi:+.4f})")
+        block_block = {
+            "block_size_days": args.block_size,
+            "mean": bb_mean,
+            "ci_95_lo": bb_lo,
+            "ci_95_hi": bb_hi,
+        }
 
     # CLV note
     clv_note = (
@@ -159,6 +229,7 @@ def main() -> None:
             "sub_300_rule_pass": metrics["sub_300_variance_aware_rule"]["pass"],
             "sub_300_rule_applies": metrics["sub_300_variance_aware_rule"]["applies"],
         },
+        "block_bootstrap_log_loss_delta": block_block,
     }
     OUT_PATH.write_text(json.dumps(out, indent=2))
     print(f"\n[done] wrote {OUT_PATH}")
