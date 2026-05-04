@@ -8,21 +8,23 @@ A paid, web-only MLB betting picks SaaS with tiered subscriptions. Users get sta
 
 **Non-goals v1:** placing bets, holding user funds, non-MLB sports, native mobile apps.
 
-## Locked Stack (2026-04-22)
+## Locked Stack (2026-04-22; 2026-04-30 — Vercel-only collapse)
 
 | Layer | Choice | Notes |
 |---|---|---|
 | Frontend framework | Next.js 15 (App Router) + TypeScript | Server Components for fast initial paint |
 | Styling | Tailwind CSS + shadcn/ui | Clean defaults, minimal component-library lock-in |
-| Hosting (web + API) | Vercel | 10s/60s function timeouts — long jobs offload |
-| Database + Auth + Storage | Supabase (Postgres, RLS) | Supabase Auth (email + OAuth) |
+| Hosting (web + API + jobs) | Vercel (Fluid Compute) | Up to 300s/function, full Node.js runtime; replaces prior Fly.io worker + Supabase Edge Function topology |
+| Database + Auth + Storage | Supabase (Postgres, RLS) | Supabase Auth (email + OAuth); Storage available for model artifacts if size demands |
 | Cache | Upstash Redis | Aggressive caching for odds data |
-| Background jobs | Vercel Cron (light) + Supabase Edge Functions (>10s) | Fly.io worker as overflow for ML/LLM |
+| Background jobs | Vercel Cron + Vercel Functions | All compute on Vercel. No Fly.io. No Supabase Edge Functions. |
 | Billing | Stripe | Subscriptions + webhooks |
 | Odds data | The Odds API ($59/mo 100K-credit tier as of 2026-04) | Tiers: $30 (20K) / $59 (100K) / $119 (5M). Cached pulls, no real-time polling |
 | MLB stats | MLB Stats API (free, public) | Authoritative for schedules, rosters, box scores |
 | Statcast | Baseball Savant | Free, scrape-friendly pitch/batted-ball data |
 | LLM | Anthropic Claude only | Haiku 4.5 default, Sonnet 4.6 for premium picks |
+
+**Topology note:** prior architecture used a Fly.io Python worker for ML inference + a Supabase Edge Function for orchestration. Both were retired in the 2026-04-30 wipe. The replacement collapses everything onto Vercel: pick generation, training-orchestration, rationale generation, and ingestion crons all run as Vercel Functions under Fluid Compute (300s timeout, Node.js or Python runtime). If a future model architecture demands GPU or >300s training, that becomes a `kind: infra` proposal — not a default assumption.
 
 ## Brand
 
@@ -44,17 +46,23 @@ A paid, web-only MLB betting picks SaaS with tiered subscriptions. Users get sta
 
 | Component | Target | Hard cap |
 |---|---|---|
-| The Odds API | $79/mo (entry tier) | $100/mo |
-| Vercel (Pro + functions) | $20/mo | $40/mo |
+| The Odds API | $119/mo (5M-credit tier as of 2026-04-30) | $130/mo |
+| Vercel (Pro + Fluid Compute functions) | $30/mo | $60/mo |
 | Supabase | $25/mo | $50/mo |
-| Fly.io (worker) | $30/mo | $60/mo |
 | Upstash Redis | $10/mo | $25/mo |
-| Anthropic (rationale) | $30/mo at <500 users | $80/mo |
+| Anthropic (rationale) | ARCHIVED 2026-04-30 — $0 effective ($30/$80 spec preserved for un-archive) | n/a |
 | Stripe (fees, not infra) | passthrough | n/a |
 | Misc / overhead | $15/mo | $30/mo |
 | Headroom | remainder | — |
 
 A sub-budget breach for two months in a row is an automatic COO review item. Sub-budgets are owner-set; COO updates this table when the user adjusts, with the conversation cited in the commit message.
+
+**2026-04-30 changes:**
+- The Odds API tier upgraded from $59/100K to $119/5M monthly. ~50× credit headroom; affordable historical backfills now within scope.
+- Anthropic line archived per Kyle's directive — `mlb-rationale` work paused for the personal-tool / portfolio phase. Spec preserved; un-archive when rationale reactivates.
+- Fly.io line was retired in the prior Vercel-only collapse. Re-introducing is a `kind: infra` proposal.
+
+The Fly.io worker line was removed 2026-04-30 with the Vercel-only collapse; the $30/mo target is reallocated to Vercel (now hosting all compute). If a future model architecture demands GPU or >300s training (CPU-only Fluid Compute is the current ceiling), re-introducing a separate worker becomes a `kind: infra` proposal — not a default.
 
 ## Methodology Stance (locked 2026-04-30)
 
@@ -67,7 +75,26 @@ What is NOT methodology-agnostic (locked):
 - Comparison-against-current as the bar for promotion (no methodology change ships without head-to-head numbers on the same holdout).
 - Market-prior awareness (the line is information; approaches that ignore it must justify why).
 
-Memory should not encode "we always use LightGBM" or any equivalent — that contradicts this stance. Architecture choices live in `worker/models/<market>/` and the `metrics.json` for the artifact, not in the CLAUDE / agent layer.
+Memory should not encode "we always use LightGBM" or any equivalent — that contradicts this stance. Architecture choices live in `models/<market>/` (artifact directory at repo root) and the `metrics.json` + `architecture.md` for the artifact, not in the CLAUDE / agent layer.
+
+### Cold-Start Lane (added 2026-04-30)
+
+The pick-improvement pipeline assumes a current production artifact to compare against. On a fresh build, none exists — every diagnostic skill returns INSUFFICIENT-EVIDENCE on day one. The cold-start lane is the path the FIRST artifact takes into production.
+
+**v0 promotion criteria (no comparison baseline; one-time):**
+
+1. **Holdout discipline preserved.** Pre-declared holdout slice; no re-use for selection. (Same as steady-state.)
+2. **Sample-size floor met.** ≥200 graded picks per market on the holdout — same floor as a methodology change. v0 is a methodology change against "no model."
+3. **Backtest viable.** ROI ≥ 0% AND CLV ≥ 0% on the holdout (positive, not "non-degraded"). v0 has no negative-degradation budget because there's nothing to degrade against.
+4. **Calibration to spec.** ECE ≤ 0.04 on the holdout (absolute, not relative to baseline). Max calibration deviation reported.
+5. **Look-ahead audit clean.** Every feature snapshot-pinned; `mlb-feature-eng` signs off.
+6. **Variance-collapse guard clean.** Model is not a passthrough on the market prior — confirmed by `mlb-model`.
+7. **Rationale eval PASS.** Factuality, RG presence, banned-keyword absence, depth — same gate as steady-state.
+8. **CEng explicit sign-off.** v0 is the single artifact that promotes without a `pick-tester` PASS, because `pick-tester` requires a baseline. CEng reads the bundled report and either approves or sends back.
+
+After v0 lands as `current/`, every subsequent promotion runs through the normal `pick-tester` gates. The cold-start lane is single-use per market.
+
+**What this means in practice:** the first pick-improvement cycle on a fresh model ships the model itself. `pick-research` is skipped (nothing to audit); `pick-implementer` triggers `mlb-feature-eng` + `mlb-model` + `mlb-calibrator` + `mlb-backtester` directly; the bundled v0 report goes to CEng instead of `pick-tester`. Once `current/` exists, the pipeline operates as documented.
 
 ## Engineering Principles
 
@@ -99,7 +126,7 @@ All agents live in `.claude/agents/`. Orchestration is owned by `mlb-picks-orche
 - `mlb-calibrator` — calibration method selection per market, reliability audits, refusal-to-ship on poor calibration
 - `mlb-backtester` — holdout discipline, ROI/CLV computation, EV-threshold sweeps, look-ahead detection
 - `mlb-rationale` — LLM rationale generation with grounding, architecture-keyword scrub, programmatic RG disclaimer
-- `mlb-backend` — Next.js API routes, Supabase migrations + RLS, Edge Functions, Stripe, Auth
+- `mlb-backend` — Next.js API routes (Vercel Fluid Compute), Supabase migrations + RLS, Stripe, Auth
 - `mlb-frontend` — Next.js UI: slate, pick detail, dashboards, subscription flow
 - `mlb-devops` — runtime config, CI/CD, secrets, monitoring, cost dashboard, DNS/SSL
 - `mlb-compliance` — state legality matrix, disclaimers, ToS, privacy, responsible gambling
@@ -126,15 +153,15 @@ Skills: `research-improvement`, `scope-gate-review`, `implement-change`, `test-c
 - `pick-researcher` — audits ROI, calibration, feature coverage, rationale quality, threshold sensitivity via existing diagnostic skills; returns ≤10 evidence-backed proposals
 - `pick-scope-gate` — binary gate against locked pick constraints (EV/tier floors, sample-size minimums, feature-leakage rules, rationale grounding, ROI non-degradation). Distinct from `mlb-ml-engineer` (design)
 - `pick-implementer` — writes model/feature/prompt/threshold diff; delegates to `mlb-model` / `mlb-feature-eng` / `mlb-calibrator` / `mlb-rationale` / `mlb-backend` / `mlb-data-engineer`
-- `pick-tester` — EMPIRICAL gate: backtest (ROI ≥ −0.5%, CLV ≥ −0.1%, ECE ≤ +0.02), feature coverage, pipeline anomaly scan, calibration check, rationale eval. Invokes `mlb-backtester` and `mlb-calibrator` for the deep checks.
-- `pick-debugger` — root-cause on pick-quality FAIL; uses `/investigate-pick` / `/explain` for drills
-- `pick-publisher` — commit + push recipe with model-artifact size guard; deploys remain user-invoked (`/deploy-edge`, `/deploy-worker`)
+- `pick-tester` — EMPIRICAL gate: backtest (ROI ≥ −0.5%, CLV ≥ −0.1%, ECE ≤ +0.02), calibration check, rationale eval. Invokes `mlb-backtester` and `mlb-calibrator` for the deep checks. Two additional gates — feature coverage (`/check-feature-gap`) and pipeline anomaly scan (`/pipeline-anomaly-scan`) — are planned but not yet written; they enter the required list as `kind: skill` proposals once the first picks are flowing.
+- `pick-debugger` — root-cause on pick-quality FAIL; uses `/investigate-pick` / `/explain` for drills (those skills land as proposals when first picks flow)
+- `pick-publisher` — commit + push recipe with model-artifact size guard; deploy remains user-invoked (`vercel:deploy prod`)
 
 Skills: `pick-research`, `pick-scope-gate-review`, `pick-implement`, `pick-test`, `pick-publish`, `pick-debug`. Plus `calibration-check` (per-tier reliability + ECE vs backtest) and `rationale-eval` (factuality + disclaimer + architecture-keyword audit).
 
 All pipeline agents live in `.claude/agents/`; skills in `.claude/skills/<name>/SKILL.md`.
 
-### Pipeline auto-chain rule (locked 2026-04-28)
+### Pipeline auto-chain rule (locked 2026-04-28; tightened 2026-04-30)
 
 When a pipeline stage completes successfully, **auto-invoke the next stage**. Do not stop and ask the user "want me to kick off the next stage?" — that adds friction without adding decision value, since the next stage is deterministic from the pipeline definition.
 
@@ -143,14 +170,28 @@ When a pipeline stage completes successfully, **auto-invoke the next stage**. Do
 - `implement → test`: as soon as the implementer hands off, invoke `test-change` (or `pick-test`).
 - `test → publish` (PASS): on PASS, invoke `publish-change` (or `pick-publish`).
 - `test → debug` (FAIL): on FAIL, invoke `debug` (or `pick-debug`); after fix, re-test.
+- **Cold-start lane:** when a v0 proposal is approved-with-conditions by all three lens-holders, auto-dispatch the named specialists (`mlb-data-engineer` → `mlb-feature-eng` → `mlb-model` → `mlb-calibrator` → `mlb-backtester`) per the proposal's `specialist_routing`. Bundled report goes to CEng for v0 sign-off without a stop-and-ask in between. Open questions surfaced by specialists (e.g., schema choice, feature-spec correction, ingester format) are routed to the relevant downstream specialist for sign-off, not to the user.
+- **Lens-holder consultation auto-dispatch:** when a proposal touches a lens-holder's locked criteria — or when a revised proposal needs re-circulation after material findings — invoke CSO + CEng + COO in parallel without asking the user first. The user enters only on disagreement.
+- **Cross-specialist coordination questions** (e.g., "the architect's view assumes X, but mlb-feature-eng's spec says Y") get routed between specialists directly without a stop-and-ask. The user enters only when no specialist owns the call.
 
-**Pause points** (where the chain stops and waits for the user):
-- All proposals DENIED at scope-gate (no approved work to implement).
-- Tester returns FAIL twice on the same change (escalate to user, don't loop forever).
-- Pre-deploy steps that require explicit user invocation per CLAUDE.md (`/deploy-edge`, `/deploy-worker`).
-- User explicitly requests review / pause between stages.
+**Pause points** (the ONLY places the chain stops for user approval):
+1. **Lens-holder disagreement.** Two-vs-one or three-way split with no clean veto → escalate per the disagreement protocol.
+2. **All proposals DENIED at scope-gate** (no approved work to implement).
+3. **Tester returns FAIL twice on the same change** (escalate to user, don't loop forever).
+4. **Pre-deploy invocation.** `vercel:deploy prod` is user-invoked.
+5. **Paid-spend approval** that would breach a sub-budget or that the user previously declined. Re-asking is allowed when the cost picture changes; second-guessing the user's prior "no" without a change in cost is not.
+6. **Compliance weakening.** Any change that touches the 21+ gate, geo-block, or RG disclaimer surfaces.
+7. **Production data mutation.** Migrations against live rows, real-subscriber row writes, force-push to `main`.
+8. **User explicitly requests pause** mid-pipeline.
 
-This rule applies to BOTH the system-improvement pipeline and the pick-improvement pipeline.
+**Things that are NOT pause points** (do NOT ask the user — just do it):
+- Kicking off the next pipeline stage when the current stage completed cleanly.
+- Re-circulating a revised proposal to lens-holders after material findings.
+- Dispatching specialists for design/audit work that costs nothing (no paid API calls, no production mutations).
+- Asking specialists to resolve cross-specialist coordination questions.
+- Choosing between two near-equivalent design options where the lens-holders haven't disagreed.
+
+This rule applies to BOTH the system-improvement pipeline and the pick-improvement pipeline, and to the cold-start lane.
 
 ## Three-Lens Governance (added 2026-04-30)
 
