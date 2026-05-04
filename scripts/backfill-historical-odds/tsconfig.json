@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["run.ts"],
+  "include": ["run.ts", "run-per-game.ts", "snapshot-param.ts", "run-morning-afternoon.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -9,13 +9,19 @@
     "backfill": "tsx run.ts --skip-test",
     "backfill:full": "tsx run.ts",
     "backfill:morning-afternoon": "tsx run-morning-afternoon.ts",
-    "backfill:morning-afternoon:now": "tsx run-morning-afternoon.ts --skip-precheck"
+    "backfill:morning-afternoon:now": "tsx run-morning-afternoon.ts --skip-precheck",
+    "backfill:pergame:probe": "tsx run-per-game.ts --probe",
+    "backfill:pergame:2024": "tsx run-per-game.ts --window=2024",
+    "backfill:pergame:full": "tsx run-per-game.ts --window=full"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@types/pg": "^8.20.0",
+    "pg": "^8.20.0"
+  },
   "devDependencies": {
+    "@types/node": "^22.19.17",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "@types/node": "^22.19.17"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20.0.0"
