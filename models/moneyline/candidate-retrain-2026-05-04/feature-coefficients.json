@@ -1,0 +1,26 @@
+{
+  "intercept": -0.025811539066511565,
+  "anchor": {
+    "feature": "market_log_odds_home",
+    "coefficient": 1.0239518297653802,
+    "se_wald": 0.09253533459843805,
+    "ci_95_lo": 0.8425825739524417,
+    "ci_95_hi": 1.2053210855783187
+  },
+  "residuals_post_scaling": {
+    "starter_fip_home": 0.03608834412926349,
+    "starter_fip_away": -0.06709873521828617,
+    "starter_days_rest_home": -0.08936758485875493,
+    "starter_days_rest_away": -0.004317775580816467,
+    "bullpen_fip_l14_home": 0.012504263655452265,
+    "bullpen_fip_l14_away": 0.022106412908897376,
+    "team_wrcplus_l30_home": 0.0,
+    "team_wrcplus_l30_away": 0.0,
+    "park_factor_runs": 0.020388031512407957,
+    "weather_temp_f": -0.00016093039276025134,
+    "weather_wind_out_mph": 0.011508087781876734
+  },
+  "sum_abs_residuals_post_scaling": 0.26354016603851566,
+  "variance_collapse_floor": 0.05,
+  "variance_collapse_flag": false
+}
