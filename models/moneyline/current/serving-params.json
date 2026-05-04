@@ -1,0 +1,66 @@
+{
+  "model_id": "moneyline-v0",
+  "trained_at_utc": "2026-05-04T04:59:42.501091+00:00",
+  "holdout_declaration_id": "moneyline-v0-holdout-2026-05-03",
+  "intercept": -0.036273155999153615,
+  "anchor": {
+    "feature": "market_log_odds_home",
+    "coefficient": 0.9766701437492082
+  },
+  "residual_features": [
+    "starter_fip_home",
+    "starter_fip_away",
+    "starter_days_rest_home",
+    "starter_days_rest_away",
+    "bullpen_fip_l14_home",
+    "bullpen_fip_l14_away",
+    "team_wrcplus_l30_home",
+    "team_wrcplus_l30_away",
+    "park_factor_runs",
+    "weather_temp_f",
+    "weather_wind_out_mph"
+  ],
+  "residual_coefficients_scaled": [
+    0.013347036450253879,
+    -0.08527854924568838,
+    -0.08023876845462616,
+    -0.00749423868211305,
+    0.021347733923347156,
+    0.044477693517314267,
+    0.0,
+    0.0,
+    0.028327462911322487,
+    -0.0074085398030308254,
+    0.007250605717304078
+  ],
+  "scaler": {
+    "mean": [
+      4.193097049641358,
+      4.190162814743068,
+      9.399146861669713,
+      9.199268738574041,
+      4.219754614144065,
+      4.193530803696371,
+      100.0,
+      100.0,
+      100.01035953686777,
+      71.62553321145643,
+      0.6960408048105688
+    ],
+    "scale": [
+      1.6456668354333468,
+      1.71999787274797,
+      13.251483050977313,
+      12.98299265137084,
+      0.8078261542718727,
+      0.8026939194949242,
+      1.0,
+      1.0,
+      5.414946694790096,
+      12.76674892913801,
+      5.807538480302728
+    ]
+  },
+  "isotonic_applied": false,
+  "isotonic_table": null
+}

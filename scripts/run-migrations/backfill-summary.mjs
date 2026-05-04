@@ -25,16 +25,33 @@ const r1 = await c.query(`
 console.table(r1.rows);
 
 console.log('\n=== Graded summary by date / result + PnL ===');
+// PnL computed inline to mirror apps/web/lib/roi/units.ts unitProfit().
+// pick_outcomes has no pnl_units column — units ROI is derived at query time.
+//   win:  +unitProfit(best_line_price)  (default -110 when price NULL)
+//   loss: -1
+//   push/void: 0 (excluded from risked)
 const r2 = await c.query(`
-  SELECT g.game_date::text, p.result,
+  WITH settled AS (
+    SELECT g.game_date::date AS game_date, p.result,
+           CASE p.result
+             WHEN 'win'  THEN CASE
+               WHEN COALESCE(p.best_line_price, -110) >= 100
+                 THEN COALESCE(p.best_line_price, -110)::numeric / 100
+               ELSE 100.0 / ABS(COALESCE(p.best_line_price, -110))::numeric
+             END
+             WHEN 'loss' THEN -1::numeric
+             ELSE 0::numeric
+           END AS unit_pl
+    FROM picks p JOIN games g ON g.id = p.game_id
+    WHERE g.game_date IN ('2026-04-23', '2026-04-24')
+      AND p.result IN ('win', 'loss', 'push', 'void')
+  )
+  SELECT game_date::text, result,
          COUNT(*)::int AS n,
-         ROUND(COALESCE(SUM(po.pnl_units), 0)::numeric, 2) AS pnl_units
-  FROM picks p
-  JOIN games g ON g.id = p.game_id
-  LEFT JOIN pick_outcomes po ON po.pick_id = p.id
-  WHERE g.game_date IN ('2026-04-23', '2026-04-24') AND p.result != 'pending'
-  GROUP BY g.game_date, p.result
-  ORDER BY g.game_date, p.result
+         ROUND(COALESCE(SUM(unit_pl), 0), 2) AS pnl_units
+  FROM settled
+  GROUP BY game_date, result
+  ORDER BY game_date, result
 `);
 console.table(r2.rows);
 
