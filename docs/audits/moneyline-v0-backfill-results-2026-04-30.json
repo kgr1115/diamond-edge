@@ -1,220 +1,108 @@
 {
-  "generated_at": "2026-04-30T15:15:29.761Z",
-  "games_per_season": [
-    {
-      "season": 2022,
-      "total_games": "2430",
-      "final_games": "2430",
-      "postponed": "0",
-      "cancelled": "0",
-      "divisional_games": "1140"
-    },
-    {
-      "season": 2023,
-      "total_games": "2430",
-      "final_games": "2430",
-      "postponed": "0",
-      "cancelled": "0",
-      "divisional_games": "780"
-    },
-    {
-      "season": 2024,
-      "total_games": "2428",
-      "final_games": "2427",
-      "postponed": "0",
-      "cancelled": "1",
-      "divisional_games": "778"
-    }
+  "audit_date": "2026-05-03",
+  "audit_author": "pick-implementer (orchestrator)",
+  "purpose": "Pre-specialist-dispatch coverage verification for v0 cold-start lane (rev3 proposal).",
+  "training_window": "2022-09-01 to 2024-12-31",
+  "schema_state": {
+    "migrations_applied_through": "0029_batter_game_log.sql",
+    "all_v0_tables_exist": true
+  },
+  "games_by_year": [
+    { "yr": 2022, "n": 482, "finals": 482, "note": "September only per Odds API archive boundary" },
+    { "yr": 2023, "n": 2430, "finals": 2430 },
+    { "yr": 2024, "n": 2428, "finals": 2427 }
   ],
-  "total_games": 7288,
-  "expected_games_approx": 7290,
-  "games_coverage_pct": 100,
+  "odds_coverage_by_year_at_T_minus_60_pin": [
+    { "yr": 2022, "games": 482, "with_dk_close": 191, "with_fd_close": 189, "with_both": 185 },
+    { "yr": 2023, "games": 2430, "with_dk_close": 979, "with_fd_close": 965, "with_both": 936 },
+    { "yr": 2024, "games": 2427, "with_dk_close": 952, "with_fd_close": 1009, "with_both": 854 }
+  ],
+  "odds_coverage_total_at_T_minus_60_pin": {
+    "games_finals_in_window": 5339,
+    "games_with_both_books_at_T_minus_60": 1975,
+    "coverage_pct": 36.99,
+    "post_warmup_train_estimate": 1790,
+    "vs_brief_floor_3500_train_rows": "FAIL (51% of floor)",
+    "vs_audit_memo_projection_6034": "FAIL (33% of projection)"
+  },
+  "odds_storage_pattern_finding": {
+    "issue": "Historical Odds API backfill stored snapshotted_at as the API call wall-clock time (~02:55:38 UTC of the day after game date), not the actual snapshot wall-clock time. For night games (most MLB games, 7-10pm ET = 23-02 UTC), the recorded snap timestamp lands AFTER the game's first pitch. For day games (afternoon ET), the recorded snap timestamp lands BEFORE the game.",
+    "evidence": "scripts/backfill-historical-odds/run.ts line 112-117: snapshotParam() returns nextDay 03:00 UTC of game_date. All 8,858 closing-snapshot rows in 2022-09 to 2024 carry exactly this single-timestamp-per-fetch-batch pattern. Distinct snap timestamps in 2024: 182 (one per game-date), 4051 rows total.",
+    "impact_on_T_minus_60_pin": "A literal `snapshotted_at <= game_time_utc - interval '60 minutes'` filter excludes ~37% of rows (the night-game-stamped-after-game ones), leaving 1,975 / 5,339 finals = 37% coverage.",
+    "documented_workaround_in_spec": "docs/features/moneyline-v0-feature-spec.md Coordination Note #6: 'If only a single closing line is available for historical games, market_log_odds_home in training uses the closing line (best available proxy for T-60) with this assumption documented in architecture.md.'",
+    "interpretive_question": "The proxy interpretation requires the audit gate to use `<= game_time_utc` (strict pregame) instead of `<= as_of`. This conflicts with the look-ahead audit script's hardcoded `<= :as_of` filter requirement. Resolution requires either (a) re-pulling Odds API with correct snapshot timestamps, or (b) accepting the proxy with audit script tuned to `<= game_time_utc` for the anchor only."
+  },
+  "pitcher_game_log_by_year": [
+    { "yr": 2022, "rows": 4158, "unique_pitchers": 588, "unique_games": 482 },
+    { "yr": 2023, "rows": 20554, "unique_pitchers": 863, "unique_games": 2430 },
+    { "yr": 2024, "rows": 20578, "unique_pitchers": 854, "unique_games": 2427 }
+  ],
+  "pitcher_game_log_status": "PASS (100% game coverage on training window)",
+  "batter_game_log_status": "FAIL (table is empty; 0 rows). Backfill script scripts/backfill-db/08-batter-game-log.mjs exists but has not been executed. Required for features 8 and 9 (team_wrcplus_l30_home/away).",
   "weather_coverage": [
+    { "yr": 2022, "games": 482, "with_temp": 482, "with_wind": 482, "with_dir": 482 },
+    { "yr": 2023, "games": 2430, "with_temp": 2430, "with_wind": 2429, "with_dir": 2421 },
+    { "yr": 2024, "games": 2428, "with_temp": 2427, "with_wind": 2355, "with_dir": 2274 }
+  ],
+  "weather_status": "PASS (>93% coverage on all components; meteostat backfill landed)",
+  "park_factor_runs_status": "PASS (30 venues, all with bearing; 8 domes flagged)",
+  "probable_starters_coverage": [
+    { "yr": 2022, "games": 482, "with_home_pitcher": 482, "with_away_pitcher": 482 },
+    { "yr": 2023, "games": 2430, "with_home_pitcher": 2430, "with_away_pitcher": 2429 },
+    { "yr": 2024, "games": 2427, "with_home_pitcher": 2425, "with_away_pitcher": 2427 }
+  ],
+  "probable_starters_status": "PASS (>99% coverage; spec allows games.probable_*_pitcher_id fallback for game_starters)",
+  "lineup_entries_status": "Not separately verified; v0 spec uses roster fallback when lock check returns false. Roster fallback path is the dominant code path at T-60 anyway.",
+  "summary": {
+    "blockers": [
+      "Odds T-60 pin coverage well below the brief's 3,500-row floor (1,975 games pre-drop, ~1,790 post-warmup; 51% of floor).",
+      "batter_game_log is empty; team_wrcplus features (8 and 9) cannot be built until backfill runs.",
+      "Snapshot timestamp storage in historical odds backfill records API call time, not snapshot wall-clock time. This is an interpretive question between strict-pin enforcement and the spec's Coordination Note #6 proxy allowance."
+    ],
+    "non_blockers": [
+      "Pitcher game log fully backfilled.",
+      "Weather, park factors, probable starters all clear coverage thresholds.",
+      "All migrations 0023-0029 applied.",
+      "Schema dependencies all met."
+    ],
+    "specialist_dispatch_decision": "HALT - escalate to user before dispatching mlb-data-engineer / mlb-feature-eng. The sample-size shortfall is large enough (37% of brief floor) that the proposal's primary assumption (n=200-400 graded picks at +2% EV) is at risk."
+  },
+  "options_for_user": [
     {
-      "season": 2022,
-      "total": "2430",
-      "has_temp": "2430",
-      "has_wind_mph": "2430",
-      "has_wind_dir": "2428",
-      "wind_dir_numeric": "2428",
-      "wind_dir_bad_format": "0"
+      "option": "A: Run batter backfill, accept proxy anchor, ship with reduced sample",
+      "actions": [
+        "Run scripts/backfill-db/08-batter-game-log.mjs (estimated 6h, free, MLB Stats API)",
+        "Apply Coordination Note #6 proxy interpretation: use `<= game_time_utc` strict-pregame filter for the anchor only, document in architecture.md",
+        "Proceed with 1,790 train games / projected 90-180 graded picks at +2% EV",
+        "Tighten to +3% EV if needed per proposal's mitigation clause; bootstrap CIs handle variance",
+        "Sub-300-sample rule applies: lower CI bound on ROI AND CLV >= -1% to ship"
+      ],
+      "risk": "Empirical bar may not clear at this sample size; pick-tester / CEng may reject for variance",
+      "wall_time_to_v0": "~12 hours (batter backfill 6h + feature build 4h + train 30min + audit/report 1h)"
     },
     {
-      "season": 2023,
-      "total": "2430",
-      "has_temp": "2430",
-      "has_wind_mph": "2429",
-      "has_wind_dir": "2421",
-      "wind_dir_numeric": "2421",
-      "wind_dir_bad_format": "0"
+      "option": "B: Re-pull historical odds with intra-day timestamps to recover T-60 strict-pin coverage",
+      "actions": [
+        "Modify backfill script to use multiple snapshot timestamps per game-date (e.g., game_time_utc - 75min as the snapshot param)",
+        "Re-pull 2022-09 through 2024 (~3,500 game-dates x 1 snap x 10 credits/call = ~35K credits, ~1% of 5M monthly tier)",
+        "Verify timestamp now reflects actual snapshot wall-clock per Odds API response field",
+        "Re-run batter backfill in parallel",
+        "Then proceed with full ~5,000-row train set"
+      ],
+      "risk": "Odds API historical endpoint accepts any timestamp but returns the nearest archived snap; some games may not have a snap exactly at T-75min; coverage uncertain",
+      "wall_time_to_v0": "~24 hours (re-pull design + execution 12h + batter backfill 6h + feature build 4h + train/audit 2h)"
     },
     {
-      "season": 2024,
-      "total": "2428",
-      "has_temp": "2427",
-      "has_wind_mph": "2355",
-      "has_wind_dir": "2274",
-      "wind_dir_numeric": "2274",
-      "wind_dir_bad_format": "0"
+      "option": "C: Defer v0 to a smaller season-targeted re-pull",
+      "actions": [
+        "Re-pull only 2024 with corrected per-game snap timestamps (1 month-equivalent of credit, ~5K credits)",
+        "Use 2024-Apr to 2024-pre-ASB as train (~1,500 games), 2024-post-ASB as holdout (~400 games)",
+        "Drop 2022 and 2023 entirely",
+        "Smaller, fully-clean dataset"
+      ],
+      "risk": "~1,500 train rows is even smaller than option A; bootstrap CIs may be wider; one-season training may not capture year-over-year variance",
+      "wall_time_to_v0": "~10 hours"
     }
   ],
-  "weather_wind_dir_bad_values_pre_fix": [
-    {
-      "weather_wind_dir": "In From CF",
-      "n": "2"
-    },
-    {
-      "weather_wind_dir": "In From LF",
-      "n": "3"
-    },
-    {
-      "weather_wind_dir": "In From RF",
-      "n": "1"
-    },
-    {
-      "weather_wind_dir": "Out To CF",
-      "n": "1"
-    },
-    {
-      "weather_wind_dir": "Out To LF",
-      "n": "2"
-    },
-    {
-      "weather_wind_dir": "Out To RF",
-      "n": "5"
-    }
-  ],
-  "weather_wind_dir_fix": {
-    "fixed_at": "2026-04-30T19:12:58.646Z",
-    "method": "null_out",
-    "rows_nulled": 14,
-    "note": "14 rows (not 18 — 4 rows were already cleared before this run). NULL is functionally equivalent to 0.0 wind effect per feature spec: game_wind_features view returns 0.0 for NULL weather_wind_dir. Zero API calls. Script: scripts/backfill-db/09-fix-wind-dir-bad-values.mjs",
-    "script": "scripts/backfill-db/09-fix-wind-dir-bad-values.mjs"
-  },
-  "weather_wind_dir_parity_pass": true,
-  "odds_closing_coverage": [
-    {
-      "season": 2022,
-      "sportsbook": "draftkings",
-      "games_covered": "1992",
-      "total_final_games": "2430",
-      "coverage_pct": 82
-    },
-    {
-      "season": 2022,
-      "sportsbook": "fanduel",
-      "games_covered": "2005",
-      "total_final_games": "2430",
-      "coverage_pct": 82.5
-    },
-    {
-      "season": 2023,
-      "sportsbook": "draftkings",
-      "games_covered": "2026",
-      "total_final_games": "2430",
-      "coverage_pct": 83.4
-    },
-    {
-      "season": 2023,
-      "sportsbook": "fanduel",
-      "games_covered": "1994",
-      "total_final_games": "2430",
-      "coverage_pct": 82.1
-    },
-    {
-      "season": 2024,
-      "sportsbook": "draftkings",
-      "games_covered": "1963",
-      "total_final_games": "2427",
-      "coverage_pct": 80.9
-    },
-    {
-      "season": 2024,
-      "sportsbook": "fanduel",
-      "games_covered": "2087",
-      "total_final_games": "2427",
-      "coverage_pct": 86
-    }
-  ],
-  "odds_both_books_coverage": [
-    {
-      "season": 2022,
-      "games_with_both": "1979"
-    },
-    {
-      "season": 2023,
-      "games_with_both": "1984"
-    },
-    {
-      "season": 2024,
-      "games_with_both": "1954"
-    }
-  ],
-  "lineup_coverage": [
-    {
-      "season": 2022,
-      "final_games": "2430",
-      "games_with_full_lineup": "2430",
-      "coverage_pct": "100.0"
-    },
-    {
-      "season": 2023,
-      "final_games": "2430",
-      "games_with_full_lineup": "2430",
-      "coverage_pct": "100.0"
-    },
-    {
-      "season": 2024,
-      "final_games": "2427",
-      "games_with_full_lineup": "2427",
-      "coverage_pct": "100.0"
-    }
-  ],
-  "lineup_total_rows": 131166,
-  "lineup_expected_rows_approx": 131220,
-  "park_factor_runs": {
-    "total_rows": 30,
-    "expected_rows": 30,
-    "dome_venues": 8,
-    "venues_with_bearing": 30
-  },
-  "game_wind_features_view": {
-    "total": "7288",
-    "wind_out_computable": "7288",
-    "dome_games": "1944",
-    "outdoor_zero_wind": "208"
-  },
-  "pitcher_game_log_coverage": {
-    "status": "in_progress",
-    "started_at": "2026-04-30T19:13:16.268Z",
-    "games_to_process": 7287,
-    "target_table": "pitcher_game_log",
-    "migrations_applied": ["0028_pitcher_game_log.sql"],
-    "script": "scripts/backfill-db/07-pitcher-game-log.mjs",
-    "log": "logs/step7-pitcher-game-log.log",
-    "expected_wall_time": "5-8 hours",
-    "idempotency_key": "(pitcher_id, game_id)",
-    "is_starter_decision": "First pitcher listed in boxscore teams[side].pitchers[] is identified as starter (idx=0). No separate game_starters table needed — games.probable_home/away_pitcher_id covers serve-time identity.",
-    "architect_coordination": "game_starters table evaluated and rejected. Decision documented in migration 0028 comment.",
-    "note": "Coverage percentages will be populated when backfill completes. Goal: >=98% coverage on 2022-09 to 2024 window."
-  },
-  "batter_game_log_coverage": {
-    "status": "pending",
-    "target_table": "batter_game_log",
-    "migrations_applied": ["0029_batter_game_log.sql"],
-    "script": "scripts/backfill-db/08-batter-game-log.mjs",
-    "expected_wall_time": "5-8 hours",
-    "idempotency_key": "(batter_id, game_id)",
-    "wrc_plus_proxy": "ops_plus_proxy",
-    "wrc_plus_source_column": "ops_plus_proxy",
-    "wrc_plus_note": "MLB Stats API does not return wRC+ directly. OPS+ is stored in wrc_plus column per CEng-authorized v0 proxy. Column name stays wrc_plus for feature contract stability. wrc_plus_source='ops_plus_proxy' on every row for auditability. NULL rows expected for pitchers hitting and players with no qualifying PA — feature layer imputes from team average per feature spec null handling.",
-    "note": "Pending step 7 completion. Steps 7 and 8 share the boxscore endpoint; running sequentially to stay at 2 req/sec."
-  },
-  "wall_time_ms": 2843,
-  "credits_consumed": 0,
-  "credits_consumed_total_backfill": "see data/historical-odds fetch logs",
-  "gaps": {
-    "final_games_missing_closing_odds": 1137,
-    "expected": "some 2022 early-season games may be missing (archive starts 2022-09-18)"
-  }
+  "orchestrator_recommendation": "Option A. The audit memo's coordination note explicitly anticipated this proxy case. The sample-size shortfall is real but bootstrap CIs + sub-300 ship rule already exist to handle variance. Re-pulling odds (option B) costs another day of wall-time and offers uncertain coverage improvement (the API itself only stores snaps at certain intervals). Option C trades sample size for cleanliness with no clear benefit. Option A respects the spec's documented contingency, runs the missing batter backfill, and lets the empirical gates (CEng's bar) decide whether v0 ships. If it fails the bar, escalate to LightGBM fallback per the proposal's approach_b_fallback path."
 }
