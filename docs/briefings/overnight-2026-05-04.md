@@ -51,6 +51,8 @@ I'll verify post-fire and surface anomalies in the morning summary.
 
 **11:24 UTC re-check — state stable; one new oddity:** calibration-snapshot fired a SECOND time today at 10:35:06 UTC (also success). Vercel cron is triggering it twice on this run — both are idempotent on the (snapshot_date, market, confidence_tier) primary key so no row corruption or duplicate problem. Note for Kyle: combined with the configured-10:00-but-fires-09:30 drift, Vercel cron timing appears non-deterministic for this path. Possibly tied to two cron entries pointing at the same route in the deployed `vercel.json` (we have two for `pick-pipeline`; not sure if calibration-snapshot has the same configuration error). Worth a one-time check.
 
+**12:26 UTC final check — state unchanged.** No new fires, failures, or picks. Last overnight wakeup at 12:26 UTC; state stable; standing by until next user message. Next event of interest is the 22:00 UTC pick-pipeline cron (~9.5h out, too far for 1h wakeup chain — Kyle to verify when he wakes).
+
 **Background failure pattern (known noise; not new):** `schedule-sync` returns HTTP 207 (multi-status) every day because the news-poll subtask returns `ok=false` while schedule + odds succeed. Our cron-run-log treats 207 as `'failure'`. The actual data ingestion (schedule + odds) IS working — confirmed by manual probe yesterday. Could be fixed by changing the cron-runs status mapping, but it's been failing this way for ≥4 days without operational impact. Low priority.
 
 ## 4. Open work I'm NOT acting on (you decide)
