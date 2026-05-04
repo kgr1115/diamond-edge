@@ -36,6 +36,7 @@ ECE per CEng rev2. EV thresholds swept at +1/+2/+3%.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -56,10 +57,9 @@ from sklearn.metrics import brier_score_loss, log_loss
 from sklearn.preprocessing import StandardScaler
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-FEATURES_DIR = REPO_ROOT / "data" / "features" / "moneyline-v0"
-ARTIFACT_DIR = REPO_ROOT / "models" / "moneyline" / "current"
-ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-HOLDOUT_DECL_PATH = REPO_ROOT / "models" / "moneyline" / "holdout-declaration.json"
+DEFAULT_FEATURES_DIR = REPO_ROOT / "data" / "features" / "moneyline-v0"
+DEFAULT_ARTIFACT_DIR = REPO_ROOT / "models" / "moneyline" / "current"
+DEFAULT_HOLDOUT_DECL_PATH = REPO_ROOT / "models" / "moneyline" / "holdout-declaration.json"
 
 ANCHOR_FEATURE = "market_log_odds_home"
 RESIDUAL_FEATURES = [
@@ -163,14 +163,57 @@ def bootstrap_ci(values: np.ndarray, n_iter: int = N_BOOTSTRAP, alpha: float = 0
 
 
 def main() -> None:
-    if not (FEATURES_DIR / "train.parquet").exists():
-        sys.exit(f"[ERROR] {FEATURES_DIR / 'train.parquet'} not found — run scripts/features/build-moneyline-v0.py first")
-    if not HOLDOUT_DECL_PATH.exists():
-        sys.exit(f"[ERROR] holdout declaration missing at {HOLDOUT_DECL_PATH}")
-    decl = json.loads(HOLDOUT_DECL_PATH.read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--features-dir",
+        type=Path,
+        default=DEFAULT_FEATURES_DIR,
+        help="Directory containing train.parquet/holdout.parquet (default: data/features/moneyline-v0/)",
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=DEFAULT_ARTIFACT_DIR,
+        help=(
+            "Directory for output artifacts (default: models/moneyline/current/). "
+            "Validation runs MUST point to models/moneyline/validation-<slug>/, NEVER current/."
+        ),
+    )
+    parser.add_argument(
+        "--declaration",
+        type=Path,
+        default=DEFAULT_HOLDOUT_DECL_PATH,
+        help="Path to the holdout pre-declaration JSON.",
+    )
+    parser.add_argument(
+        "--no-isotonic",
+        action="store_true",
+        help=(
+            "Disable the isotonic-wrap-on-ECE-breach fallback. Required for "
+            "validation runs (the validation declaration locks calibration "
+            "method choice — no re-tuning on the validation slice)."
+        ),
+    )
+    args = parser.parse_args()
 
-    train = pq.read_table(str(FEATURES_DIR / "train.parquet")).to_pandas()
-    holdout = pq.read_table(str(FEATURES_DIR / "holdout.parquet")).to_pandas()
+    features_dir = args.features_dir
+    artifact_dir = args.artifact_dir
+    holdout_decl_path = args.declaration
+
+    if not (features_dir / "train.parquet").exists():
+        sys.exit(f"[ERROR] {features_dir / 'train.parquet'} not found — run scripts/features/build-moneyline-v0.py first")
+    if not holdout_decl_path.exists():
+        sys.exit(f"[ERROR] holdout declaration missing at {holdout_decl_path}")
+    decl = json.loads(holdout_decl_path.read_text())
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[init] features_dir={features_dir}")
+    print(f"[init] artifact_dir={artifact_dir}")
+    print(f"[init] declaration={holdout_decl_path} (id={decl.get('declaration_id','<unknown>')})")
+    print(f"[init] no_isotonic={args.no_isotonic}")
+
+    train = pq.read_table(str(features_dir / "train.parquet")).to_pandas()
+    holdout = pq.read_table(str(features_dir / "holdout.parquet")).to_pandas()
     print(f"[load] train n={len(train)}  holdout n={len(holdout)}")
 
     # ----- Sanity: label balance and feature ranges -----
@@ -263,7 +306,7 @@ def main() -> None:
     isotonic_applied = False
     p_holdout_cal = p_holdout_raw
     isotonic_calibrator = None
-    if ece_raw > ECE_HOLDOUT_TARGET:
+    if ece_raw > ECE_HOLDOUT_TARGET and not args.no_isotonic:
         # Fit isotonic on TRAIN predictions then apply to holdout
         # (holdout is sacred — we don't fit isotonic on holdout)
         print(f"[calib] ECE {ece_raw:.4f} > target {ECE_HOLDOUT_TARGET} — applying isotonic wrap")
@@ -273,6 +316,9 @@ def main() -> None:
         isotonic_applied = True
         ece_cal, max_dev_cal = expected_calibration_error(y_holdout, p_holdout_cal, ECE_BINS)
         print(f"[calib] post-isotonic ECE = {ece_cal:.4f}  max_dev = {max_dev_cal:.4f}")
+    elif ece_raw > ECE_HOLDOUT_TARGET and args.no_isotonic:
+        print(f"[calib] ECE {ece_raw:.4f} > target {ECE_HOLDOUT_TARGET} but --no-isotonic set — reporting raw")
+        ece_cal, max_dev_cal = ece_raw, max_dev_raw
     else:
         ece_cal, max_dev_cal = ece_raw, max_dev_raw
 
@@ -386,17 +432,17 @@ def main() -> None:
     )
 
     # ----- Save artifacts -----
-    joblib.dump(model, ARTIFACT_DIR / "model.joblib")
-    joblib.dump(scaler, ARTIFACT_DIR / "scaler.joblib")
+    joblib.dump(model, artifact_dir / "model.joblib")
+    joblib.dump(scaler, artifact_dir / "scaler.joblib")
     if isotonic_calibrator is not None:
-        joblib.dump(isotonic_calibrator, ARTIFACT_DIR / "calibrator.joblib")
+        joblib.dump(isotonic_calibrator, artifact_dir / "calibrator.joblib")
 
     # holdout predictions
     holdout_out = holdout[["game_id", "game_date", "as_of", ANCHOR_FEATURE, LABEL]].copy()
     holdout_out["p_raw"] = p_holdout_raw
     holdout_out["p_calibrated"] = p_holdout_cal
     holdout_out["picked_default"] = pick_mask_default
-    holdout_out.to_parquet(ARTIFACT_DIR / "holdout-predictions.parquet")
+    holdout_out.to_parquet(artifact_dir / "holdout-predictions.parquet")
 
     # feature coefficients
     coefs_json = {
@@ -413,7 +459,7 @@ def main() -> None:
         "variance_collapse_floor": VARIANCE_COLLAPSE_FLOOR_SUM_ABS,
         "variance_collapse_flag": variance_collapse,
     }
-    (ARTIFACT_DIR / "feature-coefficients.json").write_text(json.dumps(coefs_json, indent=2))
+    (artifact_dir / "feature-coefficients.json").write_text(json.dumps(coefs_json, indent=2))
 
     metrics = {
         "trained_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -467,7 +513,7 @@ def main() -> None:
             "log_loss_beats_market": log_loss_delta > 0,
         },
     }
-    (ARTIFACT_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2))
+    (artifact_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
     arch_md = f"""# Moneyline v0 — Architecture
 
@@ -537,9 +583,9 @@ Applies: **{sub_300_rule_applies}**. Pass: **{sub_300_pass}**.
 - `feature-coefficients.json` — coefficients + variance-collapse flag
 - `holdout-predictions.parquet` — per-game raw + calibrated predictions
 """
-    (ARTIFACT_DIR / "architecture.md").write_text(arch_md, encoding="utf-8")
+    (artifact_dir / "architecture.md").write_text(arch_md, encoding="utf-8")
 
-    print(f"\n[done] Artifact dir: {ARTIFACT_DIR}")
+    print(f"\n[done] Artifact dir: {artifact_dir}")
     print(f"[done] Promotion gate summary:")
     print(f"  ROI@+{int(DEFAULT_EV_THRESHOLD*100)}% = {default_ev_block['roi_unit_mean']:.4f}")
     print(f"  ROI CI lower = {default_ev_block['roi_ci_lower']:.4f}")
