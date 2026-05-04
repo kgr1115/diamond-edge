@@ -22,17 +22,8 @@
 
 name: QA Tests
 
-# DISABLED 2026-04-27 — workflow was scaffolded in commit 910c6d9 but never completed.
-# Two known gaps before re-enabling automatic triggers:
-#   1. `${{ env.SUPABASE_ANON_KEY_LOCAL }}` and `${{ env.SUPABASE_SERVICE_KEY_LOCAL }}`
-#      are referenced throughout but never defined. Need to capture them after
-#      `supabase start` (e.g., `supabase status -o env >> $GITHUB_ENV`).
-#   2. `secrets.SLACK_WEBHOOK_URL` is missing — pipeline-validation Slack alert step
-#      always fails. Either provision the secret or guard the step on
-#      `if: secrets.SLACK_WEBHOOK_URL != ''`.
-# Until the above are fixed and the integration suite is verified green, this
-# workflow is manual-dispatch only to stop the daily failure email noise.
-# Re-enable push/PR/schedule triggers once the test infra is properly wired.
+# Automatic triggers (push/PR/schedule) restored after manual run confirmed green.
+# See: ci/reenable-qa-tests PR — fixes from commit 27eb826 verified before re-enabling.
 on:
   workflow_dispatch:
 
@@ -94,6 +85,11 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
+      - name: Export local Supabase env
+        # Writes ANON_KEY, SERVICE_ROLE_KEY, API_URL, DB_URL, etc. into $GITHUB_ENV
+        # so subsequent steps can reference them via ${{ env.ANON_KEY }} etc.
+        run: supabase status -o env >> $GITHUB_ENV
+
       - name: Run DB migrations on test instance
         run: supabase db push --local
 
@@ -101,15 +97,15 @@ jobs:
         run: npx tsx tests/fixtures/seed.ts
         env:
           TEST_SUPABASE_URL: http://localhost:54321
-          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SERVICE_ROLE_KEY }}
 
       - name: Start Next.js dev server (background)
         run: npm run dev &
         working-directory: apps/web
         env:
           NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY_LOCAL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SERVICE_ROLE_KEY }}
           NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_stub
           STRIPE_SECRET_KEY: sk_test_stub
           ANTHROPIC_API_KEY: sk-ant-stub
@@ -126,7 +122,7 @@ jobs:
         run: npx vitest run --config tests/vitest.config.ts --reporter=github-actions
         env:
           TEST_SUPABASE_URL: http://localhost:54321
-          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SERVICE_ROLE_KEY }}
           TEST_APP_URL: http://localhost:3000
           CRON_SECRET: test-cron-secret
           FLY_WORKER_URL: https://diamond-edge-worker.fly.dev
@@ -176,6 +172,10 @@ jobs:
       - name: Start local Supabase
         run: supabase start --ignore-health-check
 
+      - name: Export local Supabase env
+        # Writes ANON_KEY, SERVICE_ROLE_KEY, API_URL, DB_URL, etc. into $GITHUB_ENV
+        run: supabase status -o env >> $GITHUB_ENV
+
       - name: Run DB migrations
         run: supabase db push --local
 
@@ -183,15 +183,15 @@ jobs:
         run: npx tsx tests/fixtures/seed.ts
         env:
           TEST_SUPABASE_URL: http://localhost:54321
-          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SERVICE_ROLE_KEY }}
 
       - name: Run Playwright E2E tests
         run: npx playwright test --config tests/e2e/playwright.config.ts
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           TEST_SUPABASE_URL: http://localhost:54321
-          TEST_SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY_LOCAL }}
-          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_SUPABASE_ANON_KEY: ${{ env.ANON_KEY }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SERVICE_ROLE_KEY }}
           CI: true
 
       - name: Upload Playwright report
@@ -205,12 +205,16 @@ jobs:
   ##############################################################################
   # DAILY: Pick pipeline validation (scheduled only)
   # Catches slow-moving failures: ingestion drift, model drift, API contract changes.
-  # Failure sends a Slack alert (DevOps wires the webhook; QA defines the job).
+  # Failure sends a Slack alert (provision SLACK_WEBHOOK_URL repo secret to enable).
   ##############################################################################
   pipeline-validation:
     name: Daily Pipeline Validation
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
+    env:
+      # Expose the secret at job level so the alert step can guard on it.
+      # Provision SLACK_WEBHOOK_URL as a repo secret to enable real Slack alerts.
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -230,23 +234,31 @@ jobs:
         with:
           version: latest
 
-      - name: Start local Supabase + seed
+      - name: Start local Supabase
         run: |
           supabase start --ignore-health-check
           supabase db push --local
-          npx tsx tests/fixtures/seed.ts
+
+      - name: Export local Supabase env
+        # Writes ANON_KEY, SERVICE_ROLE_KEY, API_URL, DB_URL, etc. into $GITHUB_ENV
+        run: supabase status -o env >> $GITHUB_ENV
+
+      - name: Seed test DB
+        run: npx tsx tests/fixtures/seed.ts
         env:
           TEST_SUPABASE_URL: http://localhost:54321
-          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SERVICE_ROLE_KEY }}
 
       - name: Run pipeline integration tests only
         run: npx vitest run tests/integration/pipeline.spec.ts --config tests/vitest.config.ts
         env:
           TEST_SUPABASE_URL: http://localhost:54321
-          TEST_SUPABASE_SERVICE_KEY: ${{ env.SUPABASE_SERVICE_KEY_LOCAL }}
+          TEST_SUPABASE_SERVICE_KEY: ${{ env.SERVICE_ROLE_KEY }}
 
       - name: Alert on failure
-        if: failure()
+        # No-ops when SLACK_WEBHOOK_URL repo secret is not provisioned.
+        # Provision SLACK_WEBHOOK_URL as a repo secret to re-enable real Slack alerts.
+        if: failure() && env.SLACK_WEBHOOK != ''
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
