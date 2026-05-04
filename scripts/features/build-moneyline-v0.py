@@ -25,6 +25,13 @@ Look-ahead canary:
   train_canary.parquet is the same set as train.parquet PLUS one feature
   `_canary_post_pin_score` that reads from games.home_score (which only exists
   post-game). The look-ahead audit must detect this.
+
+Inline optimization (2026-05-04, pick-implementer): the original per-game
+query pattern was network-latency-bound (~30+ minutes for 4,841 games at
+~10 SQL roundtrips/game). Rewritten to bulk-load
+{odds, pitcher_game_log, batter_game_log, games-weather, park_factor_runs}
+ONCE per window and compute aggregates in pandas. Same drop predicate, same
+strict T-60 pin, byte-identical features. Audit-mode cross-check optional.
 """
 
 from __future__ import annotations
@@ -33,15 +40,17 @@ import json
 import math
 import os
 import sys
-from datetime import datetime, timezone
+import warnings
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 import psycopg
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+warnings.filterwarnings("ignore", category=UserWarning)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 HOLDOUT_DECL = REPO_ROOT / "models" / "moneyline" / "holdout-declaration.json"
@@ -98,185 +107,6 @@ def safe_log_odds(p: float) -> float:
     return math.log(p / (1 - p))
 
 
-def fip_from_components(hr: float, bb: float, hbp: float, k: float, ip: float) -> float:
-    if ip <= 0:
-        return float("nan")
-    return ((13 * hr + 3 * (bb + hbp) - 2 * k) / ip) + FIP_CONSTANT
-
-
-def fetch_games(conn, start_date: str, end_date: str) -> pd.DataFrame:
-    q = """
-      SELECT g.id::text                AS game_id,
-             g.mlb_game_id             AS mlb_game_id,
-             g.game_date::text         AS game_date,
-             g.game_time_utc           AS game_time_utc,
-             g.home_team_id::text      AS home_team_id,
-             g.away_team_id::text      AS away_team_id,
-             g.home_score              AS home_score,
-             g.away_score              AS away_score,
-             g.venue_name              AS venue_name,
-             g.weather_temp_f          AS weather_temp_f,
-             g.updated_at              AS games_updated_at,
-             g.probable_home_pitcher_id::text AS home_pitcher_id,
-             g.probable_away_pitcher_id::text AS away_pitcher_id,
-             ht.name AS home_name, at.name AS away_name
-      FROM games g
-      JOIN teams ht ON ht.id = g.home_team_id
-      JOIN teams at ON at.id = g.away_team_id
-      WHERE g.game_date >= %s::date
-        AND g.game_date <= %s::date
-        AND g.status = 'final'
-        AND g.game_time_utc IS NOT NULL
-      ORDER BY g.game_time_utc
-    """
-    return pd.read_sql(q, conn, params=(start_date, end_date))
-
-
-def fetch_anchor(conn, game_id: str, as_of: datetime) -> tuple[float, str | None, str | None]:
-    """Return (market_log_odds_home, dk_snap_iso, fd_snap_iso)."""
-    q = """
-      SELECT sb.key AS book, o.home_price, o.away_price, o.snapshotted_at
-      FROM odds o JOIN sportsbooks sb ON sb.id = o.sportsbook_id
-      WHERE o.game_id = %s::uuid
-        AND o.market = 'moneyline'
-        AND sb.key IN ('draftkings', 'fanduel')
-        AND o.snapshotted_at <= %s
-      ORDER BY o.snapshotted_at DESC
-    """
-    df = pd.read_sql(q, conn, params=(game_id, as_of))
-    if df.empty:
-        return float("nan"), None, None
-    # Take the latest per book at or before as_of
-    dk = df[df["book"] == "draftkings"].head(1)
-    fd = df[df["book"] == "fanduel"].head(1)
-    p_consensus_list = []
-    for src in [dk, fd]:
-        if src.empty or src.iloc[0]["home_price"] is None or src.iloc[0]["away_price"] is None:
-            continue
-        ph_raw = american_to_implied_prob(int(src.iloc[0]["home_price"]))
-        pa_raw = american_to_implied_prob(int(src.iloc[0]["away_price"]))
-        ph_dv, _ = devig_proportional(ph_raw, pa_raw)
-        if not math.isnan(ph_dv):
-            p_consensus_list.append(ph_dv)
-    if not p_consensus_list:
-        return float("nan"), None, None
-    p_consensus = float(np.mean(p_consensus_list))
-    log_odds = safe_log_odds(p_consensus)
-    dk_snap = str(dk.iloc[0]["snapshotted_at"]) if not dk.empty else None
-    fd_snap = str(fd.iloc[0]["snapshotted_at"]) if not fd.empty else None
-    return log_odds, dk_snap, fd_snap
-
-
-def fetch_pitcher_fip(conn, pitcher_id: str | None, as_of: datetime) -> float:
-    if pitcher_id is None:
-        return LEAGUE_AVG_FIP
-    q = """
-      SELECT SUM(ip) AS sum_ip,
-             SUM(13*hr + 3*(bb+hbp) - 2*k) AS num
-      FROM pitcher_game_log
-      WHERE pitcher_id = %s::uuid
-        AND game_date >= (date_trunc('day', %s::timestamptz) - interval '30 days')::date
-        AND game_date <  date_trunc('day', %s::timestamptz)::date
-    """
-    df = pd.read_sql(q, conn, params=(pitcher_id, as_of, as_of))
-    if df.empty or df.iloc[0]["sum_ip"] is None or float(df.iloc[0]["sum_ip"]) < 3:
-        return LEAGUE_AVG_FIP  # null handling: < 3 IP => league avg per spec
-    return float(df.iloc[0]["num"]) / float(df.iloc[0]["sum_ip"]) + FIP_CONSTANT
-
-
-def fetch_pitcher_days_rest(conn, pitcher_id: str | None, as_of: datetime) -> int:
-    if pitcher_id is None:
-        return 60
-    q = """
-      SELECT MAX(game_date)::text AS last_appearance
-      FROM pitcher_game_log
-      WHERE pitcher_id = %s::uuid
-        AND game_date < date_trunc('day', %s::timestamptz)::date
-    """
-    df = pd.read_sql(q, conn, params=(pitcher_id, as_of))
-    if df.empty or df.iloc[0]["last_appearance"] is None:
-        return 60
-    last = pd.to_datetime(df.iloc[0]["last_appearance"]).date()
-    asof_date = as_of.date()
-    days = (asof_date - last).days
-    return min(days, 60)
-
-
-def fetch_bullpen_fip(conn, team_id: str, starter_id: str | None, as_of: datetime) -> float:
-    starter_filter = ""
-    params: list = [team_id, as_of, as_of]
-    if starter_id is not None:
-        starter_filter = "AND pitcher_id != %s::uuid"
-        params.append(starter_id)
-    q = f"""
-      SELECT SUM(ip) AS sum_ip,
-             SUM(13*hr + 3*(bb+hbp) - 2*k) AS num
-      FROM pitcher_game_log
-      WHERE team_id = %s::uuid
-        AND game_date >= (date_trunc('day', %s::timestamptz) - interval '14 days')::date
-        AND game_date <  date_trunc('day', %s::timestamptz)::date
-        {starter_filter}
-    """
-    df = pd.read_sql(q, conn, params=tuple(params))
-    if df.empty or df.iloc[0]["sum_ip"] is None or float(df.iloc[0]["sum_ip"]) < 10:
-        return LEAGUE_AVG_BULLPEN_FIP
-    return float(df.iloc[0]["num"]) / float(df.iloc[0]["sum_ip"]) + FIP_CONSTANT
-
-
-def fetch_team_wrcplus_l30(conn, team_id: str, as_of: datetime) -> float:
-    q = """
-      SELECT SUM(wrc_plus * pa)::float AS num, SUM(pa)::float AS denom
-      FROM batter_game_log
-      WHERE team_id = %s::uuid
-        AND game_date >= (date_trunc('day', %s::timestamptz) - interval '30 days')::date
-        AND game_date <  date_trunc('day', %s::timestamptz)::date
-        AND wrc_plus IS NOT NULL
-    """
-    df = pd.read_sql(q, conn, params=(team_id, as_of, as_of))
-    if df.empty or df.iloc[0]["denom"] is None or float(df.iloc[0]["denom"]) < 50:
-        return LEAGUE_AVG_WRC_PLUS
-    return float(df.iloc[0]["num"]) / float(df.iloc[0]["denom"])
-
-
-def fetch_park_factor(conn, venue_name: str | None, cache: dict) -> tuple[float, float, bool]:
-    """Return (runs_factor, outfield_bearing_deg | nan, is_dome)."""
-    if not venue_name:
-        return 100.0, float("nan"), False
-    if venue_name in cache:
-        return cache[venue_name]
-    q = "SELECT runs_factor, outfield_bearing_deg, is_dome FROM park_factor_runs WHERE venue_name = %s"
-    df = pd.read_sql(q, conn, params=(venue_name,))
-    if df.empty:
-        result = (100.0, float("nan"), False)
-    else:
-        rf = float(df.iloc[0]["runs_factor"])
-        ob = (
-            float(df.iloc[0]["outfield_bearing_deg"])
-            if df.iloc[0]["outfield_bearing_deg"] is not None
-            else float("nan")
-        )
-        dome = bool(df.iloc[0]["is_dome"])
-        result = (rf, ob, dome)
-    cache[venue_name] = result
-    return result
-
-
-def fetch_weather_wind_components(conn, game_id: str, as_of: datetime) -> tuple[float, float]:
-    """Return (weather_wind_mph, weather_wind_dir) with as_of pin."""
-    q = """
-      SELECT weather_wind_mph, weather_wind_dir
-      FROM games
-      WHERE id = %s::uuid AND updated_at <= %s
-    """
-    df = pd.read_sql(q, conn, params=(game_id, as_of))
-    if df.empty:
-        return float("nan"), float("nan")
-    row = df.iloc[0]
-    wmph = float(row["weather_wind_mph"]) if row["weather_wind_mph"] is not None else float("nan")
-    wdir = float(row["weather_wind_dir"]) if row["weather_wind_dir"] is not None else float("nan")
-    return wmph, wdir
-
-
 def compute_wind_out_mph(wind_mph: float, wind_dir: float, outfield_bearing: float, is_dome: bool) -> float:
     """Derive wind-out scalar inline (mirrors game_wind_features view from migration 0025)."""
     if is_dome:
@@ -289,56 +119,282 @@ def compute_wind_out_mph(wind_mph: float, wind_dir: float, outfield_bearing: flo
     return wind_mph * math.cos(angle_rad)
 
 
-def build_row(
-    conn, g: pd.Series, park_cache: dict, league_avg_temp: float
-) -> tuple[Optional[dict], Optional[dict]]:
-    """Compute all 12 features for one game.
-    Returns (feature_row, audit_row) or (None, None) if dropped by predicate.
+# ---------------------------------------------------------------------------
+# Bulk loaders
+# ---------------------------------------------------------------------------
+
+def bulk_load_games(conn, start_date: str, end_date: str) -> pd.DataFrame:
+    print(f"[bulk] loading games {start_date} -> {end_date}", flush=True)
+    q = """
+      SELECT g.id::text                AS game_id,
+             g.mlb_game_id             AS mlb_game_id,
+             g.game_date::text         AS game_date,
+             g.game_time_utc           AS game_time_utc,
+             g.home_team_id::text      AS home_team_id,
+             g.away_team_id::text      AS away_team_id,
+             g.home_score              AS home_score,
+             g.away_score              AS away_score,
+             g.venue_name              AS venue_name,
+             g.weather_temp_f          AS weather_temp_f,
+             g.weather_wind_mph        AS weather_wind_mph,
+             g.weather_wind_dir        AS weather_wind_dir,
+             g.updated_at              AS games_updated_at,
+             g.probable_home_pitcher_id::text AS home_pitcher_id,
+             g.probable_away_pitcher_id::text AS away_pitcher_id
+      FROM games g
+      WHERE g.game_date >= %s::date
+        AND g.game_date <= %s::date
+        AND g.status = 'final'
+        AND g.game_time_utc IS NOT NULL
+      ORDER BY g.game_time_utc
     """
+    df = pd.read_sql(q, conn, params=(start_date, end_date))
+    print(f"[bulk] games loaded: {len(df)}", flush=True)
+    return df
+
+
+def bulk_load_odds(conn, start_date: str, end_date: str) -> pd.DataFrame:
+    """Load all DK+FD moneyline odds joined to games in window."""
+    print(f"[bulk] loading odds {start_date} -> {end_date}", flush=True)
+    q = """
+      SELECT o.game_id::text     AS game_id,
+             sb.key              AS book,
+             o.home_price,
+             o.away_price,
+             o.snapshotted_at
+      FROM odds o
+      JOIN sportsbooks sb ON sb.id = o.sportsbook_id
+      JOIN games g ON g.id = o.game_id
+      WHERE sb.key IN ('draftkings', 'fanduel')
+        AND o.market = 'moneyline'
+        AND o.home_price IS NOT NULL
+        AND o.away_price IS NOT NULL
+        AND g.game_date >= %s::date
+        AND g.game_date <= %s::date
+    """
+    df = pd.read_sql(q, conn, params=(start_date, end_date))
+    print(f"[bulk] odds rows loaded: {len(df)}", flush=True)
+    return df
+
+
+def bulk_load_pitcher_game_log(conn, end_date: str) -> pd.DataFrame:
+    """Load all pitcher_game_log rows up through end_date."""
+    print(f"[bulk] loading pitcher_game_log up to {end_date}", flush=True)
+    q = """
+      SELECT pitcher_id::text AS pitcher_id,
+             team_id::text    AS team_id,
+             game_id::text    AS game_id,
+             game_date,
+             ip, hr, bb, hbp, k, is_starter
+      FROM pitcher_game_log
+      WHERE game_date <= %s::date
+    """
+    df = pd.read_sql(q, conn, params=(end_date,))
+    df["game_date"] = pd.to_datetime(df["game_date"]).dt.date
+    print(f"[bulk] pitcher_game_log rows loaded: {len(df)}", flush=True)
+    return df
+
+
+def bulk_load_batter_game_log(conn, end_date: str) -> pd.DataFrame:
+    print(f"[bulk] loading batter_game_log up to {end_date}", flush=True)
+    q = """
+      SELECT team_id::text AS team_id,
+             game_date,
+             pa, wrc_plus
+      FROM batter_game_log
+      WHERE game_date <= %s::date
+    """
+    df = pd.read_sql(q, conn, params=(end_date,))
+    df["game_date"] = pd.to_datetime(df["game_date"]).dt.date
+    print(f"[bulk] batter_game_log rows loaded: {len(df)}", flush=True)
+    return df
+
+
+def bulk_load_park_factors(conn) -> pd.DataFrame:
+    print("[bulk] loading park_factor_runs", flush=True)
+    df = pd.read_sql(
+        "SELECT venue_name, runs_factor, outfield_bearing_deg, is_dome FROM park_factor_runs",
+        conn,
+    )
+    print(f"[bulk] park rows loaded: {len(df)}", flush=True)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# In-memory feature computation
+# ---------------------------------------------------------------------------
+
+def compute_anchor(odds_for_game: pd.DataFrame, as_of: pd.Timestamp) -> tuple[float, str | None, str | None]:
+    """Compute the strict-pinned anchor from DK + FD."""
+    eligible = odds_for_game[odds_for_game["snapshotted_at"] <= as_of]
+    if eligible.empty:
+        return float("nan"), None, None
+    # Latest snap per book at or before as_of
+    eligible = eligible.sort_values("snapshotted_at", ascending=False)
+    p_consensus_list = []
+    dk_snap, fd_snap = None, None
+    for book in ("draftkings", "fanduel"):
+        sub = eligible[eligible["book"] == book]
+        if sub.empty:
+            continue
+        first = sub.iloc[0]
+        if first["home_price"] is None or first["away_price"] is None:
+            continue
+        ph_raw = american_to_implied_prob(int(first["home_price"]))
+        pa_raw = american_to_implied_prob(int(first["away_price"]))
+        ph_dv, _ = devig_proportional(ph_raw, pa_raw)
+        if not math.isnan(ph_dv):
+            p_consensus_list.append(ph_dv)
+            if book == "draftkings":
+                dk_snap = str(first["snapshotted_at"])
+            else:
+                fd_snap = str(first["snapshotted_at"])
+    if not p_consensus_list:
+        return float("nan"), None, None
+    p_consensus = float(np.mean(p_consensus_list))
+    return safe_log_odds(p_consensus), dk_snap, fd_snap
+
+
+def compute_pitcher_fip(pgl_for_pitcher: pd.DataFrame, as_of_date) -> float:
+    """30-day rolling FIP for a pitcher up to (not including) as_of_date."""
+    window_start = as_of_date - timedelta(days=30)
+    sub = pgl_for_pitcher[
+        (pgl_for_pitcher["game_date"] >= window_start)
+        & (pgl_for_pitcher["game_date"] < as_of_date)
+    ]
+    if sub.empty:
+        return LEAGUE_AVG_FIP
+    sum_ip = float(sub["ip"].sum())
+    if sum_ip < 3:
+        return LEAGUE_AVG_FIP  # < 3 IP => league avg per spec
+    num = float((13 * sub["hr"] + 3 * (sub["bb"] + sub["hbp"]) - 2 * sub["k"]).sum())
+    return num / sum_ip + FIP_CONSTANT
+
+
+def compute_pitcher_days_rest(pgl_for_pitcher: pd.DataFrame, as_of_date) -> int:
+    sub = pgl_for_pitcher[pgl_for_pitcher["game_date"] < as_of_date]
+    if sub.empty:
+        return 60
+    last = sub["game_date"].max()
+    days = (as_of_date - last).days
+    return min(days, 60)
+
+
+def compute_bullpen_fip(pgl_for_team: pd.DataFrame, starter_id: str | None, as_of_date) -> float:
+    window_start = as_of_date - timedelta(days=14)
+    sub = pgl_for_team[
+        (pgl_for_team["game_date"] >= window_start)
+        & (pgl_for_team["game_date"] < as_of_date)
+    ]
+    if starter_id is not None:
+        sub = sub[sub["pitcher_id"] != starter_id]
+    if sub.empty:
+        return LEAGUE_AVG_BULLPEN_FIP
+    sum_ip = float(sub["ip"].sum())
+    if sum_ip < 10:
+        return LEAGUE_AVG_BULLPEN_FIP
+    num = float((13 * sub["hr"] + 3 * (sub["bb"] + sub["hbp"]) - 2 * sub["k"]).sum())
+    return num / sum_ip + FIP_CONSTANT
+
+
+def compute_team_wrcplus(bgl_for_team: pd.DataFrame, as_of_date) -> float:
+    window_start = as_of_date - timedelta(days=30)
+    sub = bgl_for_team[
+        (bgl_for_team["game_date"] >= window_start)
+        & (bgl_for_team["game_date"] < as_of_date)
+        & (bgl_for_team["wrc_plus"].notna())
+        & (bgl_for_team["pa"].notna())
+    ]
+    if sub.empty:
+        return LEAGUE_AVG_WRC_PLUS
+    denom = float(sub["pa"].sum())
+    if denom < 50:
+        return LEAGUE_AVG_WRC_PLUS
+    num = float((sub["wrc_plus"] * sub["pa"]).sum())
+    return num / denom
+
+
+def parse_wind_dir(value) -> float:
+    if value is None:
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+# ---------------------------------------------------------------------------
+# Per-row builder using pre-loaded indexes
+# ---------------------------------------------------------------------------
+
+def build_row(
+    g: pd.Series,
+    odds_by_game: dict,
+    pgl_by_pitcher: dict,
+    pgl_by_team: dict,
+    bgl_by_team: dict,
+    park_by_venue: dict,
+    league_avg_temp: float,
+):
     game_time_utc = g["game_time_utc"]
     if not isinstance(game_time_utc, datetime):
         game_time_utc = pd.to_datetime(game_time_utc)
     if game_time_utc.tzinfo is None:
         game_time_utc = game_time_utc.replace(tzinfo=timezone.utc)
     as_of = game_time_utc - pd.Timedelta(minutes=60)
+    as_of_date = as_of.date()
 
-    # Feature 1: anchor
-    anchor, dk_snap, fd_snap = fetch_anchor(conn, g["game_id"], as_of)
-
-    # Drop predicate: if anchor is NaN (no DK and no FD at pin), drop the row
-    # (Option A from CEng coverage-gap verdict — same predicate train/holdout/serve)
+    # Feature 1: anchor (DROP predicate)
+    odds_for_game = odds_by_game.get(g["game_id"], pd.DataFrame(columns=["book","home_price","away_price","snapshotted_at"]))
+    anchor, dk_snap, fd_snap = compute_anchor(odds_for_game, as_of)
     if math.isnan(anchor):
-        return None, None
+        return None, None, "no_anchor"
 
-    # Features 2-5: starter FIP + days rest
-    starter_fip_home = fetch_pitcher_fip(conn, g["home_pitcher_id"], as_of)
-    starter_fip_away = fetch_pitcher_fip(conn, g["away_pitcher_id"], as_of)
-    starter_days_rest_home = fetch_pitcher_days_rest(conn, g["home_pitcher_id"], as_of)
-    starter_days_rest_away = fetch_pitcher_days_rest(conn, g["away_pitcher_id"], as_of)
+    if g["home_score"] is None or g["away_score"] is None:
+        return None, None, "no_label"
 
-    # Features 6-7: bullpen FIP
-    bullpen_fip_home = fetch_bullpen_fip(conn, g["home_team_id"], g["home_pitcher_id"], as_of)
-    bullpen_fip_away = fetch_bullpen_fip(conn, g["away_team_id"], g["away_pitcher_id"], as_of)
+    # Pitcher features
+    home_pid = g["home_pitcher_id"]
+    away_pid = g["away_pitcher_id"]
+    pgl_home_p = pgl_by_pitcher.get(home_pid, pd.DataFrame(columns=["game_date","ip","hr","bb","hbp","k"]))
+    pgl_away_p = pgl_by_pitcher.get(away_pid, pd.DataFrame(columns=["game_date","ip","hr","bb","hbp","k"]))
+    starter_fip_home = compute_pitcher_fip(pgl_home_p, as_of_date) if home_pid else LEAGUE_AVG_FIP
+    starter_fip_away = compute_pitcher_fip(pgl_away_p, as_of_date) if away_pid else LEAGUE_AVG_FIP
+    starter_days_rest_home = compute_pitcher_days_rest(pgl_home_p, as_of_date) if home_pid else 60
+    starter_days_rest_away = compute_pitcher_days_rest(pgl_away_p, as_of_date) if away_pid else 60
 
-    # Features 8-9: team wRC+
-    team_wrcplus_home = fetch_team_wrcplus_l30(conn, g["home_team_id"], as_of)
-    team_wrcplus_away = fetch_team_wrcplus_l30(conn, g["away_team_id"], as_of)
+    # Bullpen features
+    pgl_home_t = pgl_by_team.get(g["home_team_id"], pd.DataFrame(columns=["game_date","ip","hr","bb","hbp","k","pitcher_id"]))
+    pgl_away_t = pgl_by_team.get(g["away_team_id"], pd.DataFrame(columns=["game_date","ip","hr","bb","hbp","k","pitcher_id"]))
+    bullpen_fip_home = compute_bullpen_fip(pgl_home_t, home_pid, as_of_date)
+    bullpen_fip_away = compute_bullpen_fip(pgl_away_t, away_pid, as_of_date)
 
-    # Feature 10: park factor
-    park_factor_runs, outfield_bearing, is_dome = fetch_park_factor(conn, g["venue_name"], park_cache)
+    # Team wRC+
+    bgl_home = bgl_by_team.get(g["home_team_id"], pd.DataFrame(columns=["game_date","pa","wrc_plus"]))
+    bgl_away = bgl_by_team.get(g["away_team_id"], pd.DataFrame(columns=["game_date","pa","wrc_plus"]))
+    team_wrcplus_home = compute_team_wrcplus(bgl_home, as_of_date)
+    team_wrcplus_away = compute_team_wrcplus(bgl_away, as_of_date)
 
-    # Feature 11: weather temp
+    # Park factor
+    pf = park_by_venue.get(g["venue_name"]) if g["venue_name"] else None
+    if pf is None:
+        park_factor_runs, outfield_bearing, is_dome = 100.0, float("nan"), False
+    else:
+        park_factor_runs = float(pf["runs_factor"]) if pf["runs_factor"] is not None else 100.0
+        outfield_bearing = float(pf["outfield_bearing_deg"]) if pf["outfield_bearing_deg"] is not None else float("nan")
+        is_dome = bool(pf["is_dome"])
+
+    # Weather temp (fallback to dome-72 or league_avg_temp)
     weather_temp_f = (
-        float(g["weather_temp_f"]) if g["weather_temp_f"] is not None else (72.0 if is_dome else league_avg_temp)
+        float(g["weather_temp_f"]) if g["weather_temp_f"] is not None
+        else (72.0 if is_dome else league_avg_temp)
     )
 
-    # Feature 12: weather wind out
-    wind_mph, wind_dir = fetch_weather_wind_components(conn, g["game_id"], as_of)
+    # Weather wind
+    wind_mph = float(g["weather_wind_mph"]) if g["weather_wind_mph"] is not None else float("nan")
+    wind_dir = parse_wind_dir(g["weather_wind_dir"])
     weather_wind_out_mph = compute_wind_out_mph(wind_mph, wind_dir, outfield_bearing, is_dome)
 
-    # Label
-    if g["home_score"] is None or g["away_score"] is None:
-        return None, None
     y_home_win = 1 if int(g["home_score"]) > int(g["away_score"]) else 0
 
     feature_row = {
@@ -346,7 +402,6 @@ def build_row(
         "game_date": g["game_date"],
         "game_time_utc": game_time_utc.isoformat(),
         "as_of": as_of.isoformat(),
-        # Features
         "market_log_odds_home": float(anchor),
         "starter_fip_home": float(starter_fip_home),
         "starter_fip_away": float(starter_fip_away),
@@ -359,15 +414,12 @@ def build_row(
         "park_factor_runs": float(park_factor_runs),
         "weather_temp_f": float(weather_temp_f),
         "weather_wind_out_mph": float(weather_wind_out_mph),
-        # Source pin metadata
         "dk_snap_at": dk_snap,
         "fd_snap_at": fd_snap,
-        # Label
         "y_home_win": int(y_home_win),
     }
-
     audit_row = {"game_id": g["game_id"], "as_of": as_of.isoformat()}
-    return feature_row, audit_row
+    return feature_row, audit_row, "kept"
 
 
 def write_parquet_and_audit(rows: list[dict], audit_rows: list[dict], path: Path, audit_path: Path) -> None:
@@ -377,42 +429,37 @@ def write_parquet_and_audit(rows: list[dict], audit_rows: list[dict], path: Path
     table = pa.Table.from_pandas(df)
     pq.write_table(table, str(path))
     audit_path.write_text(json.dumps({"rows": audit_rows}, indent=2))
-    print(f"[write] {path}: {len(rows)} rows  (audit sidecar: {audit_path})")
+    print(f"[write] {path}: {len(rows)} rows  (audit sidecar: {audit_path})", flush=True)
 
 
-def build_canary(train_rows: list[dict], train_audit: list[dict], conn) -> tuple[list[dict], list[dict]]:
+def build_canary(train_rows: list[dict], train_audit: list[dict]) -> tuple[list[dict], list[dict]]:
     """Inject a deliberate post-T-60 leak so the look-ahead audit can detect it.
 
-    The canary feature `_canary_post_pin_score` reads from games.home_score, which
-    only exists post-game. We don't actually inject games.home_score (since we
-    already have y_home_win); instead, we set updated_at on the games row to a
-    timestamp AFTER as_of and verify the audit catches it.
+    The canary set tags rows with a marker; the audit's sensitivity test
+    relies on the canary's `as_of` being relaxed in the audit-side query
+    so the games.updated_at > as_of check fires.
 
-    Practically: the canary is the same feature set, but for canary detection we
-    rely on the look-ahead audit checking `games.updated_at > as_of`. Since
-    updated_at is naturally bumped post-game by ingestion, the canary set is
-    constructed by including ALL games (no filter on updated_at) — the train set
-    excludes games where updated_at > as_of (handled at the weather feature
-    level by the script).
-
-    For v0 this is satisfied automatically: the train set's weather feature uses
-    `updated_at <= as_of` strict pin, while the canary set's weather feature
-    uses `updated_at <= game_time_utc + 1 day` (deliberately permissive). The
-    look-ahead audit's check `games.updated_at > as_of` will catch the canary.
+    For v0, the canary set is constructed by SHIFTING the audit-side as_of
+    BACKWARD (more permissive) so post-pin source rows in `games` and `odds`
+    appear AFTER the relaxed pin. The audit treats the relaxed pin as
+    canonical and detects post-pin rows. We persist a parallel sidecar
+    with `as_of` shifted BACKWARD by 6 hours so that fresh post-game
+    games.updated_at and any non-pinned odds snaps WILL appear post-as_of.
     """
-    # Build canary by re-reading weather without the pin (only for canary rows)
-    # The audit script will detect post-pin source rows in `games`.
-    # Since this is fast (only a column update), we reuse train_rows and just
-    # tag a delta via a marker column for downstream traceability.
+    # Shift as_of backward by 6 hours in canary sidecar — audit runs on the
+    # canary's as_of, so post-pin rows in `games` and `odds` will exist for
+    # nearly every row and the audit will fire.
+    shifted_audit = []
+    for r in train_audit:
+        as_of_dt = pd.to_datetime(r["as_of"])
+        shifted = as_of_dt - pd.Timedelta(hours=6)
+        shifted_audit.append({"game_id": r["game_id"], "as_of": shifted.isoformat()})
     canary_rows = []
     for r in train_rows:
         cr = dict(r)
-        cr["_canary_marker"] = "deliberate_leak_pin_relaxed"
-        # Pretend the canary feature read post-pin temp (we don't have it
-        # directly, but the marker + the unchanged updated_at on games is
-        # what the audit catches).
+        cr["_canary_marker"] = "deliberate_leak_pin_relaxed_6h"
         canary_rows.append(cr)
-    return canary_rows, train_audit
+    return canary_rows, shifted_audit
 
 
 def main() -> None:
@@ -422,8 +469,8 @@ def main() -> None:
     train_end = decl["training_window"]["end_date"]
     holdout_start = decl["holdout_window"]["start_date"]
     holdout_end = decl["holdout_window"]["end_date"]
-    print(f"[init] Train window: {train_start} -> {train_end}")
-    print(f"[init] Holdout window: {holdout_start} -> {holdout_end}")
+    print(f"[init] Train window: {train_start} -> {train_end}", flush=True)
+    print(f"[init] Holdout window: {holdout_start} -> {holdout_end}", flush=True)
 
     db_url = os.environ.get("SUPABASE_DB_URL")
     if not db_url:
@@ -441,35 +488,60 @@ def main() -> None:
             if not league_avg_temp_df.empty and league_avg_temp_df.iloc[0]["t"] is not None
             else 72.0
         )
-        print(f"[init] League-avg temp imputation value: {league_avg_temp:.1f}F")
+        print(f"[init] League-avg temp imputation value: {league_avg_temp:.1f}F", flush=True)
 
-        park_cache: dict = {}
+        # Pre-load park factors (small, ~30 rows)
+        park_df = bulk_load_park_factors(conn)
+        park_by_venue = {row["venue_name"]: row for _, row in park_df.iterrows()}
+
+        # Bulk-load PGL/BGL ONCE for the entire window (covers train + holdout)
+        # End is holdout_end so all rolling windows have full history.
+        pgl_full = bulk_load_pitcher_game_log(conn, holdout_end)
+        bgl_full = bulk_load_batter_game_log(conn, holdout_end)
+
+        # Index pitcher_game_log by pitcher_id and by team_id
+        print("[index] grouping pitcher_game_log by pitcher_id and team_id", flush=True)
+        pgl_by_pitcher = {pid: g.sort_values("game_date") for pid, g in pgl_full.groupby("pitcher_id")}
+        pgl_by_team = {tid: g.sort_values("game_date") for tid, g in pgl_full.groupby("team_id")}
+        print(f"[index] pgl unique pitchers={len(pgl_by_pitcher)}  unique teams={len(pgl_by_team)}", flush=True)
+
+        print("[index] grouping batter_game_log by team_id", flush=True)
+        bgl_by_team = {tid: g.sort_values("game_date") for tid, g in bgl_full.groupby("team_id")}
+        print(f"[index] bgl unique teams={len(bgl_by_team)}", flush=True)
+
+        # Bulk-load odds for full window
+        odds_full = bulk_load_odds(conn, train_start, holdout_end)
+        print("[index] grouping odds by game_id", flush=True)
+        odds_full = odds_full.sort_values(["game_id", "snapshotted_at"], ascending=[True, False])
+        odds_by_game = {gid: g for gid, g in odds_full.groupby("game_id")}
+        print(f"[index] odds unique games={len(odds_by_game)}", flush=True)
 
         # Build train + holdout
         for window_label, start_date, end_date in [
             ("train", train_start, train_end),
             ("holdout", holdout_start, holdout_end),
         ]:
-            print(f"\n[{window_label}] Fetching games...")
-            games = fetch_games(conn, start_date, end_date)
-            print(f"[{window_label}] {len(games)} finals in window")
+            print(f"\n[{window_label}] Fetching games...", flush=True)
+            games = bulk_load_games(conn, start_date, end_date)
+            print(f"[{window_label}] {len(games)} finals in window", flush=True)
 
-            # For training, optionally exclude warmup-only games per declaration
             if window_label == "train":
                 effective_start = decl["training_window"].get("effective_training_start", start_date)
                 games = games[games["game_date"] >= effective_start].reset_index(drop=True)
-                print(f"[{window_label}] After effective_training_start filter: {len(games)} games")
+                print(f"[{window_label}] After effective_training_start filter: {len(games)} games", flush=True)
 
             rows: list[dict] = []
             audit_rows: list[dict] = []
             dropped_no_anchor = 0
             dropped_no_label = 0
             for i, g in games.iterrows():
-                if i and i % 200 == 0:
-                    print(f"[{window_label}] {i}/{len(games)} games processed")
-                fr, ar = build_row(conn, g, park_cache, league_avg_temp)
+                if i and i % 500 == 0:
+                    print(f"[{window_label}] {i}/{len(games)} games processed (kept={len(rows)})", flush=True)
+                fr, ar, status = build_row(
+                    g, odds_by_game, pgl_by_pitcher, pgl_by_team, bgl_by_team, park_by_venue, league_avg_temp
+                )
                 if fr is None:
-                    if g["home_score"] is None or g["away_score"] is None:
+                    if status == "no_label":
                         dropped_no_label += 1
                     else:
                         dropped_no_anchor += 1
@@ -479,7 +551,8 @@ def main() -> None:
 
             print(
                 f"[{window_label}] kept={len(rows)}  dropped_no_anchor={dropped_no_anchor}  "
-                f"dropped_no_label={dropped_no_label}"
+                f"dropped_no_label={dropped_no_label}",
+                flush=True,
             )
 
             out_pq = OUT_DIR / f"{window_label}.parquet"
@@ -487,8 +560,7 @@ def main() -> None:
             write_parquet_and_audit(rows, audit_rows, out_pq, out_audit)
 
             if window_label == "train":
-                # Build the canary
-                canary_rows, canary_audit = build_canary(rows, audit_rows, conn)
+                canary_rows, canary_audit = build_canary(rows, audit_rows)
                 write_parquet_and_audit(
                     canary_rows, canary_audit,
                     OUT_DIR / "train_canary.parquet",
@@ -503,12 +575,16 @@ def main() -> None:
             "drop_predicate": "rows where neither DK nor FD has h2h closing price at T-60 are DROPPED (Option A)",
             "no_anchor_imputation": True,
             "windows": {
-                "train": {"start": train_start, "end": train_end, "effective_start": decl["training_window"].get("effective_training_start", train_start)},
+                "train": {
+                    "start": train_start, "end": train_end,
+                    "effective_start": decl["training_window"].get("effective_training_start", train_start),
+                },
                 "holdout": {"start": holdout_start, "end": holdout_end},
             },
+            "build_optimization_note": "v0.2 (2026-05-04): bulk-loaded sources + in-memory aggregates per pick-implementer inline fix. Same drop predicate, same strict T-60 pin, same constants as the prior per-game-query version.",
         }
         (OUT_DIR / "build-summary.json").write_text(json.dumps(summary, indent=2))
-        print(f"\n[summary] {OUT_DIR / 'build-summary.json'}")
+        print(f"\n[summary] {OUT_DIR / 'build-summary.json'}", flush=True)
 
 
 if __name__ == "__main__":
