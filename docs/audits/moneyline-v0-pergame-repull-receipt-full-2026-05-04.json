@@ -1,0 +1,155 @@
+{
+  "run_completed_at_utc": "2026-05-04T02:50:46.116Z",
+  "window": "full",
+  "snapshot_offset_min": 75,
+  "games_planned": 5339,
+  "games_fetched": 5339,
+  "games_skipped": 0,
+  "games_in_responses": 116183,
+  "initial_credits_used": 169,
+  "final_credits_used": 53559,
+  "final_credits_remaining": 4946441,
+  "total_burn": 53390,
+  "coo_ceiling": 100000,
+  "coo_compliant": true,
+  "error_count": 0,
+  "errors_sample": [],
+  "monthly_ledger": [
+    {
+      "month": "2022-09",
+      "games_processed": 396,
+      "games_fetched": 396,
+      "games_skipped": 0,
+      "credits_used_during_month": 4129,
+      "credits_remaining_after_month": 4995871
+    },
+    {
+      "month": "2022-10",
+      "games_processed": 86,
+      "games_fetched": 86,
+      "games_skipped": 0,
+      "credits_used_during_month": 860,
+      "credits_remaining_after_month": 4995011
+    },
+    {
+      "month": "2023-03",
+      "games_processed": 16,
+      "games_fetched": 16,
+      "games_skipped": 0,
+      "credits_used_during_month": 160,
+      "credits_remaining_after_month": 4994851
+    },
+    {
+      "month": "2023-04",
+      "games_processed": 409,
+      "games_fetched": 409,
+      "games_skipped": 0,
+      "credits_used_during_month": 4090,
+      "credits_remaining_after_month": 4990761
+    },
+    {
+      "month": "2023-05",
+      "games_processed": 412,
+      "games_fetched": 412,
+      "games_skipped": 0,
+      "credits_used_during_month": 4120,
+      "credits_remaining_after_month": 4986641
+    },
+    {
+      "month": "2023-06",
+      "games_processed": 387,
+      "games_fetched": 387,
+      "games_skipped": 0,
+      "credits_used_during_month": 3870,
+      "credits_remaining_after_month": 4982771
+    },
+    {
+      "month": "2023-07",
+      "games_processed": 368,
+      "games_fetched": 368,
+      "games_skipped": 0,
+      "credits_used_during_month": 3680,
+      "credits_remaining_after_month": 4979091
+    },
+    {
+      "month": "2023-08",
+      "games_processed": 414,
+      "games_fetched": 414,
+      "games_skipped": 0,
+      "credits_used_during_month": 4140,
+      "credits_remaining_after_month": 4974951
+    },
+    {
+      "month": "2023-09",
+      "games_processed": 404,
+      "games_fetched": 404,
+      "games_skipped": 0,
+      "credits_used_during_month": 4040,
+      "credits_remaining_after_month": 4970911
+    },
+    {
+      "month": "2023-10",
+      "games_processed": 20,
+      "games_fetched": 20,
+      "games_skipped": 0,
+      "credits_used_during_month": 200,
+      "credits_remaining_after_month": 4970711
+    },
+    {
+      "month": "2024-03",
+      "games_processed": 53,
+      "games_fetched": 53,
+      "games_skipped": 0,
+      "credits_used_during_month": 530,
+      "credits_remaining_after_month": 4970181
+    },
+    {
+      "month": "2024-04",
+      "games_processed": 390,
+      "games_fetched": 390,
+      "games_skipped": 0,
+      "credits_used_during_month": 3900,
+      "credits_remaining_after_month": 4966281
+    },
+    {
+      "month": "2024-05",
+      "games_processed": 410,
+      "games_fetched": 410,
+      "games_skipped": 0,
+      "credits_used_during_month": 4100,
+      "credits_remaining_after_month": 4962181
+    },
+    {
+      "month": "2024-06",
+      "games_processed": 406,
+      "games_fetched": 406,
+      "games_skipped": 0,
+      "credits_used_during_month": 4060,
+      "credits_remaining_after_month": 4958121
+    },
+    {
+      "month": "2024-07",
+      "games_processed": 365,
+      "games_fetched": 365,
+      "games_skipped": 0,
+      "credits_used_during_month": 3650,
+      "credits_remaining_after_month": 4954471
+    },
+    {
+      "month": "2024-08",
+      "games_processed": 414,
+      "games_fetched": 414,
+      "games_skipped": 0,
+      "credits_used_during_month": 4140,
+      "credits_remaining_after_month": 4950331
+    },
+    {
+      "month": "2024-09",
+      "games_processed": 389,
+      "games_fetched": 389,
+      "games_skipped": 0,
+      "credits_used_during_month": 3890,
+      "credits_remaining_after_month": 4946441
+    }
+  ]
+}
