@@ -42,11 +42,12 @@ I'll verify post-fire and surface anomalies in the morning summary.
 
 ## 3. Morning crons — 08:00 / 09:00 / 10:00 UTC
 
-- `outcome-grader` (08:00 UTC / 04:00 ET): settles tonight's picks
-- `clv-compute` (09:00 UTC / 05:00 ET): writes pick_clv rows from closing snapshots
-- `calibration-snapshot` (10:00 UTC / 06:00 ET): rolls calibration_history for the trailing 60-day window
+**Update at 09:17 UTC check-in:**
+- `outcome-grader` (08:00 UTC scheduled): **NO cron_runs row found for today's firing.** Either Vercel cron didn't trigger it, or the route errored before `startCronRun`. Other crons firing OK rules out broad infrastructure issue. Yesterday's fired at 08:00 UTC normally (last graded run before today is from yesterday). Tonight's 8 picks are still `pending` (games haven't been played yet — first pitch 22:40 UTC tonight) so there's nothing to grade today regardless; still worth investigating why the cron didn't fire. **Queued for your call.**
+- `clv-compute` (09:00 UTC): fired at 09:01:41 UTC, status='success'.
+- `calibration-snapshot` (10:00 UTC): not yet fired at time of this check; ETA ~45 min.
 
-I'll verify each fires successfully and report the morning numbers.
+**Background failure pattern (known noise; not new):** `schedule-sync` returns HTTP 207 (multi-status) every day because the news-poll subtask returns `ok=false` while schedule + odds succeed. Our cron-run-log treats 207 as `'failure'`. The actual data ingestion (schedule + odds) IS working — confirmed by manual probe yesterday. Could be fixed by changing the cron-runs status mapping, but it's been failing this way for ≥4 days without operational impact. Low priority.
 
 ## 4. Open work I'm NOT acting on (you decide)
 
