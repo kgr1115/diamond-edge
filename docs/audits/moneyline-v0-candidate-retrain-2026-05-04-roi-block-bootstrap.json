@@ -1,0 +1,168 @@
+{
+  "computed_at_utc": "2026-05-04T06:39:09.507311+00:00",
+  "n_bootstrap": 1000,
+  "seed": 20260504,
+  "block_sizes_days": [
+    5,
+    7,
+    10
+  ],
+  "block_bootstrap_binding": "7d",
+  "comparison_method": "Same pinned holdout declaration (post-ASB-2024). Candidate has more games (~980 vs 609) due to October re-pull coverage gain. Both use raw p_calibrated from their own holdout-predictions.parquet.",
+  "v0_current": {
+    "label": "v0_current",
+    "n_holdout": 609,
+    "ev_threshold_sweep": {
+      "+1pct": {
+        "ev_threshold": 0.01,
+        "n_picks": 505,
+        "roi_unit_mean": 0.08307676115762223,
+        "roi_ci_iid_lo": -0.017514144760113502,
+        "roi_ci_iid_hi": 0.17845783991245615,
+        "roi_ci_block_bootstrap": {
+          "5d": {
+            "ci_lo": -0.023107822944253623,
+            "ci_hi": 0.1863730023385487,
+            "binding": false
+          },
+          "7d": {
+            "ci_lo": -0.0348889990364483,
+            "ci_hi": 0.2069336805442928,
+            "binding": true
+          },
+          "10d": {
+            "ci_lo": -0.013457182362090477,
+            "ci_hi": 0.18011754281772477,
+            "binding": false
+          }
+        }
+      },
+      "+2pct": {
+        "ev_threshold": 0.02,
+        "n_picks": 416,
+        "roi_unit_mean": 0.11328438977286634,
+        "roi_ci_iid_lo": 0.008387409008850492,
+        "roi_ci_iid_hi": 0.22514492440546438,
+        "roi_ci_block_bootstrap": {
+          "5d": {
+            "ci_lo": -0.023453350216746632,
+            "ci_hi": 0.24747446019610517,
+            "binding": false
+          },
+          "7d": {
+            "ci_lo": -0.024220629812610688,
+            "ci_hi": 0.2520357922409701,
+            "binding": true
+          },
+          "10d": {
+            "ci_lo": 0.008753186407508046,
+            "ci_hi": 0.21664595147591317,
+            "binding": false
+          }
+        }
+      },
+      "+3pct": {
+        "ev_threshold": 0.03,
+        "n_picks": 339,
+        "roi_unit_mean": 0.11385496218515712,
+        "roi_ci_iid_lo": -0.00585206857616386,
+        "roi_ci_iid_hi": 0.2357121309285814,
+        "roi_ci_block_bootstrap": {
+          "5d": {
+            "ci_lo": -0.01650422426977234,
+            "ci_hi": 0.2478305786588935,
+            "binding": false
+          },
+          "7d": {
+            "ci_lo": -0.04936037714919091,
+            "ci_hi": 0.25562063380086597,
+            "binding": true
+          },
+          "10d": {
+            "ci_lo": -0.00014311722357679142,
+            "ci_hi": 0.226194861954946,
+            "binding": false
+          }
+        }
+      }
+    }
+  },
+  "candidate_v0_1_retrain_2026_05_04": {
+    "label": "v0.1_candidate_retrain",
+    "n_holdout": 979,
+    "ev_threshold_sweep": {
+      "+1pct": {
+        "ev_threshold": 0.01,
+        "n_picks": 761,
+        "roi_unit_mean": 0.09367895020855216,
+        "roi_ci_iid_lo": 0.013983215117195058,
+        "roi_ci_iid_hi": 0.17329431838807663,
+        "roi_ci_block_bootstrap": {
+          "5d": {
+            "ci_lo": -0.0012379608278505563,
+            "ci_hi": 0.18322438162657778,
+            "binding": false
+          },
+          "7d": {
+            "ci_lo": -0.011154783779528261,
+            "ci_hi": 0.19429053603359367,
+            "binding": true
+          },
+          "10d": {
+            "ci_lo": -0.004132502618969898,
+            "ci_hi": 0.17600576386917646,
+            "binding": false
+          }
+        }
+      },
+      "+2pct": {
+        "ev_threshold": 0.02,
+        "n_picks": 572,
+        "roi_unit_mean": 0.10444544247719392,
+        "roi_ci_iid_lo": 0.01019142386892135,
+        "roi_ci_iid_hi": 0.1936131644760657,
+        "roi_ci_block_bootstrap": {
+          "5d": {
+            "ci_lo": 0.013623375436575455,
+            "ci_hi": 0.20836095046517392,
+            "binding": false
+          },
+          "7d": {
+            "ci_lo": -2.5165646595922306e-06,
+            "ci_hi": 0.21040910537013804,
+            "binding": true
+          },
+          "10d": {
+            "ci_lo": 0.0016314532639333636,
+            "ci_hi": 0.19235094850473464,
+            "binding": false
+          }
+        }
+      },
+      "+3pct": {
+        "ev_threshold": 0.03,
+        "n_picks": 426,
+        "roi_unit_mean": 0.07205213764005546,
+        "roi_ci_iid_lo": -0.040952450144593804,
+        "roi_ci_iid_hi": 0.1844636865153123,
+        "roi_ci_block_bootstrap": {
+          "5d": {
+            "ci_lo": -0.028701294357224582,
+            "ci_hi": 0.1804071361444292,
+            "binding": false
+          },
+          "7d": {
+            "ci_lo": -0.03205326674167249,
+            "ci_hi": 0.17203174368959448,
+            "binding": true
+          },
+          "10d": {
+            "ci_lo": -0.07066589834230849,
+            "ci_hi": 0.17279180767488728,
+            "binding": false
+          }
+        }
+      }
+    }
+  }
+}

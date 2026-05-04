@@ -35,10 +35,8 @@ import pyarrow.parquet as pq
 from sklearn.metrics import log_loss
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-ARTIFACT_DIR = REPO_ROOT / "models" / "moneyline" / "current"
-PRED_PATH = ARTIFACT_DIR / "holdout-predictions.parquet"
-METRICS_PATH = ARTIFACT_DIR / "metrics.json"
-OUT_PATH = REPO_ROOT / "docs" / "audits" / "moneyline-v0-backtest-bootstrap-2026-05-04.json"
+DEFAULT_ARTIFACT_DIR = REPO_ROOT / "models" / "moneyline" / "current"
+DEFAULT_OUT_PATH = REPO_ROOT / "docs" / "audits" / "moneyline-v0-backtest-bootstrap-2026-05-04.json"
 
 N_BOOTSTRAP = 1000
 ECE_BINS = 10
@@ -143,10 +141,39 @@ def main() -> None:
             "exists only for fast iteration during script development."
         ),
     )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=DEFAULT_ARTIFACT_DIR,
+        help=(
+            "Directory containing holdout-predictions.parquet + metrics.json. "
+            "Default: models/moneyline/current/. Candidate runs MUST point to "
+            "models/moneyline/candidate-*/ or models/moneyline/validation-*/, "
+            "NEVER current/ unless re-running the production artifact."
+        ),
+    )
+    parser.add_argument(
+        "--out-path",
+        type=Path,
+        default=DEFAULT_OUT_PATH,
+        help=(
+            "Output path for the bootstrap JSON. Default points to the v0 "
+            "current-artifact path; candidate runs should override."
+        ),
+    )
     args = parser.parse_args()
     BLOCK_SIZES_DAYS = [5, 7, 10]
 
-    pred = pq.read_table(str(PRED_PATH)).to_pandas()
+    pred_path = args.artifact_dir / "holdout-predictions.parquet"
+    metrics_path = args.artifact_dir / "metrics.json"
+    out_path = args.out_path
+
+    print(f"[init] artifact_dir={args.artifact_dir}")
+    print(f"[init] pred_path={pred_path}")
+    print(f"[init] metrics_path={metrics_path}")
+    print(f"[init] out_path={out_path}")
+
+    pred = pq.read_table(str(pred_path)).to_pandas()
     print(f"[load] holdout predictions n={len(pred)}")
 
     y = pred["y_home_win"].to_numpy(dtype=np.int64)
@@ -197,7 +224,7 @@ def main() -> None:
     )
 
     # Pull existing ROI bootstrap from metrics.json for reference
-    metrics = json.loads(METRICS_PATH.read_text())
+    metrics = json.loads(metrics_path.read_text())
     roi_sweep = metrics["ev_threshold_sweep"]
 
     out = {
@@ -241,8 +268,9 @@ def main() -> None:
         "block_bootstrap_log_loss_delta_sensitivity": block_results,
         "block_bootstrap_binding_method": "7-day-block per CEng/CSO verdict 2026-05-04 (docs/proposals/moneyline-v0-validation-2026-05-04-verdict-{ceng,cso}.md). i.i.d. retained for backward compat.",
     }
-    OUT_PATH.write_text(json.dumps(out, indent=2))
-    print(f"\n[done] wrote {OUT_PATH}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out, indent=2))
+    print(f"\n[done] wrote {out_path}")
 
 
 if __name__ == "__main__":
