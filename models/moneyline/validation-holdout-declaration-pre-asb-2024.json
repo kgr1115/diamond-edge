@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "declaration_id": "moneyline-v0-validation-holdout-pre-asb-2024-2026-05-04",
+  "declared_at_utc": "2026-05-04T05:45:00Z",
+  "declared_by": "pick-implementer (orchestrator) acting on mlb-research recommendation moneyline-v0-validation-walkforward-baselines-2026-05-04",
+  "purpose": "Methodology-validation (NOT methodology-shift). Declares the second walk-forward holdout slice used to confirm the v0 ROI generalizes off the post-ASB-2024 slice and to compare against three named baselines (market-prior-only, anchor-only logistic, anchor+favorite-win-pct logistic).",
+  "predates": {
+    "training_run": "no validation model trained yet",
+    "any_model_artifact": "no models/moneyline/validation-pre-asb-2024/ exists yet",
+    "any_holdout_metric": "no validation metrics computed yet"
+  },
+  "predates_what": "This declaration MUST exist before any feature-build or training run that touches the pre-ASB-2024 slice. Touching the slice for selection, threshold tuning, or model picking invalidates the audit and forces a fresh declaration with a fresh slice.",
+  "rationale": "mlb-research memo at docs/research/moneyline-v0-validation-path-2026-05-04.md recommends a walk-forward second holdout to attack two open questions left by the v0 cold-start: (1) does the +11.33% ROI persist on a non-post-ASB-2024 slice, and (2) does the residual stack pull weight against named baselines on either slice. Pre-declaration is the same discipline rule the original holdout followed.",
+  "market": "moneyline",
+  "model_artifact_target": "models/moneyline/validation-pre-asb-2024/ (NOT current/ — validation model is not promoted)",
+  "training_window": {
+    "start_date": "2022-09-01",
+    "end_date": "2024-03-28",
+    "warmup_only_window": {
+      "start_date": "2022-09-01",
+      "end_date": "2023-03-29",
+      "purpose": "Same warmup pattern as the original declaration — September 2022 + 2022 postseason are warmup-only for 30-day rolling features."
+    },
+    "effective_training_start": "2023-04-01",
+    "effective_training_end": "2024-03-28",
+    "rationale": "Train through the day before the 2024 MLB regular season opener (2024-03-28; opening day was 2024-03-28 for some teams, 2024-03-29 for the rest). Cutoff at 2024-03-28 inclusive ensures no 2024 regular-season game leaks into the training set. Result is a strict prefix that ends before the holdout begins."
+  },
+  "holdout_window": {
+    "start_date": "2024-04-01",
+    "end_date": "2024-07-15",
+    "rationale": "Pre-ASB-2024 regular season: 2024-04-01 through 2024-07-15 (last pre-ASB date; ASB 2024 was July 16-18). Disjoint from the original post-ASB holdout (2024-07-19 onward) — no game can be in both holdouts.",
+    "expected_finals_in_window": "Approximately 1,300-1,500 finals (3.5 months of regular season at ~13 games/day average)",
+    "expected_graded_picks_at_plus_2_pct_ev": "Approximately 250-450 picks (rev3 estimate scaled to slice size; subject to actual coverage)"
+  },
+  "drop_predicate": {
+    "rule": "IDENTICAL to the original moneyline-v0-holdout-2026-05-03 declaration (CEng rev3 coverage-gap Option A): rows where BOTH DK closing line AND FD closing line are absent at the snapshot pin (game_time_utc - 60min) are dropped from training, holdout, and serving.",
+    "applies_to": ["training", "holdout", "serving"],
+    "rationale": "Same predicate ensures the validation result is comparable to the original v0 result; any change here would conflate validation with re-tuning."
+  },
+  "snapshot_source_truth": "IDENTICAL to the original declaration. DK+FD via The Odds API, per-game pull, snapshotted_at = API response timestamp. No new ingestion needed.",
+  "pin_definition": "IDENTICAL to the original declaration. game_time_utc - 60min strict pin; audit filter <= as_of; canary-must-trigger requirement carries forward.",
+  "ev_threshold_choices_to_evaluate": [1.0, 2.0, 3.0],
+  "ev_threshold_default_for_evaluation": 2.0,
+  "validation_models_to_evaluate": [
+    {
+      "model_id": "v0_walkforward_pre_asb_2024",
+      "description": "v0 architecture (logistic, anchor + 11 standardized residuals) refit on the prefix-only training window 2023-04-01 → 2024-03-28."
+    },
+    {
+      "model_id": "baseline_market_prior_only",
+      "description": "p_home = sigmoid(market_log_odds_home). No fit; pure market-prior baseline. Evaluated on BOTH the pre-ASB-2024 holdout and the existing post-ASB-2024 holdout."
+    },
+    {
+      "model_id": "baseline_anchor_only_logistic",
+      "description": "1-feature logistic regression on market_log_odds_home alone (no residuals). Tests whether the residual stack pulls weight beyond the anchor itself. Fit on each training window; evaluated on the corresponding holdout."
+    },
+    {
+      "model_id": "baseline_anchor_plus_favorite_winpct",
+      "description": "2-feature logistic: anchor + favorite-team-season-to-date-win-pct (computed inline from existing feature columns). Minimal residual baseline."
+    }
+  ],
+  "block_bootstrap": {
+    "default_block_size_days": 7,
+    "sensitivity_block_sizes_days": [5, 7, 10],
+    "rationale": "i.i.d. bootstrap under-counts variance in slate-correlated outcomes. 7-day blocks span a typical road trip and a series rotation; 5-day and 10-day reported for sensitivity transparency."
+  },
+  "success_criteria": {
+    "primary": [
+      "v0_walkforward_pre_asb_2024 ROI on its holdout: positive point estimate AND lower CI bound >= -1% (sub-300 rule applies if n_picks lands in [200, 300))",
+      "v0 (post-ASB) beats market-prior baseline by >= 2pp ROI on the post-ASB-2024 slice",
+      "v0_walkforward (pre-ASB) beats market-prior baseline by >= 2pp ROI on the pre-ASB-2024 slice",
+      "v0 beats anchor-only baseline by >= 1pp ROI on AT LEAST ONE of the two slices (residual stack must demonstrably pull weight somewhere)"
+    ],
+    "secondary": [
+      "Block-bootstrap CI lower bound on post-ASB-2024 ROI does not flip sign vs the existing i.i.d. CI; if it does, existing reporting was over-confident — flag for CEng",
+      "ECE on pre-ASB-2024 holdout: report point + bootstrap CI; isotonic wrap is NOT applied here (validation does not re-tune calibration; isotonic decision belongs to the live-slate ECE re-check per the CEng v0 sign-off condition)",
+      "Coefficient comparison between v0 (current) and v0_walkforward: report side-by-side anchor coef + residual loadings; flag any sign flips on residuals"
+    ]
+  },
+  "what_changes_invalidate_this_declaration": [
+    "Any change to training_window or holdout_window dates",
+    "Any change to drop_predicate",
+    "Any change to snapshot_source_truth or pin_definition",
+    "Any selection / threshold tuning that consumed validation-holdout metrics",
+    "Any change to validation_models_to_evaluate after a model has been fit"
+  ],
+  "what_does_NOT_invalidate": [
+    "Block-bootstrap block-size sensitivity (multiple sizes were pre-declared)",
+    "Adding a NEW model to the comparison (e.g., LightGBM as a follow-up) IF the new model is a fresh entry with its own pre-declaration; existing v0+baseline cells stay locked"
+  ],
+  "no_promotion_clause": "This declaration is for VALIDATION ONLY. No model trained under this declaration may promote to models/moneyline/current/. The successful path for any model successor is the standard pick-tester gate against the current/ baseline, NOT a re-purposing of this validation result.",
+  "research_memo_reference": "docs/research/moneyline-v0-validation-path-2026-05-04.md",
+  "rev3_inheritance": "All locked invariants from the rev3 verdict chain (calibrated probabilities, holdout discipline, CLV-aware ROI, comparison-against-current, market-prior awareness) are preserved. mlb-research confirmed in Section `Locked-invariant check`."
+}
