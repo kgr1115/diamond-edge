@@ -125,7 +125,8 @@ const FEATURE_AUDITS = [
     sql: `
       SELECT COUNT(*)::int n
       FROM pitcher_game_log pgl
-      WHERE pgl.game_date >= date_trunc('day', $2::timestamptz)
+      WHERE ($1::uuid IS NOT NULL OR $1::uuid IS NULL)
+        AND pgl.game_date >= date_trunc('day', $2::timestamptz)
         AND pgl.game_date < date_trunc('day', $2::timestamptz) + interval '60 days'
     `,
   },
@@ -137,7 +138,8 @@ const FEATURE_AUDITS = [
     sql: `
       SELECT COUNT(*)::int n
       FROM batter_game_log bgl
-      WHERE bgl.game_date >= date_trunc('day', $2::timestamptz)
+      WHERE ($1::uuid IS NOT NULL OR $1::uuid IS NULL)
+        AND bgl.game_date >= date_trunc('day', $2::timestamptz)
         AND bgl.game_date < date_trunc('day', $2::timestamptz) + interval '60 days'
     `,
   },

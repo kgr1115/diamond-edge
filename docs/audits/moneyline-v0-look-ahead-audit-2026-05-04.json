@@ -1,0 +1,138 @@
+{
+  "audit_invocation": {
+    "ran_at_utc": "2026-05-04T04:55:37.895Z",
+    "train_audited": true,
+    "canary_audited": true,
+    "sample_size": 200
+  },
+  "train_audit": {
+    "label": "train",
+    "parquet_path": "data/features/moneyline-v0/train.parquet",
+    "audit_run_at_utc": "2026-05-04T04:56:09.823Z",
+    "train_rows_total": 3282,
+    "sample_size": 200,
+    "findings": [
+      {
+        "feature": "market_log_odds_home",
+        "source_table": "odds",
+        "pin_column": "snapshotted_at",
+        "description": "Anchor feature — DK+FD closing line. Strict T-60 pin.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 6,
+        "first_violating_game": {
+          "game_id": "cf12eaae-8f96-408c-9196-a937778ec477",
+          "as_of": "2024-05-11T19:10:00+00:00",
+          "violating_row_count": 1
+        }
+      },
+      {
+        "feature": "starter_fip_home/away",
+        "source_table": "pitcher_game_log",
+        "pin_column": "game_date",
+        "description": "pitcher FIP windowed on game_date < as_of_date.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 1157499,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T23:10:00+00:00",
+          "violating_row_count": 6661
+        }
+      },
+      {
+        "feature": "team_wrcplus_l30_home/away",
+        "source_table": "batter_game_log",
+        "pin_column": "game_date",
+        "description": "team wRC+ windowed on game_date < as_of_date.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 2753225,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T23:10:00+00:00",
+          "violating_row_count": 15860
+        }
+      },
+      {
+        "feature": "weather_temp_f / weather_wind_out_mph",
+        "source_table": "games (weather columns)",
+        "pin_column": "updated_at",
+        "description": "Weather snapshot — strict updated_at <= as_of.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 200,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T23:10:00+00:00",
+          "violating_row_count": 1
+        }
+      }
+    ],
+    "total_violations": 3910930,
+    "note": "A non-zero count means the source table has rows AFTER the as_of pin that match the join keys. That alone is not a leak — the feature builder must independently demonstrate it excluded them. The companion train/serve parity test (which mlb-feature-eng owns) does that verification by recomputing the feature with the strict pin and asserting equality to the training value."
+  },
+  "canary_audit": {
+    "label": "canary",
+    "parquet_path": "data/features/moneyline-v0/train_canary.parquet",
+    "audit_run_at_utc": "2026-05-04T04:56:41.156Z",
+    "train_rows_total": 3282,
+    "sample_size": 200,
+    "findings": [
+      {
+        "feature": "market_log_odds_home",
+        "source_table": "odds",
+        "pin_column": "snapshotted_at",
+        "description": "Anchor feature — DK+FD closing line. Strict T-60 pin.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 355,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T17:10:00+00:00",
+          "violating_row_count": 2
+        }
+      },
+      {
+        "feature": "starter_fip_home/away",
+        "source_table": "pitcher_game_log",
+        "pin_column": "game_date",
+        "description": "pitcher FIP windowed on game_date < as_of_date.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 1157788,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T17:10:00+00:00",
+          "violating_row_count": 6661
+        }
+      },
+      {
+        "feature": "team_wrcplus_l30_home/away",
+        "source_table": "batter_game_log",
+        "pin_column": "game_date",
+        "description": "team wRC+ windowed on game_date < as_of_date.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 2754051,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T17:10:00+00:00",
+          "violating_row_count": 15860
+        }
+      },
+      {
+        "feature": "weather_temp_f / weather_wind_out_mph",
+        "source_table": "games (weather columns)",
+        "pin_column": "updated_at",
+        "description": "Weather snapshot — strict updated_at <= as_of.",
+        "sample_size": 200,
+        "games_with_post_pin_source_rows": 200,
+        "first_violating_game": {
+          "game_id": "da0949b1-1f89-44e3-b74b-ba123f9c5308",
+          "as_of": "2023-03-31T17:10:00+00:00",
+          "violating_row_count": 1
+        }
+      }
+    ],
+    "total_violations": 3912394,
+    "note": "A non-zero count means the source table has rows AFTER the as_of pin that match the join keys. That alone is not a leak — the feature builder must independently demonstrate it excluded them. The companion train/serve parity test (which mlb-feature-eng owns) does that verification by recomputing the feature with the strict pin and asserting equality to the training value."
+  },
+  "canary_evaluation": {
+    "canary_verdict": "PASS",
+    "explanation": "Canary set produced detectable post-pin source rows — audit is sensitive."
+  }
+}
