@@ -1,0 +1,4 @@
+meteostat>=2.1
+psycopg[binary]>=3.1
+pandas>=2.0
+

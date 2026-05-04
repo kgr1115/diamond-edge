@@ -74,16 +74,9 @@ function wmoCodeToCondition(code: number): string {
   return 'thunderstorm';
 }
 
-/**
- * Convert meteorological wind direction (degrees) to a compass label.
- * 0/360 = North (wind from North), 90 = East, 180 = South, 270 = West.
- */
-function degreesToWindDir(deg: number): string {
-  const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
-                'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-  const idx = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
-  return dirs[idx];
-}
+// degreesToWindDir removed — weather_wind_dir stores raw numeric degrees (0–360,
+// Open-Meteo winddirection_10m convention) as a string. Feature construction
+// handles compass/stadium-relative derivation downstream.
 
 /**
  * Fetch weather forecast for a venue at a specific UTC game time.
@@ -150,7 +143,7 @@ export async function fetchVenueWeather(
       condition: wmoCodeToCondition(wmoCode),
       temp_f: temp_f !== null ? Math.round(temp_f) : null,
       wind_mph: windSpeed !== null ? Math.round(windSpeed) : null,
-      wind_dir: windDir !== null ? degreesToWindDir(windDir) : null,
+      wind_dir: windDir !== null ? String(Math.round(windDir)) : null,
     };
   } catch (err) {
     console.error(

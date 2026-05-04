@@ -1,0 +1,18 @@
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const env = Object.fromEntries(readFileSync(join(__dirname, '..', '..', '.env'), 'utf8').split('\n').filter(l => l && !l.startsWith('#') && l.includes('=')).map(l => { const e = l.indexOf('='); return [l.slice(0, e).trim(), l.slice(e + 1).trim()]; }));
+const client = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: { rejectUnauthorized: false } });
+await client.connect();
+console.log('=== cron.job ===');
+const jobs = await client.query(`SELECT jobid, jobname, schedule, active, command FROM cron.job ORDER BY jobname`);
+console.table(jobs.rows.map(j => ({ jobid: j.jobid, name: j.jobname, schedule: j.schedule, active: j.active, cmd: j.command.slice(0, 90) })));
+console.log('\n=== Last 20 cron runs (last 24h) ===');
+const runs = await client.query(`SELECT j.jobname, r.start_time, r.status, LEFT(r.return_message, 80) AS msg FROM cron.job_run_details r JOIN cron.job j ON j.jobid = r.jobid WHERE r.start_time >= NOW() - interval '24 hours' ORDER BY r.start_time DESC LIMIT 20`);
+console.table(runs.rows);
+console.log('\n=== pick-pipeline cron, if any ===');
+const pp = await client.query(`SELECT jobname, schedule, command FROM cron.job WHERE jobname ILIKE '%pick%' OR command ILIKE '%pick-pipeline%' OR command ILIKE '%pick_pipeline%'`);
+console.table(pp.rows);
+await client.end();

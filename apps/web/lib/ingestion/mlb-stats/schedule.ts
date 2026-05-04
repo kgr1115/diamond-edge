@@ -242,16 +242,20 @@ function parseWeather(game: MlbScheduleGame): ParsedWeather | null {
 
   const temp_f = w.temp ? parseInt(w.temp, 10) : null;
 
-  // Wind format: "10 mph, Out To CF"  or "0 mph, Calm"
-  const windMatch = w.wind?.match(/^(\d+)\s*mph,?\s*(.*)/i);
+  // Wind speed: parse from "10 mph, Out To CF" or "0 mph, Calm"
+  const windMatch = w.wind?.match(/^(\d+)\s*mph/i);
   const wind_mph = windMatch ? parseInt(windMatch[1], 10) : null;
-  const wind_dir = windMatch ? (windMatch[2]?.trim() || null) : null;
 
+  // wind_dir is intentionally null here. MLB Stats API returns field-relative
+  // strings ("Out To CF", "In From LF") that are not numeric degrees and are
+  // not comparable to Open-Meteo output. Open-Meteo is the authoritative source
+  // for weather_wind_dir (0–360 numeric degrees); the Open-Meteo client writes
+  // that column. Do not overwrite it with an MLB string.
   return {
     condition: w.condition?.toLowerCase() ?? null,
     temp_f: isNaN(temp_f ?? NaN) ? null : temp_f,
     wind_mph: isNaN(wind_mph ?? NaN) ? null : wind_mph,
-    wind_dir,
+    wind_dir: null,
   };
 }
 
