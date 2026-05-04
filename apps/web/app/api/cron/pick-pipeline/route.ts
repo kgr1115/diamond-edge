@@ -37,7 +37,11 @@ export const maxDuration = 300;
  * ECE re-check at 200-400 graded picks.
  */
 
-const PICK_HORIZON_HOURS = 12;
+// 24h horizon so an early-day cron (16:00 UTC for day games) and a late-day
+// cron (22:00 UTC for night games) both cover the full slate. Picks are
+// upserted on (game_id, market) so re-runs refresh model_probability + best
+// line without duplicating rows.
+const PICK_HORIZON_HOURS = 24;
 
 interface GameRow {
   id: string;
