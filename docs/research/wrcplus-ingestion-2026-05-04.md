@@ -1,218 +1,267 @@
-# wRC+ Ingestion — Research Memo
+# wRC+ Ingestion — Research Memo (Rev B)
 
 **Date:** 2026-05-04
 **Author:** mlb-research
-**Scope:** How to populate `batter_game_log.wrc_plus` so the two zeroed v0 residuals (`team_wrcplus_l30_home/away`) can fit non-zero loadings.
+**Scope:** How to populate `batter_game_log.wrc_plus` so the two zeroed v0 residuals (`team_wrcplus_l30_home/away`) can fit non-zero loadings — OR, if no source delivers, what to invest in instead.
 **Comparison baseline:** v0 production (anchor + 11 standardized residuals, 2 of 11 zeroed). `models/moneyline/current/`.
 **Direction signal:** CSO 2026-05-04 verdict pinned this as the next research priority. CEng condition `team_wrcplus_followup` in the cold-start sign-off is the same item.
 
 ---
 
-## 0. The state on disk
+## Revision summary
 
-- `batter_game_log` (migration 0029) exists with `wrc_plus SMALLINT` and `wrc_plus_source TEXT DEFAULT 'ops_plus_proxy'`. Backfilled by `scripts/backfill-db/08-batter-game-log.mjs` (PA + season-to-date OPS+ from MLB Stats API `/game/{id}/boxscore`).
-- The OPS+-proxy plan is functionally dead: `parseOpsPlus()` reads `seasonStats.batting.opsPlus`, which the boxscore endpoint **does not populate** in practice. The fallback path returns NULL. Net: PA is filled, `wrc_plus` is NULL on essentially every row, the L30 PA-weighted average degrades to the league-avg (=100) imputation, and the residual is constant → L2 zeros it cleanly.
-- Serving (`apps/web/lib/features/moneyline-v0.ts:222-242`) and training (`scripts/features/build-moneyline-v0.py`) both read `batter_game_log.pa + wrc_plus` filtered by team / 30-day window and PA-weight. No code change needed once the column populates — only the ingestion changes.
-- A different code path **already pulls Savant team-level wRC+** for the season aggregate in `apps/web/lib/ingestion/stats/team-batting.ts` (`fetchSavantTeamBatting`). The Savant team CSV exposes `wrc_plus` per team-season. The team CSV is not what v0 needs — v0 needs per-batter-per-window — but it confirms Savant's CSV surface is already integrated, vetted, and free to call.
+The original memo (proposal_id `wrcplus-ingestion-savant-2026-05-04`) recommended Baseball Savant per-player CSV as the source. That recommendation does not survive live HTTP probes:
 
-This is an ingestion gap, not a feature-engineering or modeling gap.
+1. **Savant per-player CSV's `wRC+` column is empty for every row** under all `selections=` variants (`wRC+`, `wrc_plus`, `wRC_plus`). Header is munged to `"wRC "`. Only wOBA / xwOBA / xBA actually populate. wRC+ is FanGraphs-derived; Savant exposes it only at team-aggregate level historically — and even that endpoint is currently 404.
+2. **Savant team CSV** (`/leaderboard/team?year=YYYY&type=batter&csv=true`) cited in the original as proof of integration pattern: returns **HTTP 404** today. The existing `team-batting.ts` ingester is silently failing in production. Tracked separately as a `mlb-data-engineer` bug; does not block this revision but invalidates the "we already use this source successfully" claim.
+3. **MLB Stats API season endpoint** (`/people/{id}/stats?stats=season`) — the second candidate offered: returns counting stats + AVG/OBP/SLG/OPS but **no `opsPlus` field** for Aaron Judge 2024 (`592450`). Path B is dead.
 
----
+What changed under the new probes: the **MLB Stats API `stats=sabermetrics` endpoint** (NOT mentioned in the original memo) returns `wRcPlus` directly — and the values match FanGraphs to within rounding (Judge 2022/2023/2024: 206.2 / 173.5 / 219.8 vs FanGraphs 207 / 174 / 218). This is unblocked, free, and FanGraphs-quality. **But it is season-only and ignores `startDate`/`endDate` — which means as-of-game-date semantics are not directly achievable from this surface alone.**
 
-## 1. Source candidates
-
-| Source | Granularity | Cost | ToS posture | Actually delivers what v0 needs? |
-|---|---|---|---|---|
-| **Baseball Savant per-player CSV leaderboard** (`baseballsavant.mlb.com/leaderboard/custom?...&type=batter&player_type=batter&csv=true`) | Per-player **season-to-date** wRC+ for any season + date window | $0 — public CSV, no key, ~1 req per season+team+window | Public-facing CSV the same project already uses for team-level pulls; no auth, no rate-limit signaling beyond standard 429 backoff | **Yes for serving.** Per-player season-to-date wRC+ as of "today" rolls into a PA-weighted team L30 with the PAs already in `batter_game_log`. Backfill: per-day re-pull of the leaderboard with `endDate=YYYY-MM-DD` is exactly the per-game snapshot. |
-| **FanGraphs leaders** (web table → CSV) | Per-player season-to-date wRC+ (same shape as Savant) | $0 (free tier) but public ToS bars systematic scraping; FG paid API exists but is enterprise-priced | Hostile-to-scrape posture historically. Members & contributors agreement explicitly prohibits scraping for redistribution. | Yes technically, but the legal envelope is worse than Savant's for the same data. **Skip unless Savant fails.** |
-| **Pybaseball** (Python wrapper around Savant + BR + FG) | Per-player season-to-date or per-game | $0 | MIT license; defers to underlying source ToS. For the FG-backed calls, the same FG ToS issue applies. The Savant-backed calls are the same surface as direct Savant. | Useful as an implementation accelerator if we choose Python. Not a separate source; it's the Savant + BR + FG layer with friendlier ergonomics. |
-| **Baseball Reference per-player** | Per-player season-to-date OPS+ (NOT wRC+ directly) | $0 | Stathead paid tier required for bulk; free public pages allow modest scraping but rate-limited | OPS+ is the documented v0 fallback already attempted via MLB Stats API. Same proxy logic (OPS+ ≠ wRC+ but correlates ~0.95 at season aggregate). Would unblock v0 at a known-correlated approximation. |
-| **Compute true wRC+ from raw stats** | Per-player per-game | $0 + dev effort | n/a | wRC+ formula needs per-season league wOBA constants + per-park factors. The wOBA constants are publicly available (FG publishes them, Tango's blog has them, Wikipedia documents the formula). Park factors we already have in `park_factor_runs`. The per-game raw components (singles, 2B, 3B, HR, BB, IBB, HBP, SB, CS, AB, PA) are in MLB Stats API boxscore — same source we're already calling. **This is the most defensible long-term path, highest dev effort.** |
-| **MLB Stats API `/people/{id}/stats?stats=season&season=YYYY`** | Per-player season aggregate, includes some advanced stats but not wRC+ | $0 | Public | OPS+ is sometimes returned at the season-aggregate level (different endpoint than boxscore — the season endpoint returns it more reliably). Worth verifying; if true, this is the same OPS+ proxy with a more reliable endpoint and the same correlation. |
-
-**Sources cited.** Baseball Savant Statcast leaderboard CSV endpoint behavior is documented in the existing `apps/web/lib/ingestion/stats/team-batting.ts:89-160` integration. FanGraphs ToS: fangraphs.com/about (Members and Contributors Agreement, "Use of Site Content" section). Pybaseball: github.com/jldbc/pybaseball (MIT). wRC+ formula: Tango/Lichtman/Dolphin "The Book" (2007) and FanGraphs glossary. League-wOBA constants: fangraphs.com/guts.aspx (year-by-year table, scraped commonly).
+This revision picks a fresh proposal_id (`wrcplus-ingestion-revB-2026-05-04`), re-evaluates three candidate paths against the probe evidence, and recommends ONE.
 
 ---
 
-## 2. Computation strategy per source
+## Live-probe log (verifiable)
 
-The v0 residual is `team_wrcplus_l30_home = sum(pa * wrc_plus) / sum(pa)` over the team's batter_game_log rows in the trailing 30 days at T-60min.
+Probes run 2026-05-04 from a Windows / Git Bash curl session. Each command + first-200-bytes summarized:
 
-There are two interpretations and they affect ingestion shape:
-
-- **Interpretation A — per-game wRC+:** each batter_game_log row stores the wRC+ that batter posted **in that specific game**. PA-weighted over the 30-day window gives a true L30 batter-quality signal.
-- **Interpretation B — per-game stamp of season-to-date wRC+:** each row stores "what was this batter's season-to-date wRC+ as of this game's date." PA-weighted over the 30-day window gives "average season-to-date batter quality, weighted by recent PA." This is what the existing OPS+-proxy backfill comment in `08-batter-game-log.mjs:24-30` documents as the intended semantics ("season-to-date stats... as of that game date... acceptable rolling proxy").
-
-**Interpretation B is what v0 was actually built against.** The serving and training code do not compute per-game wRC+; they aggregate stored wrc_plus column values weighted by per-game PA. The brief in `08-batter-game-log.mjs:13-30` explicitly documents the season-to-date-as-of-game-date semantics. mlb-feature-eng signed off on this in the v0 cold-start. Interpretation A is the stricter and more defensible version, but switching to it is an architecture change, not just an ingestion change — the L30 window definition shifts from "average of season-to-date stamps weighted by recent PA" to "true L30 wRC+ per batter weighted by L30 PA," and the residual loadings will be different in magnitude.
-
-**Recommendation: ship Interpretation B (matches code as-is); flag Interpretation A as a follow-up worth its own proposal once we know the residual is non-trivial.**
-
-Per-source serving recipe under Interpretation B:
-
-| Source | Backfill recipe | Daily-refresh recipe |
-|---|---|---|
-| **Savant per-player CSV** | One CSV pull per season per "as-of date" window. For 2022-09 → 2024 we'd hit `?year=YYYY&player_type=batter&csv=true&endDate=YYYY-MM-DD` for each unique game_date in the training window (~600 dates). Each pull returns ~700 rows (one per qualified batter). Match on `mlb_player_id`. ~600 CSV pulls @ 1-2s each + parse = 30-60 min wall-time once. | One CSV pull per day at 6am ET with `endDate=yesterday`. Update every batter_game_log row from yesterday to fill `wrc_plus`. ~1 req/day, <5s. |
-| **MLB Stats API season endpoint OPS+** | One `/people/{id}/stats?stats=season&season=YYYY&group=hitting` call per (player, season) — but practically loop unique batter_ids in our existing `batter_game_log`. For ~1,500 distinct batters × 3 seasons = 4,500 calls @ 500ms = ~40 min. **OPS+ proxy, not true wRC+.** Document `wrc_plus_source = 'ops_plus_proxy_v2'`. | Refresh active-roster batters daily, ~750 calls. Already inside MLB API rate envelope. |
-| **Compute true wRC+ from raw stats** | One-time: pull league wOBA constants per season (FG guts page or hardcode the 5 known values for 2022-2024). Per-batter-per-game: pull raw counting stats from boxscore (already in MLB API), compute wOBA, look up park factor (already in `park_factor_runs`), normalize by league-wOBA. Wall time: dominated by re-running the boxscore pulls, ~5-8h (same as the existing batter_game_log backfill). Code complexity: ~200 lines new Python or TS, plus a `league_wOBA_constants` static table or migration. | Daily refresh during the regular season. |
-
----
-
-## 3. Coverage requirement
-
-- **Backfill window:** 2022-09-01 → 2024-12-31. This is the v0 training+holdout window per `models/moneyline/holdout-declaration.json`. ~5,300 final games × ~26 batter rows/game = ~135K batter_game_log rows currently exist.
-- **Coverage target:** to clear v0's "≥98% feature coverage" bar implicit in the cold-start lane, every game in the window needs a non-NULL team-level rollup. A team-level rollup needs ≥50 PA in the 30-day window (the existing imputation floor in serving + training code). Practically that means we need wrc_plus populated for ≥5 distinct batters per team-rollup, which means ~95%+ of `batter_game_log` rows need a non-NULL wrc_plus value to be safe.
-- **Ongoing serve:** Diamond Edge runs T-60min picks. Yesterday's batter_game_log rows populate overnight, so the daily refresh runs at 06:00 ET and the L30 rollup at T-60 reads the freshest available value.
-
----
-
-## 4. Cost estimate
-
-Locked envelope: $300/mo total, Misc/overhead $15/mo target / $30/mo cap (CLAUDE.md).
-
-| Source | One-time backfill cost | Ongoing monthly | Fits envelope? |
+| # | Endpoint | Result | Bearing on proposal |
 |---|---|---|---|
-| Savant per-player CSV | $0 + 30-60 min wall | $0 + ~30s/day cron | Yes — same surface team-batting.ts already uses. |
-| MLB Stats API season OPS+ | $0 + ~40 min wall | $0 + ~5 min/day | Yes. |
-| Compute true wRC+ from raw | $0 + ~8h wall (re-uses boxscore data already pulled) + ~2 days dev | $0 + same as boxscore daily refresh | Yes. |
-| FanGraphs scrape | $0 + dev cost + legal exposure | $0 + ToS risk | Skip on legal grounds. FG paid API breaches the $30 sub-budget. |
-
-No source pushes Misc/overhead toward the cap. Cost is not a discriminator. Engineering effort is.
+| 1 | `baseballsavant.mlb.com/leaderboard/custom?...&selections=wRC+,xwoba,woba&csv=true` | 200 OK; `wRC+` column empty for every row; `xwoba`, `woba` populate | Original Path A dead |
+| 2 | `baseballsavant.mlb.com/leaderboard/team?year=2024&type=batter&csv=true` | **HTTP 404** | Original integration-pattern claim invalidated; existing team-batting.ts is broken in prod (separate bug) |
+| 3 | `statsapi.mlb.com/api/v1/people/592450/stats?stats=season&season=2024&group=hitting` | 200 OK; counting stats only — no `opsPlus`, no `wrcPlus` | Path B (OPS+ via season endpoint) dead |
+| 4 | `statsapi.mlb.com/api/v1/people/592450/stats?stats=seasonAdvanced&season=2024&group=hitting` | 200 OK; advanced rate stats (BABIP, ISO, swing rates) — no OPS+ or wRC+ | seasonAdvanced does not help |
+| 5 | `statsapi.mlb.com/api/v1/people/592450/stats?stats=sabermetrics&season=2024&group=hitting` | 200 OK; **returns `wRcPlus: 219.784`** + `woba: 0.476`, `wRaa: 93.8`, `wRc: 176.2`, full wWAR breakdown | NEW source unlocked — full FanGraphs parity, season-only |
+| 6 | `statsapi.mlb.com/api/v1/people/592450/stats?stats=byDateRange,sabermetrics&startDate=2024-04-01&endDate=2024-08-15` | 200 OK; byDateRange honors filter; **sabermetrics block returns 2026 (current season), ignoring the date range** | Sabermetrics is season-only — no native as-of-date variant |
+| 7 | (cross-check) Judge 2022 sabermetrics → wRcPlus 206.155; Judge 2023 → wRcPlus 173.466 | Matches FanGraphs published 2022=207 / 2023=174 to within rounding | Sabermetrics endpoint is FanGraphs-quality, not a different number |
+| 8 | `baseballsavant.mlb.com/leaderboard/custom?...&selections=stuff_plus,location_plus,pitching_plus&type=pitcher&csv=true` | 200 OK; **all three columns empty** for every row (same pattern as wRC+) | If we pivot to Path C (Stuff+), Savant is also dead for it |
+| 9 | `baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=pitcher&year=2024&csv=true` | 200 OK; populated per-pitch run-value, whiff%, xwOBA, hard-hit% | Stuff+-comparable inputs are available IF we want to roll our own pitcher-quality |
 
 ---
 
-## 5. Effort estimate (mlb-data-engineer's lane)
+## 0. The state on disk (unchanged from original memo)
 
-| Source | Schema change? | New ingester | Cron registration | Coverage audit | Backfill exec | Total dev |
+- `batter_game_log` (migration 0029) exists with `wrc_plus SMALLINT` and `wrc_plus_source TEXT DEFAULT 'ops_plus_proxy'`. PA backfilled by `scripts/backfill-db/08-batter-game-log.mjs`.
+- `parseOpsPlus()` reads `seasonStats.batting.opsPlus` from boxscore — does not populate. `wrc_plus` is NULL on essentially every row. L30 PA-weighted average degrades to constant league-avg = 100; L2 zeros it cleanly.
+- Serving (`apps/web/lib/features/moneyline-v0.ts:222-242`) and training (`scripts/features/build-moneyline-v0.py`) read `batter_game_log.pa + wrc_plus` filtered by team / 30-day window and PA-weight. **No code change needed once the column populates** — only ingestion changes.
+
+---
+
+## 1. Three candidate paths — re-evaluated against probes
+
+### Path A (revised): MLB Stats API sabermetrics endpoint with prior-season carry
+
+Use `statsapi.mlb.com/api/v1/people/{id}/stats?stats=sabermetrics&season=YYYY&group=hitting`. For each batter_game_log row at game_date:
+- If `season(game_date)` ≥ 1: stamp the **prior season's full-year wRC+** (no look-ahead).
+- After a player crosses a current-season PA threshold (e.g., 200 PA), switch to **current-season-to-date** sabermetrics — but the endpoint is season-only, so we'd be stamping the FULL current season including post-game-date data → **look-ahead leak**.
+
+**Verdict on Path A revised: structurally broken.** The clean version (always-prior-season) is acceptable but stamps stale information for the entire season — a player who broke out in March carries his prior year's number all year. The mid-season-switch version leaks. Neither matches Interpretation B's "season-to-date as of game date" semantic in a defensible way.
+
+What it WOULD give: zero new ingestion code beyond an MLB Stats API loop, FanGraphs-parity numbers, no ToS exposure, ~1,500 batters × N seasons calls.
+
+What it gives up: the L30 rollup becomes "PA-weighted average of mostly-prior-season-stamps" — which is structurally similar to "last year's batter quality" rather than current-form batter quality. Diagnostic value: low. The thing v0 needs in the residual is a CURRENT-form signal that the market hasn't fully priced.
+
+### Path A (compute true wRC+ from raw stats) — the option C from the original memo
+
+Per-player byDateRange raw stats (singles, 2B, 3B, HR, BB, IBB, HBP, SF, AB, PA — already in MLB Stats API) → compute wOBA → divide by league wOBA → park-adjust → ×100 = wRC+.
+
+**Formula** (from FanGraphs glossary, Tango/Lichtman/Dolphin's "The Book"):
+```
+wOBA = (uBB×wBB + HBP×wHBP + 1B×w1B + 2B×w2B + 3B×w3B + HR×wHR) / (AB + BB - IBB + SF + HBP)
+wRAA = ((wOBA - lg_wOBA) / wOBA_scale) × PA
+wRC = wRAA + (lg_R/PA × PA)
+wRC+ = (((wRAA/PA) + lg_R/PA) + (lg_R/PA - park_factor × lg_R/PA)) / (lg_wRC/PA_excluding_pitchers) × 100
+```
+
+The five wOBA linear weights (`wBB, wHBP, w1B, w2B, w3B, wHR`), `wOBA_scale`, `lg_wOBA`, `lg_R/PA`, and `lg_wRC/PA_excluding_pitchers` are PER SEASON. FanGraphs publishes them at `fangraphs.com/guts.aspx?type=cn`.
+
+**Constants source — the honest accounting:**
+- FanGraphs guts page: scrapeable but the FanGraphs Members & Contributors Agreement bars systematic redistribution. Pulling 5 rows once and committing them as a static table is a defensible reading (it's reference data, not a redistribution feed) — but it's not zero legal exposure.
+- **Cleaner alternative**: hand-transcribe the 5-7 constants per season into a hardcoded TS/Python table and cite the public-knowledge source (Tom Tango's blog `tangotiger.com/index.php/site/article/woba-year-by-year-coefficients` publishes the same constants; "The Book" Appendix is the original derivation). This is what every public sabermetrics codebase does (pybaseball, Tom Tango's own community calculators). Per-season the constants change by 2-5% — the 2024 values are already published.
+- Verification: the MLB Stats API sabermetrics endpoint (probe 5) RETURNS the exact wRC+ FanGraphs publishes. We can use it as a SPOT-CHECK source — compute our own wRC+ for Aaron Judge full-season 2024 from raw, compare against `wRcPlus: 219.78` from sabermetrics. If our number is within ±3, our formula + constants are correct. If it's off by 10+, the constants table or the formula has a bug. **This is the verification step** — and it's free.
+
+**Park factors:** already in `park_factor_runs` (migration 0024). Reuse.
+
+**Per-game raw counting stats:** already pulled by `08-batter-game-log.mjs` from boxscore; the AB/BB/HBP/SF/1B/2B/3B/HR breakdown is in `seasonStats.batting`. We're already storing PA. Adding the rest is one boxscore-field-extraction change to the same script, OR a parallel script that pulls byDateRange (`startDate=season-open, endDate=game_date-1`) per (player, date) — that gives true season-to-date raw stats with no look-ahead.
+
+**Granularity decision:** byDateRange per (player, game_date) is the clean season-to-date variant. Cost: 1,500 batters × ~150 game-dates per season × 3 seasons = ~675,000 calls. **MLB Stats API rate limit is unofficial but ~10 req/sec sustained**; that's ~19 hours of backfill wall time. Not great. Optimization: batch per game_date by team-roster (only call players who actually played in the prior 30 days for that team) → cuts to ~50K calls = ~1.5 hours. Manageable.
+
+**Cost / effort:** Free API. ~3-4 days dev (constants table, formula module, byDateRange loop with team-roster pruning, unit tests against sabermetrics endpoint, wire into `batter_game_log.wrc_plus`). Backfill ~1.5h wall once tuned.
+
+**Risks specific to this path:**
+- Constants source brittleness — when 2027 lands, mlb-data-engineer must transcribe the new wOBA constants from FG/Tango. Document the source in code comments.
+- MLB Stats API rate-limit headroom — if backfill thrashes the API, COO budget impact is zero (still free) but `mlb-data-engineer`'s other ingesters share the same rate envelope. Schedule the backfill for an off-peak window.
+- Formula correctness — verify against sabermetrics endpoint full-season; if the 2024 spot-check passes for 5 random qualified hitters, ship.
+
+### Path C (pivot): drop wRC+, invest in the next-best residual
+
+Three candidates from the original memo's risks log + new research:
+
+| Candidate | Source feasibility (live-probe) | Expected impact | Effort |
+|---|---|---|---|
+| **Handedness-split park factors** | MLB Stats API + Statcast can be aggregated by (park, batter_hand). Park-runs-by-hand has been computed by FG ("park factors handedness splits") but we'd compute our own from per-PA outcomes. | Moderate. Park factors are already coef +0.0283 in v0; splitting by handedness adds nuance for lineup-platoon spots. Expected residual loading similar magnitude. | ~2-3 days. |
+| **Stuff+ / Location+ / Pitching+** | Probe 8: Savant per-player CSV columns are EMPTY (same gotcha as wRC+). Probe 9: pitch-arsenal-stats returns per-pitch run-value, whiff%, xwOBA, hard-hit% — Stuff+-COMPARABLE inputs but NOT Stuff+ itself. Rolling our own Stuff+ is a research project (Eno Sarris's original Stuff+ uses neural nets on per-pitch movement; recreating it is multi-week). FG paid API exposes Stuff+ but breaches budget. | High in principle (pitcher-quality residual is THE biggest gap in current v0 — `starter_fip_away` already loads at -0.085, the largest residual). But the **proxy**, not Stuff+ itself, is the realistic ask: per-pitch run-value rollup is 80% of Stuff+'s information at 5% the dev effort. | ~1 week if going for the proxy; multi-week if going for true Stuff+. |
+| **Opener detection / TTOP (times-through-order penalty)** | MLB Stats API exposes batting-order position + pitcher-faced sequence. TTOP is computable from boxscore + play-by-play. Opener flag is a heuristic (starter pulled in 1st-2nd inning). Both are feature-engineering, not new ingestion. | Moderate. TTOP is well-documented edge (Tango ~2014); markets price it imperfectly. Effect concentrated on 3rd-time-through-order outcomes. Probably worth |0.04| as a residual loading. | ~3-4 days. |
+| **Lineup-adjusted hitting metrics** | Requires lineup ingestion (already exists in `lineup_entries` per migration 0023). | Low-to-moderate. Mostly redundant with wRC+ — both proxy team batting quality. | ~2 days. |
+
+**Recommended pivot if Path C**: Stuff+ proxy from Savant `pitch-arsenal-stats`. Highest expected impact (pitcher-quality is the residual that already loads largest in v0; making it richer is the highest-leverage feature add), and the data is live + populated. The trade is dev effort (1 week vs 3-4 days for true wRC+), but the residual lift expectation is meaningfully larger.
+
+---
+
+## 2. Coverage requirement (carries forward unchanged)
+
+- **Backfill window:** 2022-09-01 → 2024-12-31. Pinned by `models/moneyline/holdout-declaration.json` (declaration_id `moneyline-v0-holdout-2026-05-03`).
+- **Coverage target:** ≥98% feature coverage at the team-rollup level (cold-start lane bar). Practically: ≥95% non-NULL `wrc_plus` per row (because the team rollup needs ≥50 PA in the L30 window, which needs ≥5 batters per team-rollup populated).
+- **Ongoing serve:** T-60min picks. Daily refresh at 06:00 ET; rollup reads freshest available value.
+
+---
+
+## 3. Cost / effort / impact summary
+
+| Path | Source viability | Dev effort | Backfill wall | Recurring cost | Expected ROI lift on holdout | Confidence in lift |
 |---|---|---|---|---|---|---|
-| **Savant per-player CSV** | No. Reuse `batter_game_log.wrc_plus` + bump `wrc_plus_source` value (`'savant_szn_to_date'`). | New script `scripts/backfill-db/08b-batter-wrcplus-savant.mjs`. ~150 LOC. | 1 cron entry: daily 06:00 ET refresh. New Vercel cron route `apps/web/app/api/cron/wrcplus-refresh/route.ts` (~80 LOC). | ~30 LOC variation of `check-v0-batter-progress.mjs`. | 30-60 min wall, monitored. | **~1.5 day dev + 1h backfill.** |
-| **MLB Stats API season OPS+ v2** | No. Same column, `wrc_plus_source = 'mlb_szn_ops_plus'`. | New script ~200 LOC. | 1 cron entry, daily. | Same audit script. | ~40 min wall. | ~1 day dev + 1h backfill. **OPS+ proxy, not true wRC+.** |
-| **Compute true wRC+** | Yes — new `league_wOBA_constants` table (5 rows for 2022-2026) + park-factor join (already exists). | Larger refactor of `08-batter-game-log.mjs` to compute wOBA inline + new computation module ~250 LOC. | Existing daily cron. | Existing audit + new league-constant freshness check. | ~8h wall (re-pulls boxscore). | ~3-4 day dev + 8h backfill. |
+| Path A revised (sabermetrics season-only, prior-year carry) | Probe 5+7 confirm | ~0.5 day | ~30 min | $0 | Near zero — stale info | Low |
+| Path A compute true wRC+ from raw | All inputs probed live | ~3-4 days | ~1.5 hr | $0 | 0 to +2 pp ROI@+2% (matches original memo's expected band) | Moderate |
+| Path C pivot — Stuff+ proxy | Probe 9 confirms inputs | ~5-7 days | ~2 hr | $0 | +1 to +4 pp ROI@+2% (pitcher-quality is current biggest residual; richer signal here is highest expected leverage) | Moderate-to-high |
+| Path C pivot — handedness park factors | Compute from existing data | ~2-3 days | ~1 hr | $0 | 0 to +1 pp ROI@+2% | Low-moderate |
+| Path C pivot — TTOP / opener | Compute from existing data | ~3-4 days | ~30 min | $0 | 0 to +1.5 pp ROI@+2% | Low-moderate |
 
-**Recommendation:** Savant per-player CSV. Lowest dev effort, highest data quality (this IS the FG/Savant wRC+ that everyone else cites — same number), zero new infra, fits the project's existing Savant integration pattern.
-
----
-
-## 6. Methodology risks
-
-1. **Train/serve mismatch.** If backfill uses Savant-as-of-date snapshots (per-day endDate pulls) and live-serving uses Savant's current-day endpoint, the values are byte-identical for the same date. The risk is if we conflate Savant-backfill with a different daily-source. Mitigation: same script powers both; backfill mode just iterates dates, daily mode hits today.
-2. **Interpretation B residual semantics.** PA-weighting season-to-date stamps means early-season games get noisy stamps. April games carry the prior season's tail signal in some readings. The L30 rolling PA window mitigates this — only the recent batters (recent PA) contribute weight.
-3. **Park-factor double-count.** wRC+ is park-adjusted. The model already has `park_factor_runs` as a separate residual (currently coef +0.0283). Including team-wRC+ that's already park-corrected with park_factor as a separate feature DOES partly redundantize the park signal. The L2 regularization will redistribute the load between them. This is the same situation gradient-boosted offense models routinely live with — not a blocker. Diagnostic: after retrain, both `park_factor_runs` coef and `team_wrcplus_l30_*` coefs should remain meaningful (neither zeroed). If `park_factor_runs` collapses to zero post-wRC+, we'd want to know — that's the double-count showing.
-4. **wRC+ vs OPS+ proxy regress.** If we shipped OPS+ proxy (option B in source table) and later switched to true wRC+, the residual coefficient magnitudes shift — a methodology change that would re-trigger pick-test. Recommendation: ship Savant wRC+ once, don't intermediate via OPS+.
-5. **Holdout consumption.** A retrain that activates wRC+ residuals consumes the v0 production holdout (2024-07-19 → 2024-12-31). The pinned `models/moneyline/holdout-declaration.json` flagged this. The next walk-forward holdout for the FOLLOWING retrain needs to be either (a) 2025 once 2025 backfills land, or (b) a pre-declared sub-slice of 2024 not yet touched. This is a CEng decision at retrain time, NOT a wRC+ ingestion decision.
-6. **Savant CSV schema drift.** The team-level CSV reader at `team-batting.ts:124-156` uses positional column lookup by header name. The per-player endpoint uses the same convention. Mitigation: same defensive `idx(name) === -1 → null` pattern.
+None of these breach the Misc/overhead sub-budget ($15/mo target / $30/mo cap). Engineering effort is the discriminator.
 
 ---
 
-## 7. Expected impact on v0
+## 4. Recommendation
 
-**Honest read.** The market anchor (de-vigged closing line) absorbs essentially all of the market's view of offense. The `team_wrcplus_l30` residual is what's left over — i.e., where do we have an offense view DIFFERENT from the market's offense view, AND is that delta predictive?
+**Recommend Path A "compute true wRC+ from raw stats"** — option C in the original memo, now elevated to primary because the cleaner-source paths are gone.
 
-Quantitative anchors:
-- v0 candidate retrain on a 99.6%-coverage build with the SAME features did not move ROI (`docs/audits/moneyline-v0-candidate-retrain-2026-05-04-comparison.md`). More data of the same shape → essentially same edge.
-- Two of 11 residuals are exact zero (`team_wrcplus_l30_home/away`); the other 9 carry coefficients in the [-0.09, +0.05] range. The biggest residual loading is `starter_fip_away` at -0.085. If wRC+ residuals load at similar magnitude (a generous assumption — offense-vs-pitching is the textbook split), they'd add 1-2 standardized residual units of signal.
-- Plausible outcome: ROI@+2% holdout shifts by 0 to +2 percentage points. Calibration tightens slightly in the small-prob bins (where lineup quality matters more — underdogs win on offense). ECE point estimate moves by 0 to -0.005.
-- Ceiling case: residual loadings hit |0.10|, anchor coef adjusts down to ~0.93, sum_abs_residuals grows from 0.295 to ~0.40. ROI@+2% point estimate +13-14% on the same holdout. **This is a ceiling, not a forecast.**
-- Floor case: residual loadings stay near zero even with non-NULL data, because the market already prices L30 batter quality efficiently. ROI@+2% holdout unchanged. **In this case the diagnostic value is "we now know L30 batter quality is in the market" — which is itself a valid result.**
+Rationale:
+1. **It actually unblocks the documented gap.** Both CSO's verdict (`research_priority_next: wRC+ ingestion`) and CEng's `team_wrcplus_followup` condition name wRC+ specifically. Pivoting to Path C without first attempting wRC+ would re-open a cross-lens decision; staying on wRC+ executes the standing direction.
+2. **Inputs are all live + free.** Per-game raw stats: MLB Stats API byDateRange. League constants: hand-transcribed from public sources, 5-7 numbers per season, one-time effort. Park factors: already in `park_factor_runs`. Verification target: MLB Stats API sabermetrics endpoint (full season match should be within ±3 wRC+).
+3. **The verification path is exact.** We compute Aaron Judge's full-season 2024 wRC+ from our raw + constants pipeline. Sabermetrics endpoint says 219.78. If our number is in [217, 223], formula + constants are correct. If it's off by 10+, we have a bug to fix. This is a tight gate.
+4. **Honest expected impact: 0 to +2pp ROI@+2%.** Same as the original memo's expectation. The market prices L30 batter quality reasonably efficiently; the residual is what's LEFT after the anchor. Floor case (residuals come back |coef| < 0.02) is still a positive result — it eliminates "we never tried" and re-points research at Path C (Stuff+ proxy) with stronger justification.
+5. **Dev effort is bounded.** ~3-4 days to ship — not a multi-week investment. Personal-tool/portfolio phase tolerates this.
 
-**Definition of "wRC+ activated and pulling weight":** post-retrain, both `team_wrcplus_l30_home` and `team_wrcplus_l30_away` residual coefficients have |value| ≥ 0.02 (i.e., on the same order as `weather_wind_out_mph` in current v0). Sum_abs_residuals ≥ 0.32 (+10% over current 0.295). No sign-flip anywhere else in the residual stack.
-
-**Definition of "wRC+ ingested but not pulling weight":** both wRC+ coefs |value| < 0.02 AFTER non-NULL data. Sum_abs_residuals essentially unchanged. Verdict in that case: ship the ingester anyway (it's right and cheap), document the residual as "load tested, market already prices this," then escalate to CSO that the next research priority should be lineup handedness or pitcher Stuff+ rather than more team-aggregate offense features.
+**What I am NOT recommending and why:**
+- Path A revised (sabermetrics with prior-year carry) — the look-ahead-or-stale tradeoff has no good answer; the residual would be structurally weaker than current v0's residuals.
+- Direct pivot to Path C (Stuff+ proxy) — bigger expected impact but skips the standing CSO direction. **If Path A's verification step fails (computed wRC+ doesn't match sabermetrics) or implementation slips beyond a week, escalate to CSO with Stuff+ proxy as the recommended pivot.**
 
 ---
 
-## Recommendation
+## 5. Locked-invariant impact (carries forward unchanged)
 
-Do the work. Savant per-player CSV is the cheapest, cleanest path. The proposal below routes the ingester, the cron, the coverage audit, and the post-retrain pick-test through the existing pipelines.
+**None of the locked invariants are touched by this proposal.** Specifically:
+- **Calibrated probabilities:** preserved. Same logistic + raw sigmoid; calibrator gates re-run.
+- **Holdout discipline:** the pinned `moneyline-v0-holdout-2026-05-03` declaration applies; the retrained candidate is evaluated on it ONCE; the retrain after this one needs a fresh declaration (CEng's call at that point).
+- **Comparison-against-current:** explicit per the pick-test gate below.
+- **Market-prior awareness:** anchor stays as feature [0]; expected anchor coef stays in [0.93, 1.02].
+- **Methodology-agnosticism:** this is a feature-change, not a model-class change. LightGBM and richer-residual proposals remain deferred per CSO direction.
 
-If the post-retrain residuals stay at zero, that's still a positive result — it eliminates "we never tried" as a hypothesis and re-points research at orthogonal signals (handedness splits, Stuff+, recent-form pitcher residuals).
+---
 
-**This is worth doing. It's not a high-confidence ROI lift; it's a moderate-confidence diagnostic that closes a known structural gap and lets the residual stack be honestly evaluated.**
+## 6. Holdout consumption (carries forward unchanged)
+
+A retrain that activates wRC+ residuals consumes the v0 production holdout (2024-07-19 → 2024-12-31, declaration_id `moneyline-v0-holdout-2026-05-03`). The next walk-forward holdout for the FOLLOWING retrain needs to be either (a) 2025 once 2025 backfills land, or (b) a pre-declared sub-slice of 2024 not yet touched. **CEng decision at retrain time, not now.**
+
+---
+
+## 7. Independence from the team-batting Savant 404 bug
+
+The recommended path uses MLB Stats API (`statsapi.mlb.com/api/v1/people/{id}/stats?stats=...`), which is a different code path entirely from `apps/web/lib/ingestion/stats/team-batting.ts:89-160`. **Path A revB does NOT depend on the broken Savant team CSV endpoint.** That bug is being surfaced separately to mlb-data-engineer; nothing in this proposal blocks on its resolution.
 
 ---
 
 ## Experiment proposal
 
 ```yaml
-proposal_id: wrcplus-ingestion-savant-2026-05-04
+proposal_id: wrcplus-ingestion-revB-2026-05-04
 proposer: mlb-research
 kind: feature-change
-lens: cross-lens  # CEng owns the residual interpretation; COO owns cron+rate-limit; CSO has already directed this
+lens: cross-lens  # CEng owns residual interpretation; COO owns rate-limit; CSO has directed
 claim: >
-  Populate batter_game_log.wrc_plus from Baseball Savant's per-player season-
-  to-date CSV leaderboard (same surface team-batting.ts already uses for the
-  team-aggregate). Backfill 2022-09 through 2024 to clear the two zero
-  residuals (team_wrcplus_l30_home/away) in the v0 model. Add a daily-refresh
-  Vercel cron for ongoing serving. After backfill, mlb-model retrains v0
-  against the same pinned holdout; pick-tester gates the candidate vs current.
+  Populate batter_game_log.wrc_plus by computing true wRC+ from MLB Stats
+  API per-game raw counting stats + per-season league wOBA constants
+  (hand-transcribed from public sources, verified against MLB Stats API
+  sabermetrics endpoint) + park factors already in park_factor_runs.
+  Backfill 2022-09 through 2024-12-31 for the ~135K batter_game_log rows
+  in the v0 training+holdout window. Add a daily-refresh Vercel cron for
+  ongoing serving. After backfill, mlb-model retrains v0 against the
+  pinned holdout; pick-tester gates the candidate vs current. The
+  original Savant per-player CSV path (proposal_id wrcplus-ingestion-
+  savant-2026-05-04) is rescinded — the wRC+ column on Savant's per-
+  player CSV is empty under live probe, and the team CSV cited as
+  integration-pattern proof returns HTTP 404.
 evidence:
   - "v0 production has 2 of 11 residuals at exact zero (`team_wrcplus_l30_*`) because batter_game_log.wrc_plus is unfilled. L2 zeros constant features cleanly."
-  - "OPS+-proxy ingester at scripts/backfill-db/08-batter-game-log.mjs runs through parseOpsPlus() which returns NULL on essentially every row — boxscore endpoint omits opsPlus."
-  - "Savant per-player wRC+ CSV is the same surface team-batting.ts:89-160 uses for team aggregates. Free, public, no auth, ~1-2s per CSV pull."
+  - "Live HTTP probes 2026-05-04 confirm: Savant per-player CSV wRC+ column EMPTY for every row (probe 1); Savant team CSV returns HTTP 404 (probe 2); MLB Stats API season endpoint returns no opsPlus/wrcPlus (probe 3)."
+  - "MLB Stats API sabermetrics endpoint returns wRcPlus directly with FanGraphs parity (Judge 2024: 219.784 vs FanGraphs 218; 2023: 173.466 vs 174; 2022: 206.155 vs 207). HOWEVER it is season-only — startDate/endDate are silently ignored (probe 6). Used as VERIFICATION TARGET for our computed wRC+, NOT as the live ingestion source."
+  - "All raw inputs for the wRC+ formula are live + free: per-player byDateRange counting stats from MLB Stats API; league wOBA constants hand-transcribed from public sources (Tom Tango's tangotiger.com tables, FanGraphs guts page); park factors already in park_factor_runs."
   - "Candidate retrain on 99.6%-coverage SAME features (`docs/audits/moneyline-v0-candidate-retrain-2026-05-04-comparison.md`) confirmed train-size is NOT the constraint — feature gap is."
-  - "CSO 2026-05-04 verdict explicitly directed wRC+ as next research priority and deferred richer residuals + LightGBM fallback until this lands."
-  - "CEng cold-start sign-off (`moneyline-v0-2026-04-30-rev3-bundled-report-verdict-ceng.md` `team_wrcplus_followup` condition) named this as standing follow-up."
+  - "CSO 2026-05-04 verdict directed wRC+ as next research priority (`research_priority_next` condition); CEng cold-start sign-off named team_wrcplus_followup as standing follow-up."
 comparison:
   - approach_a: "v0 current — anchor + 11 residuals, 2 zeroed. ROI@+2% +11.33% on holdout (n=416). ECE 0.0304. sum_abs_residuals 0.2952."
-  - approach_b: "v0 retrained on same architecture, same holdout, same drop predicate, with wRC+ residuals populated."
+  - approach_b: "v0 retrained on same architecture, same holdout, same drop predicate, with computed wRC+ residuals populated."
   - delta_metrics: >
-      Targets: ROI@+2% in [+9%, +14%] (within the comparison-against-current
-      ±2pp band on either side); ECE point estimate ≤ 0.04; both wRC+ residual
-      |coef| ≥ 0.02; sum_abs_residuals ≥ 0.32; no sign flips on the other 9
-      residuals. Bootstrap 7d-block CI lower bound for ROI@+2% must remain
-      above -2.5% (matching v0's lower bound). If wRC+ residuals come back at
-      |coef| < 0.02 after non-NULL data, the proposal is "ingester ships
-      regardless; methodology direction re-prioritizes."
+      Targets: ROI@+2% in [+9%, +14%] (within ±2pp of current); ECE point
+      estimate ≤ 0.04; both wRC+ residual |coef| ≥ 0.02; sum_abs_residuals
+      ≥ 0.32; no sign flips on the other 9 residuals. 7d-block bootstrap
+      lower bound for ROI@+2% must remain above -2.5%. If wRC+ residuals
+      come back at |coef| < 0.02 after non-NULL data, the ingester ships
+      regardless; CSO is escalated with "ingested but not pulling weight"
+      and the recommended pivot becomes Path C (Stuff+ proxy from Savant
+      pitch-arsenal-stats).
+  - verification_gate_pre_retrain: >
+      Before mlb-model retrains, mlb-feature-eng spot-checks the computed
+      wRC+ for 5 known-quantity qualified batters across 2022-2024 against
+      the MLB Stats API sabermetrics endpoint values. Acceptance: every
+      spot-check within ±3 of sabermetrics value. If ANY spot-check
+      misses by >5, the constants table or formula has a bug; mlb-data-
+      engineer fixes before chain advances.
 risks:
-  - "Park-factor double-count: wRC+ is park-adjusted; park_factor_runs is a separate residual. L2 redistributes; if park_factor_runs collapses to zero post-retrain, that's the double-count signal."
-  - "Holdout consumption: this retrain uses the pinned moneyline-v0-holdout-2026-05-03 declaration. Next retrain after wRC+ needs a fresh declaration (CEng decision at that retrain, not now)."
-  - "Train/serve parity: backfill mode and daily mode share the same Savant call, parameterized by endDate. Parity fixture (tests/fixtures/feature-parity/moneyline-v0-2024-08-15-nyyvsboston.json) regenerated against new wrc_plus values."
-  - "Savant CSV schema drift: defensive parsing same as team-batting.ts:124-156 (header-name positional lookup, NULL on missing column)."
-  - "Interpretation B (season-to-date stamp PA-weighted) is what serving + training code expect. NOT switching to Interpretation A (true L30 wRC+) — that's an architecture change worth its own future proposal."
+  - "Constants source brittleness: 2027 league wOBA constants must be hand-transcribed when 2027 season opens. Document source URL + transcription date in the constants module's comments. Owner: mlb-data-engineer; calendar reminder via project_state."
+  - "Park-factor double-count: wRC+ is park-adjusted; park_factor_runs is a separate residual. L2 redistributes; if park_factor_runs collapses to |value| < 0.005 post-retrain, stop promotion and surface to CEng."
+  - "MLB Stats API rate-limit shared envelope: backfill ~50K calls (after team-roster pruning) at ~10 req/sec sustained = ~1.5h wall time. Schedule for off-peak; coordinate with mlb-data-engineer on existing cron windows. COO sign-off implicit (no $ impact, just rate-share)."
+  - "Holdout consumption: this retrain uses pinned moneyline-v0-holdout-2026-05-03. Next retrain after this one needs a fresh post-2024-12-31 declaration before training runs (CEng follow-up at that retrain's pick-test verdict)."
+  - "Train/serve parity: backfill mode and daily mode share the same compute_wrc_plus() function, parameterized by date window. Parity fixture (tests/fixtures/feature-parity/moneyline-v0-2024-08-15-nyyvsboston.json) regenerated against new wrc_plus values."
+  - "Interpretation B (season-to-date stamp PA-weighted) carries forward — same as serving + training code expect. NOT switching to Interpretation A (true L30 wRC+) — separate proposal."
+  - "Formula correctness: verification gate (5 spot-checks within ±3 of sabermetrics endpoint) catches formula or constants bugs BEFORE retrain consumes the holdout."
 rollback:
-  - "Revert PR; batter_game_log.wrc_plus rows can stay populated (no schema change), they're orthogonal to a model rollback. Production v0 in models/moneyline/current/ remains in place; if the retrained candidate fails pick-test, candidate goes to models/moneyline/candidate-wrcplus-2026-05-04/ and current/ stays."
-  - "Time-to-detect regression: pick-test runs immediately on retrain. If the retrained model passes pick-test but live-cron ECE breaks the 0.04 spec at the 200-pick re-check (unchanged from v0's pinned condition), isotonic wrap fits in-place per the standing live_ece_recheck_at_200_picks condition."
+  - "Revert PR; batter_game_log.wrc_plus rows can stay populated (no schema change), they're orthogonal to a model rollback. Production v0 in models/moneyline/current/ remains in place; if the retrained candidate fails pick-test, candidate goes to models/moneyline/candidate-wrcplus-revB-2026-05-04/ and current/ stays."
+  - "Time-to-detect regression: pick-test runs immediately on retrain. If retrained model passes pick-test but live-cron ECE breaches 0.04 spec at the 200-pick re-check, isotonic wrap fits in-place per the standing live_ece_recheck_at_200_picks condition."
+  - "If the verification gate fails (formula bug not caught in dev), backfill table can be re-truncated on wrc_plus column and re-run; no upstream model dependency until the post-backfill chain advances."
 scope:
   - markets_affected: [moneyline]
-  - user_facing: no  # ingestion + retrain. Pick UI surface unchanged.
+  - user_facing: no
   - irreversible: no
 attachments:
-  - "docs/research/wrcplus-ingestion-2026-05-04.md (this memo)"
-  - "scripts/backfill-db/08-batter-game-log.mjs (existing, to be supplemented not replaced)"
-  - "apps/web/lib/ingestion/stats/team-batting.ts:89-160 (Savant CSV pattern to copy)"
+  - "docs/research/wrcplus-ingestion-2026-05-04.md (this memo, rev B)"
+  - "scripts/backfill-db/08-batter-game-log.mjs (existing — to be supplemented, not replaced)"
+  - "supabase/migrations/0024_park_factor_runs.sql (park factors source for the formula)"
   - "apps/web/lib/features/moneyline-v0.ts:222-242 (serving fetchTeamWrcPlus — no change needed)"
   - "scripts/features/build-moneyline-v0.py (training side — no change needed)"
   - "models/moneyline/holdout-declaration.json (pinned holdout this retrain consumes)"
-  - "docs/audits/moneyline-v0-candidate-retrain-2026-05-04-comparison.md (evidence that more data of same shape ≠ enough)"
+  - "docs/audits/moneyline-v0-candidate-retrain-2026-05-04-comparison.md (more-data-of-same-shape evidence)"
   - "docs/proposals/moneyline-v0-validation-2026-05-04-verdict-cso.md (CSO direction this proposal executes)"
+  - "docs/proposals/moneyline-v0-2026-04-30-rev3-bundled-report-verdict-ceng.md (CEng team_wrcplus_followup condition)"
 ```
 
 ### What APPROVED unlocks (specialist routing)
 
 1. **mlb-data-engineer**:
-   - Write `scripts/backfill-db/08b-batter-wrcplus-savant.mjs` — Savant per-player CSV puller, parameterized by `endDate`. Per-day iteration over the 2022-09-01 → 2024-12-31 window, UPDATE `batter_game_log.wrc_plus` matched on `(mlb_player_id, game_date)`. Set `wrc_plus_source = 'savant_szn_to_date_v1'`. Reuse `mlbFetch`-style retry pattern from existing scripts.
-   - Write `apps/web/app/api/cron/wrcplus-refresh/route.ts` — daily cron at 06:00 ET, single Savant CSV pull with `endDate=yesterday`, batch UPDATE yesterday's batter_game_log rows.
-   - Register cron in `vercel.json` (or `supabase/migrations/00XX_register_wrcplus_refresh_cron.sql` if pg_cron is the chosen path — match the existing pattern).
-   - Write `scripts/run-migrations/check-v0-wrcplus-coverage.mjs` — % of batter_game_log rows with non-NULL wrc_plus per season, target ≥95%.
-   - Execute backfill, monitor, write coverage report to `docs/audits/wrcplus-backfill-results-2026-05-04.json`.
+   - Write `scripts/lib/wrc-plus-formula.ts` (or `.py`) — pure compute module: inputs (per-player counting stats over a window + season + park_factor) → output (wRC+). Includes a hardcoded `LEAGUE_WOBA_CONSTANTS` table covering 2022, 2023, 2024 (and forward as seasons land). Constants sourced from public references; source URL + transcription date in comments. Unit tests against the verification target (5 known qualified batters' full-season 2024 wRC+ within ±3 of MLB Stats API sabermetrics endpoint values).
+   - Write `scripts/backfill-db/08b-batter-wrcplus-compute.mjs` — per-(player, game_date) byDateRange call to MLB Stats API for season-to-date raw counting stats, compute wRC+ via the formula module, UPDATE `batter_game_log.wrc_plus` matched on `(mlb_player_id, game_date)`. Set `wrc_plus_source = 'mlb_computed_v1'`. Team-roster pruning to limit to ~50K total calls. Reuse `mlbFetch`-style retry pattern.
+   - Write `apps/web/app/api/cron/wrcplus-refresh/route.ts` — daily 06:00 ET cron, batch-compute wRC+ for yesterday's batter_game_log rows (only players with prior-30d activity for active teams). CRON_SECRET bearer per existing `apps/web/app/api/cron/odds-refresh/route.ts:17-30` pattern. Schedule `"0 11 * * *"` (06:00 ET = 11:00 UTC). `maxDuration: 60` in `vercel.json` functions block.
+   - Write `scripts/run-migrations/check-v0-wrcplus-coverage.mjs` — % non-NULL `wrc_plus` per season, target ≥95%.
+   - Execute backfill (off-peak window, coordinated), monitor, write coverage report to `docs/audits/wrcplus-backfill-results-2026-05-04.json`.
 2. **mlb-feature-eng**:
-   - Re-run `scripts/features/build-moneyline-v0.py` against the now-populated `batter_game_log.wrc_plus`. Same predicate, same holdout pin, same audit. Verify look-ahead audit still clean and parity fixture regenerated.
+   - Run the verification gate: pull MLB Stats API sabermetrics wRcPlus for 5 known-quantity qualified batters across 2022-2024 (Judge 2022/2023/2024, Bobby Witt Jr 2024, Mookie Betts 2023). Compute the same via the new formula module on full-season 2024 raw stats. PASS = all 5 within ±3 of sabermetrics value. FAIL = chain stops, mlb-data-engineer debugs constants/formula.
+   - On verification PASS: re-run `scripts/features/build-moneyline-v0.py` against the now-populated `batter_game_log.wrc_plus`. Same predicate, same holdout pin, same audit. Verify look-ahead audit still clean and parity fixture regenerated.
 3. **mlb-model**:
-   - Retrain logistic + L2 (C=1.0) on the new feature parquet. Save to `models/moneyline/candidate-wrcplus-2026-05-04/`. Do NOT touch `current/`.
+   - Retrain logistic + L2 (C=1.0) on the new feature parquet. Save to `models/moneyline/candidate-wrcplus-revB-2026-05-04/`. Do NOT touch `current/`.
    - Report new feature-coefficients.json, metrics.json, sum_abs_residuals, anchor coef + CI, variance-collapse check.
 4. **mlb-calibrator**:
-   - Re-run /calibration-check on candidate's holdout predictions. Confirm ECE point ≤ 0.04 absolute. Report 7d-block CI per the post-2026-05-04 reporting standard.
+   - Re-run /calibration-check on candidate's holdout predictions. Confirm ECE point ≤ 0.04 absolute. Report 7d-block bootstrap CI per the post-2026-05-04 reporting standard.
 5. **mlb-backtester**:
-   - Re-run backtest with EV sweep at +1/+2/+3% on candidate. Report ROI + CLV + i.i.d. + 7d-block CIs side-by-side with v0 production at `docs/audits/moneyline-v0-wrcplus-comparison-2026-05-04.md`.
+   - Re-run backtest with EV sweep at +1/+2/+3% on candidate. Report ROI + CLV + i.i.d. + 7d-block CIs side-by-side with v0 production at `docs/audits/moneyline-v0-wrcplus-revB-comparison-2026-05-04.md`.
 6. **pick-tester**:
-   - Standard pick-tester gate (post-cold-start): ROI ≥ -0.5% vs current, CLV ≥ -0.1% vs current, ECE ≤ +0.02 vs current. Plus the wRC+-specific gate from this proposal: both wrc_plus residual coefs |value| ≥ 0.02 (otherwise → escalate to CSO with "ingested but not pulling weight" verdict, ship ingester, do NOT promote retrained model).
-
-### Locked-invariant impact
-
-**None of the locked invariants are touched by this proposal.** Specifically:
-- **Calibrated probabilities:** preserved. Same logistic + raw sigmoid; calibrator gates re-run.
-- **Holdout discipline:** the pinned `moneyline-v0-holdout-2026-05-03` declaration applies; the retrained candidate is evaluated on it ONCE; the next retrain after this one needs a fresh declaration (CEng's call at that point — flagged here, not decided here).
-- **Comparison-against-current:** explicit per the pick-test gate above.
-- **Market-prior awareness:** anchor stays as feature [0]; expectation is anchor coef stays in [0.93, 1.02].
-- **Methodology-agnosticism:** this is a feature-change, not a model-class change. LightGBM and richer-residual proposals remain deferred per CSO direction.
-
-The single dependency to flag: **the next retrain after wRC+ activates will need a fresh holdout declaration.** The pinned 2026-05-03 declaration covers this retrain (it's the immediate-next consumer). The retrain after that — whether triggered by 2025 backfill, by lineup-handedness residuals, or by a LightGBM fallback — must declare a fresh post-2024-12-31 holdout BEFORE running. CEng should treat this as a pinned follow-up at the time of this retrain's pick-test verdict, not now.
+   - Standard pick-tester gate (post-cold-start): ROI ≥ -0.5% vs current, CLV ≥ -0.1% vs current, ECE ≤ +0.02 vs current. Plus the wRC+-specific gate: both wrc_plus residual coefs |value| ≥ 0.02 (otherwise → escalate to CSO with "ingested but not pulling weight"; ship ingester, do NOT promote retrained model). Plus the park-factor diagnostic: if `park_factor_runs` coef collapses to |value| < 0.005 post-retrain, stop promotion and surface to CEng before swapping `current/`.
