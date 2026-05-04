@@ -44,14 +44,18 @@ function parseIp(raw) {
 /** Parse pitcher stats from boxscore pitching summary row.
  *  boxscore teams[side].pitchers[] gives mlb player IDs in appearance order.
  *  boxscore teams[side].players['ID{n}'].stats.pitching gives the stat line.
+ *
+ *  NOTE: fb (total flyballs) is NOT parsed here. Boxscore pitching.flyOuts is outs-only
+ *  and semantically wrong for FanGraphs xFIP (which needs total flyballs across all
+ *  outcomes). fb is sourced from Baseball Savant pitch-by-pitch via
+ *  scripts/backfill-db/09-pitcher-fb-statcast.mjs (historical) and
+ *  /api/cron/statcast-fb-refresh (daily). This parser MUST NOT write fb — leaving it
+ *  out of the upsert preserves any Statcast-sourced value already on the row.
  */
 function parsePitcherStats(playerKey, players) {
   const p = players[playerKey];
   if (!p) return null;
   const pit = p.stats?.pitching ?? {};
-  // `flyOuts` is exposed directly in the boxscore pitching block (live-probed 2026-05-04).
-  // It excludes popouts (popOuts is a separate field; airOuts = flyOuts + popOuts). Excluding
-  // popups is correct for xFIP since pop-ups carry ~0 HR/FB rate.
   return {
     fullName: p.person?.fullName ?? 'Unknown',
     mlbPlayerId: p.person?.id,
@@ -60,7 +64,6 @@ function parsePitcherStats(playerKey, players) {
     bb: parseInt(pit.baseOnBalls ?? '0', 10) || 0,
     hbp: parseInt(pit.hitByPitch ?? '0', 10) || 0,
     k: parseInt(pit.strikeOuts ?? '0', 10) || 0,
-    fb: parseInt(pit.flyOuts ?? '0', 10) || 0,
   };
 }
 
@@ -188,17 +191,19 @@ async function main() {
         const isStarter = idx === 0;
 
         try {
+          // fb is intentionally omitted: Statcast (script 09 + statcast-fb-refresh cron)
+          // owns it. INSERT relies on the column's DEFAULT 0 for new rows; UPDATE leaves
+          // the existing fb untouched so any Statcast-sourced value is preserved.
           await db.query(
             `INSERT INTO pitcher_game_log
-               (pitcher_id, team_id, game_id, game_date, ip, hr, bb, hbp, k, fb, is_starter, source_url, retrieved_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
+               (pitcher_id, team_id, game_id, game_date, ip, hr, bb, hbp, k, is_starter, source_url, retrieved_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
              ON CONFLICT (pitcher_id, game_id) DO UPDATE SET
                ip          = EXCLUDED.ip,
                hr          = EXCLUDED.hr,
                bb          = EXCLUDED.bb,
                hbp         = EXCLUDED.hbp,
                k           = EXCLUDED.k,
-               fb          = EXCLUDED.fb,
                is_starter  = EXCLUDED.is_starter,
                source_url  = EXCLUDED.source_url,
                retrieved_at= EXCLUDED.retrieved_at,
@@ -213,7 +218,6 @@ async function main() {
               stats.bb,
               stats.hbp,
               stats.k,
-              stats.fb,
               isStarter,
               sourceUrl,
             ]

@@ -1,0 +1,376 @@
+proposal_id: statcast-fb-ingestion-2026-05-04
+proposer: mlb-data-engineer
+kind: feature-change
+lens: cross-lens
+claim: >
+  Replace pitcher_game_log.fb sourced from MLB Stats API boxscore flyOuts (outs-on-flyballs only)
+  with total flyballs per pitcher per game sourced from Baseball Savant pitch-by-pitch
+  batted-ball event classification, backfilled 2021-2024 and ingested incrementally daily.
+
+evidence:
+  - >
+    Systematic verification failure: 5/5 spot-check pitchers (Burnes 2024, Wheeler 2024,
+    Skubal 2024, deGrom 2023, Verlander 2022) showed ~0.7 xFIP-unit underestimate vs
+    FanGraphs truth. All five errors are same-direction (xFIP computed too low), which is
+    the signature of undercounted FB — not formula error, not constants error.
+  - >
+    Root cause confirmed: MLB Stats API boxscore pitching.flyOuts = outs recorded on
+    fly balls. Flyballs that became hits (singles, doubles off the wall) and all home runs
+    are excluded. FanGraphs xFIP FB denominator = total batted-ball events classified
+    fly_ball by Statcast, regardless of outcome. For a typical SP outing with ~4 HRs/FB
+    events across 5-6 IP, omitting hit-flyballs and HRs reduces the FB count by 20-35%,
+    producing exactly the observed ~0.7 xFIP-unit downward bias.
+  - >
+    MLB Stats API has no aggregate endpoint that returns total fly balls by pitcher by game
+    (as opposed to flyOuts). The live-probe-confirmed boxscore fields are flyOuts, popOuts,
+    and airOuts (= flyOuts + popOuts). None captures hit-flyballs or HRs.
+  - >
+    Baseball Savant pitch-by-pitch CSV endpoint
+    (https://baseballsavant.mlb.com/statcast_search/csv?type=pitcher) exposes
+    bb_type per pitch-event. Values: fly_ball, line_drive, ground_ball, popup.
+    Filtering on events that produce a batted ball (excludes K, BB, HBP, pickoff) and
+    bb_type = fly_ball gives total fly balls per pitcher per game. This is the same
+    source FanGraphs uses for FB%.
+  - >
+    Cost: Baseball Savant is free. No new paid API tier required.
+    Vercel Function compute added: see cost section.
+
+comparison:
+  - approach_a: >
+      Current production: pitcher_game_log.fb sourced from
+      MLB Stats API boxscore pitching.flyOuts (flyouts-as-outs only).
+      Result: systematic ~0.7 xFIP-unit underestimate. Verification gate failed 5/5.
+  - approach_b: >
+      Proposed: pitcher_game_log.fb sourced from Baseball Savant pitch-by-pitch
+      bb_type = fly_ball aggregated per pitcher per game.
+      Expected: xFIP within ±0.20 of FanGraphs truth on the same 5 spot-check pitchers.
+  - delta_metrics: >
+      Verification gate: all 5 spot-check pitchers within ±0.20 xFIP units (vs 5/5 failing
+      at ~0.7 unit error currently). No holdout metrics yet — this is an infra correction
+      to a wrong-data feed, not a model change. Retrain follows from existing CSO/CEng
+      conditions in stuff-plus-ingestion-2026-05-04-infra-scope-gate-verdict.md.
+
+# ---------------------------------------------------------------------------
+# 1. DATA SOURCE DECISION
+# ---------------------------------------------------------------------------
+# Baseball Savant pitch-by-pitch CSV via the statcast_search endpoint.
+#
+# Endpoint pattern:
+#   https://baseballsavant.mlb.com/statcast_search/csv
+#     ?type=pitcher
+#     &player_id={mlb_player_id}
+#     &game_date_gt={YYYY-MM-DD}
+#     &game_date_lt={YYYY-MM-DD}
+#     &hfSea={YYYY}|
+#     &min_pitches=0
+#     &min_results=0
+#     &group_by=name
+#     (default returns all pitches for the player in the date window)
+#
+# For incremental daily: scope to game_date_gt = yesterday, game_date_lt = yesterday.
+# For backfill: scope season-by-season, player-by-player.
+#
+# Aggregation: after fetching, group by (pitcher_mlb_id, game_pk) and count rows where
+# bb_type = 'fly_ball'. This is total fly balls (all outcomes: outs, hits, HRs).
+#
+# Alternative considered: Savant leaderboard CSV (pitch-arsenal-stats, player-season-summary).
+# Rejected: leaderboard CSVs are season-level, not game-level. xFIP uses a trailing-window
+# of game rows — we need game-level granularity, not season totals.
+#
+# Alternative considered: PyBaseball / pybaseball library wrapper.
+# Rejected: adds Python runtime dep; the raw CSV endpoint is stable, documented, and
+# already used as the Statcast ingest path in the stack spec. Direct HTTP is cleaner.
+#
+# Alternative considered: Savant search UI export.
+# Rejected: no machine-callable API shape; requires browser interaction.
+
+# ---------------------------------------------------------------------------
+# 2. SCHEMA DECISION
+# ---------------------------------------------------------------------------
+# Reuse pitcher_game_log.fb (SMALLINT NOT NULL DEFAULT 0, migration 0030 already applied).
+#
+# Rationale: the column exists, the formula modules consume it, and the feature serving
+# and training code reference it by name. Creating a new column (e.g., fb_statcast)
+# would require updating the xfip-formula callers and the serving layer — more churn,
+# same semantics.
+#
+# Re-backfill plan:
+#   1. Run Statcast backfill script (see section 3) to overwrite ALL fb values for
+#      2021-2024 final games. The upsert ON CONFLICT (pitcher_id, game_id) updates only
+#      the fb column; ip, hr, bb, hbp, k, is_starter are left untouched.
+#   2. A new fb_source TEXT column (migration 0031) distinguishes old rows
+#      (mlb_boxscore_flyouts) from new rows (statcast_bb_type_v1). This provides an
+#      audit trail and allows a targeted WHERE fb_source = 'mlb_boxscore_flyouts'
+#      query to confirm backfill completeness.
+#   3. After backfill, the column comment on pitcher_game_log.fb is updated to cite
+#      Statcast as the authoritative source.
+#
+# fb_source column:
+#   - Default: 'mlb_boxscore_flyouts' (applied to all existing 61,950 rows at migration time)
+#   - Updated to 'statcast_bb_type_v1' by both the backfill script and the daily cron
+#   - Architect consult flag: adding fb_source is a one-column DDL change. It does not
+#     affect any foreign key, RLS policy, or existing feature query. Low risk. If the
+#     architect prefers to track source provenance at a higher level (e.g., a separate
+#     source_provenance JSONB column on pitcher_game_log), this proposal defers to that
+#     decision — flag as mlb-architect consult item before implementation.
+#
+# Deprecation of flyOuts parser in 07-pitcher-game-log.mjs:
+#   The fb: parseInt(pit.flyOuts ?? '0', 10) line at line 63 MUST be removed or
+#   no-opped after the Statcast source is live. Leaving it active risks overwriting
+#   Statcast-sourced fb values on any re-run of the backfill script. Implementer
+#   removes the fb parse from parsePitcherStats() and the fb field from the upsert
+#   SET clause in 07-pitcher-game-log.mjs as part of this chain.
+
+# ---------------------------------------------------------------------------
+# 3. BACKFILL VOLUME + TIMELINE
+# ---------------------------------------------------------------------------
+# Season scope: 2021-2024.
+# Rationale for including 2021: the moneyline v0 training window uses 2022-2024 per
+# the current backfill, but adding 2021 costs ~$0 extra and gives the model team
+# additional runway for any window-expansion proposal. 2020 (60-game COVID season)
+# is excluded by default — too small, structurally anomalous. If mlb-model wants it,
+# it becomes a separate proposal.
+#
+# Game counts (approximate, final games only):
+#   2021: ~2,430 games × 2 sides = ~4,860 pitcher appearances across ~700 pitchers
+#   2022: ~2,430 games × 2 sides = ~4,860 appearances
+#   2023: ~2,430 games × 2 sides = ~4,860 appearances
+#   2024: ~2,430 games × 2 sides = ~4,860 appearances
+#   Total: ~9,720 games → ~19,440 pitcher appearances with pitched innings
+#
+# Statcast fetch unit: one request per (pitcher, season) combination.
+# Pitchers with appearances in a season: ~500-600 unique pitchers per season.
+# Total backfill requests: ~500 × 4 seasons = ~2,000 requests.
+# (Fewer than total pitcher-games because one request per pitcher covers all their
+# game appearances in that season's date window.)
+#
+# Savant rate limit: no published official limit. Empirically observed from prior
+# ingestion work (wRC+ pipeline, Stuff+ pipeline): sustained 1 req/2s is safe;
+# 1 req/1s occasionally triggers HTTP 429. Proposal uses 1 req/3s (conservative)
+# for the backfill to avoid triggering throttling during a multi-hour run.
+#
+# Wall time estimate at 1 req/3s:
+#   2,000 requests × 3s = 6,000s ≈ 100 minutes
+#   Plus parse + DB upsert overhead: ~150 minutes total (2.5 hours).
+#   Well within overnight off-peak window.
+#
+# The backfill runs as a standalone Node.js script (scripts/backfill-db/09-pitcher-fb-statcast.mjs)
+# outside Vercel — no 300s timeout applies. Same pattern as steps 01-08.
+
+# ---------------------------------------------------------------------------
+# 4. RATE-LIMIT ENVELOPE
+# ---------------------------------------------------------------------------
+# Source: Baseball Savant (free, no auth required, no published SLA).
+#
+# Observed safe cadence: 1 req / 3s (empirical; conservative vs the 1 req/2s used in
+# prior MLB Stats API work, because Savant has shown lower tolerance).
+#
+# Daily incremental:
+#   Scope: previous day's starters (typically 15 games × 2 SP = 30 pitchers max).
+#   Requests: ≤30 per day (one per pitcher who started yesterday).
+#   Duration: 30 × 3s = 90s + parse + DB = ~120s. Within 300s Vercel ceiling.
+#   Monthly requests: ≤30 × 30 days = 900 requests/month. Trivially inside any limit.
+#
+# Backfill:
+#   ~2,000 requests total. Run once, off-peak (2:00-4:30 AM UTC).
+#   Node.js script, not a Vercel Function — no timeout concern.
+#
+# 429 handling:
+#   Exponential backoff: initial 5s, max 120s, max 5 retries per request.
+#   On 5th retry failure: write to dead-letter (cron_runs entry with status=failure),
+#   log the pitcher + date, continue to next request. Do NOT fail the whole batch.
+#   On 5xx: same retry/backoff pattern.
+#   Schema drift (unexpected CSV column set): log a structured WARN with the
+#   actual column headers, skip that row, continue. Alert via cron_runs failure entry
+#   so the anomaly is visible in the ops dashboard.
+#
+# Freshness SLA:
+#   fb values for previous-day games must be populated before the 14:30 UTC stats-sync
+#   window. Proposed cron runs at 11:00 UTC (same as wrcplus-refresh), which gives
+#   3.5 hours of margin before stats-sync. If the Savant pull fails entirely, the
+#   daily cron writes a failure entry to cron_runs. The pick-pipeline cron at 16:00 UTC
+#   then runs with stale fb (previous day's values) — xFIP degrades gracefully to
+#   using the prior game's data, which is acceptable for a T-1 day lag.
+
+# ---------------------------------------------------------------------------
+# 5. CRON SCHEDULE
+# ---------------------------------------------------------------------------
+# Daily incremental:
+#   Path: /api/cron/statcast-fb-refresh
+#   Schedule: "0 11 * * *" (11:00 UTC = 07:00 ET)
+#   maxDuration: 180 (3 minutes; 30 pitchers × 3s + overhead, with headroom)
+#   CRON_SECRET bearer check: matches existing pattern in odds-refresh/route.ts lines 17-30.
+#
+# Target: for each pitcher who started yesterday (join games + pitcher_game_log on
+# game_date = yesterday AND is_starter = true), fetch Savant pitch-by-pitch for
+# game_date_gt = yesterday AND game_date_lt = yesterday, count bb_type = 'fly_ball'
+# per game_pk, upsert fb + fb_source into pitcher_game_log ON CONFLICT (pitcher_id, game_id).
+#
+# Relievers: relievers are NOT fetched in the daily incremental. The xFIP feature
+# uses starter-only rows (is_starter = true join in the feature query). Reliever fb
+# backfill is included in the historical backfill (all pitchers per season) but is
+# low-priority for daily refresh. If the model team later wants reliever-level fb,
+# the daily cron scope expands by config — not a code change.
+#
+# vercel.json additions (one entry each):
+#   crons: { "path": "/api/cron/statcast-fb-refresh", "schedule": "0 11 * * *" }
+#   functions: { "app/api/cron/statcast-fb-refresh/route.ts": { "maxDuration": 180 } }
+
+# ---------------------------------------------------------------------------
+# 6. COST — VERCEL FUNCTION COMPUTE
+# ---------------------------------------------------------------------------
+# COO sub-budget: Vercel target $30/mo, hard cap $60/mo.
+#
+# Daily incremental cron:
+#   Worst case: 30 pitchers × 3s fetch + 2s parse/upsert = 150s per run.
+#   Comfortable within 180s maxDuration with 30s margin.
+#   Monthly function-seconds: 150s × 30 days = 4,500s = 1.25 GB-hrs at 512 MB.
+#   Vercel Fluid Compute: first 1,000 GB-hrs/mo included in Pro tier.
+#   Incremental cost: $0 (well inside included allocation).
+#
+# Historical backfill:
+#   Runs as a local Node.js script, not a Vercel Function.
+#   Cost: $0 (developer machine only).
+#
+# Total monthly cost delta: $0.
+# COO note: Savant is free and the daily function is well inside Vercel's included
+# compute. No sub-budget breach. No COO approval required for cost alone.
+
+# ---------------------------------------------------------------------------
+# 7. VERIFICATION GATE PLAN
+# ---------------------------------------------------------------------------
+# Same 5 pitchers as the failed attempt (same shape, different source):
+#   1. Corbin Burnes, 2024 season
+#   2. Zack Wheeler, 2024 season
+#   3. Tarik Skubal, 2024 season
+#   4. Jacob deGrom, 2023 season
+#   5. Justin Verlander, 2022 season
+#
+# Wheeler 2024 satisfies the flyball-leaning diversity requirement (CEng binding
+# condition from the xFIP infra scope-gate verdict).
+#
+# Gate procedure:
+#   a. After backfill completes, sum fb from pitcher_game_log for each pitcher's
+#      full season of starts (is_starter = true, that season).
+#   b. Compute full-season xFIP using computeXfip() from scripts/lib/xfip-formula.ts
+#      with the aggregated (ip, fb, bb, hbp, k, seasonYear).
+#   c. Pull FanGraphs xFIP truth: retrieve the pitcher's season xFIP from the
+#      FanGraphs pitching leaders page (https://www.fangraphs.com/leaders/major-league
+#      ?type=8&stats=pit&season={year}&season1={year}&playerid={fg_id}).
+#      Cross-reference against MLB Stats API sabermetrics endpoint as a secondary
+#      check (endpoint: /api/v1/people/{id}/stats?stats=sabermetrics&season={year}&group=pitching).
+#   d. PASS criterion: ALL 5 within ±0.20 xFIP units vs FanGraphs truth. No exceptions.
+#   e. If any miss > 0.40 xFIP units: stop chain, debug Savant bb_type field mapping.
+#   f. If exactly 1 miss between 0.20 and 0.40: written rationale required (window-edge
+#      or partial-season artifact); CEng reviews before chain advances.
+#   g. Results written to tests/fixtures/feature-parity/xfip-statcast-verification-2026-05-04.json.
+#      Schema: per-pitcher name, season, fb_count_from_db, xfip_computed, xfip_fg_truth,
+#      xfip_mlbapi_truth, delta_vs_fg, delta_vs_mlbapi, pass_fail, note.
+
+# ---------------------------------------------------------------------------
+# 8. RISKS + ROLLBACK
+# ---------------------------------------------------------------------------
+
+risks:
+  - >
+    Savant CSV schema drift: the bb_type column name or the fly_ball value could change.
+    Detection: structured WARN log on unexpected column set; coverage check fails (<95%
+    non-NULL fb per season) if bb_type column is absent. Timeline to detect: immediately
+    on first run post-change.
+  - >
+    Savant throttling during backfill: the 1 req/3s cadence could still trigger 429s if
+    Savant tightens limits. The backfill runs overnight off-peak with exponential backoff
+    (5s → 120s, 5 retries). Worst case: some pitcher-seasons fall to dead-letter and
+    require a targeted re-run. Does not block the daily incremental cron.
+  - >
+    game_pk mismatch: Savant uses its own game_pk values (same as MLB Stats API gamePk,
+    empirically confirmed). If a mismatch surfaces, the join in the backfill script
+    (Savant game_pk = games.mlb_game_id) fails silently (upsert finds no matching row).
+    Detection: coverage check; post-backfill fb_source audit query showing rows still
+    at 'mlb_boxscore_flyouts'. Mitigation: add a logged mismatch counter in the
+    backfill script.
+  - >
+    Partial outings / relief appearances: if a SP leaves early and a reliever's fb
+    events get attributed to the wrong pitcher_id, xFIP for that game is inflated.
+    Mitigation: the Savant CSV includes pitcher_id per row; aggregation groups by
+    (pitcher_id, game_pk) so cross-pitcher contamination is impossible.
+  - >
+    07-pitcher-game-log.mjs re-run after Statcast source is live: if someone re-runs the
+    MLB boxscore backfill, it overwrites Statcast fb with wrong values.
+    Mitigation: remove fb from the parsePitcherStats() output and from the upsert SET
+    clause in 07-pitcher-game-log.mjs as part of this chain (implementer requirement).
+    The fb_source column provides a post-hoc audit check.
+  - >
+    Architect consult pending on fb_source column: if mlb-architect prefers a different
+    provenance tracking approach, migration 0031 shape changes. Low risk — one column
+    add with a default, no RLS or FK implications.
+
+rollback:
+  - >
+    If the backfill produces wrong fb values: the fb_source column distinguishes Statcast
+    rows ('statcast_bb_type_v1') from the original MLB boxscore rows. A targeted UPDATE
+    pitcher_game_log SET fb = 0, fb_source = 'mlb_boxscore_flyouts' WHERE
+    fb_source = 'statcast_bb_type_v1' restores the pre-backfill state in < 60s
+    (61,950 rows, index on fb_source).
+  - >
+    If the daily cron fails: the existing fb values (from the backfill) remain in place.
+    The pick-pipeline uses the most recent non-NULL fb for the trailing window.
+    No pick corruption — stale-by-one-day is the fallback, same as every other stat.
+  - >
+    Max time-to-detect regression: coverage check script runs post-backfill and surfaces
+    any season below 95% coverage. Verification gate catches wrong values before the
+    retrain chain fires. Daily cron failures surface in cron_runs within 24 hours.
+  - >
+    fb_source migration 0031 rollback: ALTER TABLE pitcher_game_log DROP COLUMN fb_source.
+    No data dependency — no FK, no RLS, not referenced by any feature query today.
+
+scope:
+  markets_affected: [moneyline]
+  user_facing: "no — infra data correction; xFIP feature not yet wired into serving payload"
+  irreversible: "no — fb_source column and Statcast values are fully reversible per rollback above"
+
+attachments:
+  - docs/proposals/statcast-fb-ingestion-2026-05-04.yaml (this file)
+  - docs/proposals/stuff-plus-ingestion-2026-05-04-infra-scope-gate-verdict.md (prior chain; retrain trigger conditions binding)
+  - supabase/migrations/0030_pitcher_game_log_fb.sql (column already applied)
+  - scripts/backfill-db/07-pitcher-game-log.mjs (fb parse to be removed from parsePitcherStats)
+  - scripts/lib/xfip-formula.ts (formula module; fb input semantics documented at line 59)
+
+# ---------------------------------------------------------------------------
+# ARCHITECT CONSULT FLAG
+# ---------------------------------------------------------------------------
+# Item: migration 0031 adds fb_source TEXT column to pitcher_game_log.
+# Decision needed: does mlb-architect prefer (a) the per-column fb_source TEXT field
+# described above, or (b) a shared source_provenance JSONB column on pitcher_game_log
+# that could track source for multiple columns (fb, ip, etc.)?
+# Impact: low — either approach produces the same audit capability. The implementer
+# needs a decision before writing migration 0031. If no architect consult is initiated
+# by scope-gate, the implementer defaults to option (a) (per-column TEXT field) as
+# the simpler, reversible choice.
+
+# ---------------------------------------------------------------------------
+# NEW ENV VARS
+# ---------------------------------------------------------------------------
+# None. Baseball Savant is unauthenticated. No API key required.
+# Existing CRON_SECRET covers the new cron handler.
+
+# ---------------------------------------------------------------------------
+# IMPLEMENTATION FILE LIST (for implementer; not binding until scope-gate APPROVED)
+# ---------------------------------------------------------------------------
+# New files (4):
+#   supabase/migrations/0031_pitcher_game_log_fb_source.sql
+#   scripts/backfill-db/09-pitcher-fb-statcast.mjs
+#   apps/web/app/api/cron/statcast-fb-refresh/route.ts
+#   tests/fixtures/feature-parity/xfip-statcast-verification-2026-05-04.json (written by verification gate)
+#
+# Modified files (2):
+#   scripts/backfill-db/07-pitcher-game-log.mjs — remove fb from parsePitcherStats() + upsert SET
+#   apps/web/vercel.json — add cron entry + functions entry for statcast-fb-refresh
+#
+# Files NOT modified this chain (binding):
+#   apps/web/lib/features/moneyline-v0.ts — CSO condition from xFIP infra verdict
+#   scripts/features/build-moneyline-v0.py — CSO condition; retrain deferred
+#   models/moneyline/current/ — untouched
+#   models/moneyline/holdout-declaration.json — must not be consumed
+#   scripts/lib/xfip-formula.ts — formula correct; fb input semantics unchanged
+#   scripts/lib/xfip_formula.py — same

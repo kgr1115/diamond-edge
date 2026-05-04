@@ -26,6 +26,10 @@
     {
       "path": "/api/cron/calibration-snapshot",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/statcast-fb-refresh",
+      "schedule": "0 11 * * *"
     }
   ],
 
@@ -35,7 +39,8 @@
     "app/api/cron/odds-refresh/route.ts": { "maxDuration": 60 },
     "app/api/cron/outcome-grader/route.ts": { "maxDuration": 60 },
     "app/api/cron/clv-compute/route.ts": { "maxDuration": 60 },
-    "app/api/cron/calibration-snapshot/route.ts": { "maxDuration": 60 }
+    "app/api/cron/calibration-snapshot/route.ts": { "maxDuration": 60 },
+    "app/api/cron/statcast-fb-refresh/route.ts": { "maxDuration": 180 }
   },
 
   "headers": [
