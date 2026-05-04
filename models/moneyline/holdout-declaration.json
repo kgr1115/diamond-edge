@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "declaration_id": "moneyline-v0-holdout-2026-05-03",
+  "declared_at_utc": "2026-05-03T22:00:00Z",
+  "declared_by": "pick-implementer (orchestrator) acting on rev3 verdicts",
+  "predates": {
+    "training_run": "no model trained yet",
+    "any_model_artifact": "no models/moneyline/current/ exists yet",
+    "any_holdout_metric": "no metrics computed yet"
+  },
+  "predates_what": "This declaration MUST exist before any v0 training run that touches the holdout slice. Touching the holdout for selection (sweep tuning, picking the better of two models, threshold tuning, calibration method choice) invalidates the audit and forces a re-declaration with a fresh slice.",
+  "rationale": "CEng rev3 condition `holdout_predeclared_before_repull` requires the holdout slice to be locked in writing BEFORE the per-game odds re-pull starts. The re-pull touches both train and holdout date ranges; declaring the holdout after the re-pull would let selection bias creep in (e.g., choose holdout boundaries to maximize coverage on the better-pulled slice).",
+  "market": "moneyline",
+  "model_artifact_target": "models/moneyline/current/",
+  "training_window": {
+    "start_date": "2022-09-01",
+    "end_date": "2024-07-15",
+    "warmup_only_window": {
+      "start_date": "2022-09-01",
+      "end_date": "2023-03-29",
+      "purpose": "Per CEng rev2 carry-forward — September 2022 + 2022 postseason are warmup-only for 30-day rolling features (FIP_l30, wRC+_l30). Warmup rows are NOT included in the training set used to fit coefficients; they exist purely so that 2023-04-01 onward has full 30-day windows of pitcher/batter history available."
+    },
+    "effective_training_start": "2023-04-01",
+    "effective_training_end": "2024-07-15",
+    "rationale": "Train through 2024 pre-All-Star-break. ASB 2024 was July 16-18; last pre-ASB game was 2024-07-15. Training cutoff is the last pre-ASB date inclusive."
+  },
+  "holdout_window": {
+    "start_date": "2024-07-19",
+    "end_date": "2024-12-31",
+    "rationale": "Per CEng rev1 condition_1_holdout, locked in CSO + CEng + COO rev2 + rev3 verdicts: 2024 POST-All-Star-break is the holdout. ASB 2024 was July 16-18; first post-ASB date was 2024-07-19. End-of-2024 covers regular season finish (early October) plus the 2024 postseason through end-of-October. Holdout includes the postseason; the model is graded on every final game in the slice that has DK+FD closing lines and a complete feature payload.",
+    "expected_finals_in_window": "Approximately 800-1000 finals (post-ASB regular season ~750 games, postseason ~40 games)",
+    "expected_graded_picks_at_plus_2_pct_ev": "Approximately 200-400 picks (rev3 estimate; subject to actual coverage post-re-pull)"
+  },
+  "drop_predicate": {
+    "rule": "Per CEng rev3 coverage-gap verdict (Option A drop predicate): rows where BOTH DK closing line AND FD closing line are absent at the snapshot pin (game_time_utc - 60min) are dropped from the training set, the holdout, and the serving payload. Same predicate, same source. No anchor imputation.",
+    "applies_to": ["training", "holdout", "serving"],
+    "rationale": "Identical drop predicate ensures train/serve/CLV-grade source parity. Imputing an anchor in training but not in serving would create the train/serve asymmetry that rev3 was specifically built to eliminate."
+  },
+  "snapshot_source_truth": {
+    "training_source": "DK+FD closing snapshots via The Odds API historical endpoint, per-game pulled at game_time_utc - 75min, stored as odds.snapshotted_at = API response timestamp, source = 'odds_api_historical_pergame'",
+    "serving_source": "DK+FD closing snapshots via The Odds API live endpoint, captured by the live odds-refresh cron at T-60, source = 'odds_api_live'",
+    "clv_grading_source": "DK+FD closing lines via The Odds API closing-snapshot capture (separate cron), source = 'odds_api_live' with closing_snapshot = true",
+    "parity_invariant": "training_source == serving_source == clv_grading_source (book set: DK+FD; vendor: The Odds API; price field: h2h moneyline). Documented in models/moneyline/current/architecture.md as a one-liner per CEng rev3 condition."
+  },
+  "pin_definition": {
+    "timestamp_expression": "game_time_utc - interval '60 minutes'",
+    "applies_to": "All 12 features in moneyline-v0-feature-spec.md. Strict filter: snapshotted_at <= as_of, no exceptions per feature.",
+    "audit_filter": "Look-ahead audit script uses `<= as_of` as the strict filter, NOT `<= game_time_utc`, per CEng rev3 condition `audit_script_filter_unchanged`."
+  },
+  "ev_threshold_choices_to_evaluate": [1.0, 2.0, 3.0],
+  "ev_threshold_default_for_promotion": 2.0,
+  "promotion_gates_summary": {
+    "roi_holdout": "≥ 0% at chosen EV threshold (cold-start positive bar, not a non-degradation bar)",
+    "clv_holdout": "≥ 0%",
+    "ece_holdout": "≤ 0.04 binned-10 absolute",
+    "sample_floor": "≥ 200 graded picks per market",
+    "sub_300_variance_aware_rule": "If graded n is in [200, 300), bootstrap 1000-iter lower CI bound on ROI AND CLV must be ≥ -1%",
+    "calibration_isotonic_fallback": "If raw sigmoid output misses ECE ≤ 0.04, isotonic-wrap; never widen EV threshold to manufacture sample size",
+    "look_ahead_audit": "Deliberate-leakage canary feature must trigger detection on the same training slice; if the canary does not fire on the re-pulled data, the audit is invalidated"
+  },
+  "what_changes_invalidate_this_declaration": [
+    "Any change to training_window or holdout_window dates",
+    "Any change to drop_predicate",
+    "Any change to snapshot_source_truth",
+    "Any change to pin_definition",
+    "Any selection / threshold tuning that consumed holdout metrics before promotion",
+    "Any feature-spec change that lands AFTER training starts (re-train with the new spec, re-declare)"
+  ],
+  "rev3_verdict_references": [
+    "docs/proposals/moneyline-v0-2026-04-30-rev3-three-blockers-verdict-ceng.md",
+    "docs/proposals/moneyline-v0-2026-04-30-rev3-backfill-option-verdict-coo.md",
+    "docs/proposals/moneyline-v0-2026-04-30-rev3-blocker-resolution-verdict-cso.md",
+    "docs/proposals/moneyline-v0-2026-04-30-rev3-coverage-gap-verdict-ceng.md",
+    "docs/proposals/moneyline-v0-2026-04-30-rev3-verdict-ceng.md"
+  ]
+}
