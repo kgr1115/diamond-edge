@@ -136,12 +136,16 @@ function parseCsv(text) {
   return out;
 }
 
-/** Aggregate bb_type='fly_ball' rows by game_pk for a single pitcher.
- *  Returns Map<game_pk_string, fly_ball_count>. */
+/** Aggregate bb_type ∈ {fly_ball, popup} rows by game_pk for a single pitcher.
+ *  FanGraphs xFIP "FB" includes popups (the rate constant LG_HR_PER_FB is averaged
+ *  over both). Statcast splits them into separate bb_type values, so we sum.
+ *  Verified via reverse-compute against MLB Stats API sabermetrics xFIP truth on
+ *  Burnes/Wheeler/Skubal/deGrom 2024-2023 — fly_ball-only undercounts by ~30-40%. */
 function aggregateFlyBalls(rows) {
   const counts = new Map();
   for (const row of rows) {
-    if ((row.bb_type ?? '').trim() !== 'fly_ball') continue;
+    const bt = (row.bb_type ?? '').trim();
+    if (bt !== 'fly_ball' && bt !== 'popup') continue;
     const gamePk = (row.game_pk ?? '').trim();
     if (!gamePk) continue;
     counts.set(gamePk, (counts.get(gamePk) ?? 0) + 1);
@@ -284,7 +288,7 @@ async function main() {
         const { rowCount } = await db.query(
           `UPDATE pitcher_game_log AS pgl
              SET fb = $1,
-                 fb_source = 'statcast_bb_type_v1',
+                 fb_source = 'statcast_bb_type_v2',
                  updated_at = now()
            FROM players AS p, games AS g
            WHERE pgl.pitcher_id = p.id
@@ -323,9 +327,10 @@ async function main() {
   const { rows: covRows } = await db.query(
     `SELECT EXTRACT(YEAR FROM g.game_date)::int AS season,
             COUNT(*) AS total_rows,
-            SUM(CASE WHEN pgl.fb_source = 'statcast_bb_type_v1' THEN 1 ELSE 0 END) AS statcast_rows,
+            SUM(CASE WHEN pgl.fb_source = 'statcast_bb_type_v2' THEN 1 ELSE 0 END) AS statcast_rows,
+            SUM(CASE WHEN pgl.fb_source = 'statcast_bb_type_v1' THEN 1 ELSE 0 END) AS statcast_v1_rows,
             SUM(CASE WHEN pgl.fb_source = 'mlb_boxscore_flyouts' THEN 1 ELSE 0 END) AS legacy_rows,
-            ROUND(100.0 * SUM(CASE WHEN pgl.fb_source = 'statcast_bb_type_v1' THEN 1 ELSE 0 END)
+            ROUND(100.0 * SUM(CASE WHEN pgl.fb_source = 'statcast_bb_type_v2' THEN 1 ELSE 0 END)
                   / NULLIF(COUNT(*), 0), 1) AS statcast_pct
      FROM pitcher_game_log pgl
      JOIN games g ON g.id = pgl.game_id
@@ -355,7 +360,7 @@ async function main() {
   console.log(`Wall time:          ${(wallMs / 1000 / 60).toFixed(1)} min`);
   console.log('\nCoverage by season:');
   for (const r of covRows) {
-    console.log(`  ${r.season}: ${r.statcast_rows}/${r.total_rows} (${r.statcast_pct}%) statcast | ${r.legacy_rows} legacy`);
+    console.log(`  ${r.season}: ${r.statcast_rows}/${r.total_rows} (${r.statcast_pct}%) statcast_v2 | ${r.statcast_v1_rows} v1 | ${r.legacy_rows} legacy`);
   }
   if (errors.length > 0) {
     console.error(`\nErrors (${errors.length} — first 20):`);

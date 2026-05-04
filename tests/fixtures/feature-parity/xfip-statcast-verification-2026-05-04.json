@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-05-04T20:47:22.457Z",
+  "tolerance": 0.2,
+  "truth_source": "MLB Stats API sabermetrics endpoint (cross-reference; FG primary deferred)",
+  "results": [
+    {
+      "name": "Burnes",
+      "season": 2024,
+      "games": 32,
+      "ip": 192,
+      "fb": 124,
+      "computed": 2.991,
+      "mlbapi": 3.54608,
+      "delta": 0.555,
+      "pass": false
+    },
+    {
+      "name": "Wheeler",
+      "season": 2024,
+      "games": 32,
+      "ip": 198.6,
+      "fb": 131,
+      "computed": 2.767,
+      "mlbapi": 3.30069,
+      "delta": 0.534,
+      "pass": false
+    },
+    {
+      "name": "Skubal",
+      "season": 2024,
+      "games": 31,
+      "ip": 189.9,
+      "fb": 119,
+      "computed": 2.361,
+      "mlbapi": 2.82561,
+      "delta": 0.465,
+      "pass": false
+    },
+    {
+      "name": "deGrom",
+      "season": 2023,
+      "games": 6,
+      "ip": 29.4,
+      "fb": 20,
+      "computed": 1.617,
+      "mlbapi": 2.31879,
+      "delta": 0.702,
+      "pass": false
+    },
+    {
+      "name": "Verlander",
+      "season": 2022,
+      "games": 28,
+      "ip": 173.6,
+      "fb": 127,
+      "computed": 2.709,
+      "mlbapi": 3.23078,
+      "delta": 0.522,
+      "pass": false
+    }
+  ],
+  "verdict": "FAIL"
+}

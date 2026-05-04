@@ -22,6 +22,7 @@ ALTER TABLE pitcher_game_log
 COMMENT ON COLUMN pitcher_game_log.fb_source IS
   'Provenance for the fb column. Values: '
   '''mlb_boxscore_flyouts'' (initial source via 07-pitcher-game-log.mjs; outs-on-flyballs only — incorrect semantics, default for pre-backfill rows); '
-  '''statcast_bb_type_v1'' (Baseball Savant pitch-by-pitch bb_type=''fly_ball'' aggregation; matches FanGraphs FB definition). '
+  '''statcast_bb_type_v1'' (Savant bb_type=''fly_ball'' only — undercounts FG ''FB'' by ~30-40% because popups are excluded; superseded by v2); '
+  '''statcast_bb_type_v2'' (Savant bb_type ∈ {''fly_ball'', ''popup''} aggregation; matches FanGraphs xFIP ''FB'' definition, verified vs MLB Stats API sabermetrics xfip on 5 spot-check pitchers). '
   'Updated by scripts/backfill-db/09-pitcher-fb-statcast.mjs (historical backfill) and /api/cron/statcast-fb-refresh (daily incremental). '
-  'Targeted rollback to pre-Statcast state: UPDATE pitcher_game_log SET fb=0, fb_source=''mlb_boxscore_flyouts'' WHERE fb_source=''statcast_bb_type_v1''.';
+  'Targeted rollback to pre-Statcast state: UPDATE pitcher_game_log SET fb=0, fb_source=''mlb_boxscore_flyouts'' WHERE fb_source IN (''statcast_bb_type_v1'',''statcast_bb_type_v2'').';

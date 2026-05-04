@@ -126,10 +126,14 @@ async function savantFetch(url: string, label: string): Promise<string> {
   throw lastErr;
 }
 
+// FanGraphs xFIP "FB" includes popups (the rate constant LG_HR_PER_FB averages over both).
+// Statcast splits them into separate bb_type values, so we sum. fly_ball-only undercounts
+// by ~30-40% (verified via reverse-compute against MLB Stats API sabermetrics xFIP).
 function aggregateFlyBalls(rows: Array<Record<string, string>>): Map<string, number> {
   const counts = new Map<string, number>();
   for (const row of rows) {
-    if ((row.bb_type ?? '').trim() !== 'fly_ball') continue;
+    const bt = (row.bb_type ?? '').trim();
+    if (bt !== 'fly_ball' && bt !== 'popup') continue;
     const gamePk = (row.game_pk ?? '').trim();
     if (!gamePk) continue;
     counts.set(gamePk, (counts.get(gamePk) ?? 0) + 1);
@@ -269,7 +273,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const { error: updErr, count } = await supabase
       .from('pitcher_game_log')
-      .update({ fb: fbCount, fb_source: 'statcast_bb_type_v1', updated_at: new Date().toISOString() }, { count: 'exact' })
+      .update({ fb: fbCount, fb_source: 'statcast_bb_type_v2', updated_at: new Date().toISOString() }, { count: 'exact' })
       .eq('pitcher_id', pair.pitcher_id)
       .eq('game_id', pair.game_id);
 
