@@ -36,6 +36,7 @@ strict T-60 pin, byte-identical features. Audit-mode cross-check optional.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -53,9 +54,8 @@ import pyarrow.parquet as pq
 warnings.filterwarnings("ignore", category=UserWarning)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-HOLDOUT_DECL = REPO_ROOT / "models" / "moneyline" / "holdout-declaration.json"
-OUT_DIR = REPO_ROOT / "data" / "features" / "moneyline-v0"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_HOLDOUT_DECL = REPO_ROOT / "models" / "moneyline" / "holdout-declaration.json"
+DEFAULT_OUT_DIR = REPO_ROOT / "data" / "features" / "moneyline-v0"
 
 LEAGUE_AVG_FIP = 4.20
 LEAGUE_AVG_BULLPEN_FIP = 4.30
@@ -78,14 +78,14 @@ def load_env() -> None:
                 os.environ[k] = v
 
 
-def load_holdout_declaration() -> dict:
-    if not HOLDOUT_DECL.exists():
+def load_holdout_declaration(path: Path) -> dict:
+    if not path.exists():
         sys.exit(
-            f"[ERROR] Holdout pre-declaration missing at {HOLDOUT_DECL}. "
+            f"[ERROR] Holdout pre-declaration missing at {path}. "
             "Per CEng rev3 condition `holdout_predeclared_before_repull`, this "
             "must exist before features are built."
         )
-    return json.loads(HOLDOUT_DECL.read_text())
+    return json.loads(path.read_text())
 
 
 def american_to_implied_prob(price: int) -> float:
@@ -463,8 +463,52 @@ def build_canary(train_rows: list[dict], train_audit: list[dict]) -> tuple[list[
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--declaration",
+        type=Path,
+        default=DEFAULT_HOLDOUT_DECL,
+        help=(
+            "Path to the holdout pre-declaration JSON. Defaults to "
+            "models/moneyline/holdout-declaration.json (the original v0 declaration). "
+            "For validation runs (e.g., the pre-ASB-2024 walk-forward fold), pass "
+            "--declaration models/moneyline/validation-holdout-declaration-pre-asb-2024.json. "
+            "When --declaration is non-default, output goes to "
+            "data/features/moneyline-v0-validation-<slug>/."
+        ),
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Override the output directory. When unset, the path is derived from "
+            "the declaration: default declaration -> data/features/moneyline-v0/; "
+            "validation declarations -> data/features/moneyline-v0-validation-<slug>/."
+        ),
+    )
+    args = parser.parse_args()
+
     load_env()
-    decl = load_holdout_declaration()
+    decl = load_holdout_declaration(args.declaration)
+
+    if args.out_dir is not None:
+        out_dir = args.out_dir
+    elif args.declaration.resolve() == DEFAULT_HOLDOUT_DECL.resolve():
+        out_dir = DEFAULT_OUT_DIR
+    else:
+        decl_id = decl.get("declaration_id", args.declaration.stem)
+        # validation slug: strip the `moneyline-v0-validation-holdout-` prefix and the trailing date
+        if "validation-holdout-" in decl_id:
+            slug = decl_id.split("validation-holdout-", 1)[1]
+            slug = slug.rsplit("-", 3)[0]  # strip trailing -YYYY-MM-DD
+        else:
+            slug = decl_id
+        out_dir = REPO_ROOT / "data" / "features" / f"moneyline-v0-validation-{slug}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[init] Declaration: {args.declaration} (id={decl.get('declaration_id','<unknown>')})", flush=True)
+    print(f"[init] Output dir: {out_dir}", flush=True)
+
     train_start = decl["training_window"]["start_date"]
     train_end = decl["training_window"]["end_date"]
     holdout_start = decl["holdout_window"]["start_date"]
@@ -555,16 +599,16 @@ def main() -> None:
                 flush=True,
             )
 
-            out_pq = OUT_DIR / f"{window_label}.parquet"
-            out_audit = OUT_DIR / f"{window_label}.audit.json"
+            out_pq = out_dir / f"{window_label}.parquet"
+            out_audit = out_dir / f"{window_label}.audit.json"
             write_parquet_and_audit(rows, audit_rows, out_pq, out_audit)
 
             if window_label == "train":
                 canary_rows, canary_audit = build_canary(rows, audit_rows)
                 write_parquet_and_audit(
                     canary_rows, canary_audit,
-                    OUT_DIR / "train_canary.parquet",
-                    OUT_DIR / "train_canary.audit.json",
+                    out_dir / "train_canary.parquet",
+                    out_dir / "train_canary.audit.json",
                 )
 
         # Build summary
@@ -583,8 +627,8 @@ def main() -> None:
             },
             "build_optimization_note": "v0.2 (2026-05-04): bulk-loaded sources + in-memory aggregates per pick-implementer inline fix. Same drop predicate, same strict T-60 pin, same constants as the prior per-game-query version.",
         }
-        (OUT_DIR / "build-summary.json").write_text(json.dumps(summary, indent=2))
-        print(f"\n[summary] {OUT_DIR / 'build-summary.json'}", flush=True)
+        (out_dir / "build-summary.json").write_text(json.dumps(summary, indent=2))
+        print(f"\n[summary] {out_dir / 'build-summary.json'}", flush=True)
 
 
 if __name__ == "__main__":
