@@ -1,0 +1,171 @@
+{
+  "fixture_id": "xfip-verification-2026-05-04",
+  "generated_at_utc": "2026-05-04T08:20:00Z",
+  "generated_by": "pick-implementer (orchestrator) acting on stuff-plus-ingestion-2026-05-04 infra chain",
+  "source_proposal": "docs/proposals/stuff-plus-ingestion-2026-05-04-infra-scope-gate-verdict.md",
+  "purpose": "Verification gate per scope-gate testing requirements: spot-check computed xFIP against MLB Stats API sabermetrics endpoint xfip for 5 known-quantity starters. Gate result is the binding signal for whether the infra chain advances or halts.",
+  "formula_module_under_test": {
+    "ts": "scripts/lib/xfip-formula.ts",
+    "py": "scripts/lib/xfip_formula.py",
+    "constants": {
+      "LG_HR_PER_FB": { "2022": 0.111, "2023": 0.121, "2024": 0.115 },
+      "XFIP_CONST":   { "2022": 3.18,  "2023": 3.20,  "2024": 3.13 },
+      "LEAGUE_AVG_XFIP": 4.20,
+      "transcription_date": "2026-05-04",
+      "sources": [
+        "https://www.fangraphs.com/guts.aspx?type=cn",
+        "https://www.fangraphs.com/leaders/major-league?type=8&season=2024&season1=2024&stats=pit",
+        "http://www.tangotiger.com/index.php/site/comments/fip-and-xfip"
+      ]
+    }
+  },
+  "input_source": "pitcher_game_log (full-season counting stats per starter, is_starter=true rows only). fb column populated via the targeted ad-hoc backfill of the 5 verification pitchers (full-season backfill halted on this fixture's FAIL).",
+  "sabermetrics_endpoint": "https://statsapi.mlb.com/api/v1/people/{mlbId}/stats?stats=sabermetrics&season={year}&group=pitching",
+  "gate_thresholds": {
+    "pass_threshold_abs_delta": 0.20,
+    "warn_threshold_abs_delta": 0.40,
+    "halt_rule": "Any |delta| > 0.40 OR more than 1 pitcher in (0.20, 0.40] band stops the chain.",
+    "wheeler_flyball_diversity_required": true
+  },
+  "spot_checks": [
+    {
+      "pitcher": "Corbin Burnes",
+      "mlb_player_id": 669203,
+      "season": 2024,
+      "n_starts_in_pgl": 32,
+      "counting_stats_full_season": {
+        "ip_decimal_thirds": 194.33,
+        "fb_boxscore_flyOuts_sum": 94,
+        "bb": 48, "hbp": 2, "k": 181, "hr": 22
+      },
+      "computed_xfip": 2.7622,
+      "sabermetrics_xfip": 3.546,
+      "delta_computed_minus_target": -0.7838,
+      "abs_delta": 0.7838,
+      "verdict": "FAIL"
+    },
+    {
+      "pitcher": "Zack Wheeler",
+      "mlb_player_id": 554430,
+      "season": 2024,
+      "flyball_leaning_required": true,
+      "n_starts_in_pgl": 32,
+      "counting_stats_full_season": {
+        "ip_decimal_thirds": 200.00,
+        "fb_boxscore_flyOuts_sum": 95,
+        "bb": 52, "hbp": 8, "k": 224, "hr": 20
+      },
+      "computed_xfip": 2.5001,
+      "sabermetrics_xfip": 3.301,
+      "delta_computed_minus_target": -0.8009,
+      "abs_delta": 0.8009,
+      "verdict": "FAIL"
+    },
+    {
+      "pitcher": "Tarik Skubal",
+      "mlb_player_id": 669373,
+      "season": 2024,
+      "n_starts_in_pgl": 31,
+      "counting_stats_full_season": {
+        "ip_decimal_thirds": 192.00,
+        "fb_boxscore_flyOuts_sum": 96,
+        "bb": 35, "hbp": 9, "k": 228, "hr": 15
+      },
+      "computed_xfip": 2.1900,
+      "sabermetrics_xfip": 2.826,
+      "delta_computed_minus_target": -0.6360,
+      "abs_delta": 0.6360,
+      "verdict": "FAIL"
+    },
+    {
+      "pitcher": "Jacob deGrom",
+      "mlb_player_id": 594798,
+      "season": 2023,
+      "n_starts_in_pgl": 6,
+      "counting_stats_full_season": {
+        "ip_decimal_thirds": 30.33,
+        "fb_boxscore_flyOuts_sum": 17,
+        "bb": 4, "hbp": 0, "k": 45, "hr": 2
+      },
+      "computed_xfip": 1.5100,
+      "sabermetrics_xfip": 2.319,
+      "delta_computed_minus_target": -0.8090,
+      "abs_delta": 0.8090,
+      "verdict": "FAIL",
+      "small_sample_note": "deGrom's 2023 season was 6 starts before TJ surgery; sabermetrics endpoint returns the full-season aggregate (30.1 IP). Sample is small but the systematic underestimate magnitude matches the other 4 pitchers, so this row is on the same systemic-bias line, not a small-sample artifact."
+    },
+    {
+      "pitcher": "Justin Verlander",
+      "mlb_player_id": 434378,
+      "season": 2022,
+      "n_starts_in_pgl": 28,
+      "counting_stats_full_season": {
+        "ip_decimal_thirds": 175.00,
+        "fb_boxscore_flyOuts_sum": 107,
+        "bb": 29, "hbp": 6, "k": 185, "hr": 12
+      },
+      "computed_xfip": 2.5480,
+      "sabermetrics_xfip": 3.231,
+      "delta_computed_minus_target": -0.6830,
+      "abs_delta": 0.6830,
+      "verdict": "FAIL"
+    }
+  ],
+  "overall_verdict": "FAIL",
+  "miss_count_above_0_20": 5,
+  "miss_count_above_0_40": 5,
+  "halt_triggered_by_pause_rule": "#4 — Verification gate FAILS (all 5 |Δ| > 0.40)",
+  "formula_parity_ts_vs_py": {
+    "test_inputs": "Burnes 2024 (ip=194.33, fb=94, bb=48, hbp=2, k=181, season=2024)",
+    "ts_output": 2.7622,
+    "py_output": 2.7622,
+    "verdict": "PASS — TS and Python modules agree to 4 decimal places. Bug is in the INPUT SOURCE, not the formula or constants table."
+  },
+  "holdout_integrity_check": {
+    "declaration_file": "models/moneyline/holdout-declaration.json",
+    "declaration_id_observed": "moneyline-v0-holdout-2026-05-03",
+    "declaration_id_expected": "moneyline-v0-holdout-2026-05-03",
+    "declaration_id_match": "PASS",
+    "last_commit_touching_declaration_file": "f057e2c (pre-existing, unrelated to this chain)",
+    "head_commit_at_chain_close": "dc230223cea0543494bf7e00b177fe192e35ee97",
+    "pre_chain_baseline_commit": "dc23022 (scope-gate APPROVED — xFIP infra (kind:infra reshape))",
+    "implementer_made_commits_during_chain": false,
+    "verdict": "PASS — pinned holdout declaration was not consumed or modified during the infra chain."
+  },
+  "diff_scope_check": {
+    "allowed_files": [
+      "supabase/migrations/0030_pitcher_game_log_fb.sql",
+      "scripts/lib/xfip-formula.ts",
+      "scripts/lib/xfip_formula.py",
+      "scripts/run-migrations/check-xfip-coverage.mjs",
+      "tests/fixtures/feature-parity/xfip-verification-2026-05-04.json",
+      "scripts/backfill-db/07-pitcher-game-log.mjs"
+    ],
+    "tmp_files_used_for_ad_hoc_backfill_NOT_committed": [
+      "scripts/backfill-db/.tmp-fb-backfill.mjs",
+      "scripts/backfill-db/.tmp-fb-targeted.mjs",
+      "scripts/backfill-db/.gitignore (added .tmp-* line)"
+    ],
+    "tmp_files_rationale": "Re-running 07-pitcher-game-log.mjs to populate the new fb column on existing rows would no-op due to the script's coveredSet skip (which exists for restartability across multi-day backfills). The scope-gate's '1 edit' allowance was specifically for parsePitcherStats + UPDATE SET; modifying coveredSet would be a 3rd in-file edit and out of scope. The .tmp- scripts run the same parser + upsert logic the modified 07 script uses, ad-hoc, and are .gitignored.",
+    "production_v0_state": "UNCHANGED. apps/web/lib/features/moneyline-v0.ts not touched. scripts/features/build-moneyline-v0.py not touched. models/moneyline/current/ not touched.",
+    "verdict": "PASS — diff scope honored."
+  },
+  "root_cause_diagnosis": {
+    "summary": "Boxscore `pitching.flyOuts` is OUTS RECORDED on flyballs, not TOTAL FLYBALLS HIT. xFIP requires total flyballs (FB% × balls-in-play, plus home runs since HRs are flyballs). FanGraphs computes FB from Statcast batted-ball event data: `FB = FB% × BIP + HR`.",
+    "evidence": "Burnes 2024 published HR/FB% on FG = 12.4% with 22 HR. Implied total FB ≈ 22 / 0.124 ≈ 177. Boxscore flyOuts sum across 32 starts = 94. Boxscore captures ~53% of FG-FB universe — the missing ~47% is hits-on-flyballs that didn't produce outs (singles/doubles/triples on flyballs) plus the HRs themselves. Across all 5 pitchers, computed xFIP underestimates by 0.64-0.81 — a systematic offset consistent with FB universe being roughly half the correct value.",
+    "what_NOT_the_problem": [
+      "Constants table — TS and Python parity confirms transcription is internally consistent. Even if LG_HR_PER_FB were doubled to ~0.23 to compensate, the formula would only match for a single season; the cross-season pattern would still be off.",
+      "Formula transcription — formula matches FG canonical xFIP form exactly: ((13 * FB * lgHRperFB) + 3*(BB+HBP) - 2*K) / IP + xFIP_const.",
+      "IP convention — already converted from MLB .1/.2 encoding to decimal thirds.",
+      "Sample window — full-season aggregates used; not a window-edge artifact."
+    ],
+    "what_IS_the_problem": "Input data source mismatch. Boxscore flyOuts ≠ FG-published flyballs. The MLB Stats API boxscore does not expose total batted-ball-event-typed flyballs; that data lives in Statcast pitch-by-pitch / batted-ball-event ingestion, which is a separate (out-of-scope this proposal) data path. The proposal's underlying assumption that boxscore flyOuts gives FG-parity FB count is FALSE."
+  },
+  "available_remediation_paths_for_next_research_cycle": [
+    "Path 1 (Statcast batted-ball-event ingestion): Add per-pitch / per-PA batted_ball_events table sourced from Baseball Savant Statcast. Compute FB per appearance from event type = 'fly_ball' + 'home_run' (FG includes HR in FB). Multi-week effort; storage ~10-20 GB for 2022-2024; new ingestion cron. EXPLICITLY out of scope for the current one-holdout-consumption cap per CSO 2026-05-04 verdict.",
+    "Path 2 (Substitute proxy from boxscore): Compute FB% from boxscore as flyOuts / (flyOuts + groundOuts + popOuts + lineOuts), apply to (BIP from boxscore) + HR. BIP = AB - K - HR. Approximate but uses only data already in the boxscore. Per-spot-check refit needed; may close the gap to within ±0.20 if the FB%-from-outs proxy correlates well enough with FG's FB%-from-batted-ball-events. Worth a focused experiment as a follow-up research memo.",
+    "Path 3 (Use sabermetrics-endpoint xfip directly, season-aggregate with prior-year carry): Same gotcha as wRC+ memo's Path A — endpoint ignores byDateRange; serving would use full-season-as-of-last-completed-season value. Smaller in-season-as-of-date signal but FG-parity by definition. Re-research as a kind:feature-change proposal.",
+    "Path 4 (Drop xFIP entirely and pursue a different residual class): TTOP, handedness park splits, lineup composition. Per CSO's `wrcplus-ingestion-revB-2026-05-04-pause` verdict, the holdout-consumption cap allows ONE more pitcher-quality residual attempt before declaring a fresh holdout slice."
+  ],
+  "chain_status": "HALTED at verification gate per pause-point rule #4. Stage 2 (mlb-feature-eng) ran the gate; gate returned FAIL on all 5 pitchers; no downstream files written. Production v0 served payload UNCHANGED. Pinned holdout NOT consumed. Apply migration 0030 stays applied (the schema column is correct; only the populate-from-boxscore-flyOuts SEMANTIC is wrong)."
+}

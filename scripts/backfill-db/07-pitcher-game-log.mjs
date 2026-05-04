@@ -49,6 +49,9 @@ function parsePitcherStats(playerKey, players) {
   const p = players[playerKey];
   if (!p) return null;
   const pit = p.stats?.pitching ?? {};
+  // `flyOuts` is exposed directly in the boxscore pitching block (live-probed 2026-05-04).
+  // It excludes popouts (popOuts is a separate field; airOuts = flyOuts + popOuts). Excluding
+  // popups is correct for xFIP since pop-ups carry ~0 HR/FB rate.
   return {
     fullName: p.person?.fullName ?? 'Unknown',
     mlbPlayerId: p.person?.id,
@@ -57,6 +60,7 @@ function parsePitcherStats(playerKey, players) {
     bb: parseInt(pit.baseOnBalls ?? '0', 10) || 0,
     hbp: parseInt(pit.hitByPitch ?? '0', 10) || 0,
     k: parseInt(pit.strikeOuts ?? '0', 10) || 0,
+    fb: parseInt(pit.flyOuts ?? '0', 10) || 0,
   };
 }
 
@@ -186,14 +190,15 @@ async function main() {
         try {
           await db.query(
             `INSERT INTO pitcher_game_log
-               (pitcher_id, team_id, game_id, game_date, ip, hr, bb, hbp, k, is_starter, source_url, retrieved_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+               (pitcher_id, team_id, game_id, game_date, ip, hr, bb, hbp, k, fb, is_starter, source_url, retrieved_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
              ON CONFLICT (pitcher_id, game_id) DO UPDATE SET
                ip          = EXCLUDED.ip,
                hr          = EXCLUDED.hr,
                bb          = EXCLUDED.bb,
                hbp         = EXCLUDED.hbp,
                k           = EXCLUDED.k,
+               fb          = EXCLUDED.fb,
                is_starter  = EXCLUDED.is_starter,
                source_url  = EXCLUDED.source_url,
                retrieved_at= EXCLUDED.retrieved_at,
@@ -208,6 +213,7 @@ async function main() {
               stats.bb,
               stats.hbp,
               stats.k,
+              stats.fb,
               isStarter,
               sourceUrl,
             ]
