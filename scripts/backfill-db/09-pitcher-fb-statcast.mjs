@@ -36,6 +36,12 @@ const SAVANT_BASE = 'https://baseballsavant.mlb.com/statcast_search/csv';
 const REQ_INTERVAL_MS = 3000;
 const SEASONS = [2021, 2022, 2023, 2024];
 
+// Savant sits behind Cloudflare bot detection — a bespoke UA returns 403.
+// A recent Chrome UA passes (same trick pybaseball uses).
+const SAVANT_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
 /** Build a Savant CSV URL for one (pitcher, season). */
 function buildSavantUrl(mlbPlayerId, season) {
   const params = new URLSearchParams({
@@ -154,7 +160,7 @@ async function savantFetch(url, label, maxAttempts = 5) {
     }
     let res;
     try {
-      res = await fetch(url, { headers: { 'User-Agent': 'DiamondEdge/1.0 (statcast-fb-backfill)' } });
+      res = await fetch(url, { headers: { 'User-Agent': SAVANT_UA } });
     } catch (err) {
       lastErr = err;
       log('warn', 'savant_fetch_network_error', { label, attempt, err: err.message });

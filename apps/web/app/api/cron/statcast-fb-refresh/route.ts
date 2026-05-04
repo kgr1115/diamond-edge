@@ -26,6 +26,12 @@ const SAVANT_BASE = 'https://baseballsavant.mlb.com/statcast_search/csv';
 const REQ_INTERVAL_MS = 3000;
 const FETCH_RETRIES = 3;
 
+// Savant sits behind Cloudflare bot detection — a bespoke UA returns 403.
+// A recent Chrome UA passes (same trick pybaseball uses).
+const SAVANT_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
 interface SavantPair {
   pitcher_id: string;
   mlb_player_id: number;
@@ -98,7 +104,7 @@ async function savantFetch(url: string, label: string): Promise<string> {
     }
     let res: Response;
     try {
-      res = await fetch(url, { headers: { 'User-Agent': 'DiamondEdge/1.0 (statcast-fb-refresh)' } });
+      res = await fetch(url, { headers: { 'User-Agent': SAVANT_UA } });
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
       console.warn(JSON.stringify({ level: 'warn', event: 'statcast_fb_fetch_network_error', label, attempt, err: lastErr.message }));
