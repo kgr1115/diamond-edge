@@ -42,10 +42,12 @@ I'll verify post-fire and surface anomalies in the morning summary.
 
 ## 3. Morning crons — 08:00 / 09:00 / 10:00 UTC
 
-**Update at 09:17 UTC check-in:**
-- `outcome-grader` (08:00 UTC scheduled): **NO cron_runs row found for today's firing.** Either Vercel cron didn't trigger it, or the route errored before `startCronRun`. Other crons firing OK rules out broad infrastructure issue. Yesterday's fired at 08:00 UTC normally (last graded run before today is from yesterday). Tonight's 8 picks are still `pending` (games haven't been played yet — first pitch 22:40 UTC tonight) so there's nothing to grade today regardless; still worth investigating why the cron didn't fire. **Queued for your call.**
+**Update at 10:21 UTC re-check:**
+- `outcome-grader` (08:00 UTC scheduled): **CRITICAL — zero entries in cron_runs across ALL HISTORY.** Not just today; the route has NEVER written a cron_runs row from a Vercel-cron-triggered firing. Last `pick_outcomes` writes are 5+ days old (2026-04-29 22:03 UTC was a manual one-off; before that 08:00 UTC entries were from the OLD pre-wipe pipeline). Tonight's 8 picks have nothing to grade right now (games scheduled future), but **will block tomorrow morning** when those games go final. Likely root cause: Vercel cron not registered for this path despite `vercel.json` listing it. Investigation paths: (a) check Vercel dashboard cron list to see if outcome-grader appears, (b) trigger manually with the curl pattern I used yesterday for schedule-sync to confirm the route itself works, (c) check if a recent vercel.json edit dropped the entry. **HIGH-priority for your review.**
 - `clv-compute` (09:00 UTC): fired at 09:01:41 UTC, status='success'.
-- `calibration-snapshot` (10:00 UTC): not yet fired at time of this check; ETA ~45 min.
+- `calibration-snapshot` (10:00 UTC scheduled): fired at 09:30:02 UTC, status='success' — **note schedule drift: configured for 10:00 but firing at 09:30 daily**. Same drift on yesterday's run (09:30:01). Vercel cron timing is loose on our deploy. Not blocking but worth noting.
+
+**Net morning-cron status:** 2 of 3 fired successfully (clv-compute + calibration-snapshot). 1 missing entirely (outcome-grader). The missing one will become blocking tomorrow.
 
 **Background failure pattern (known noise; not new):** `schedule-sync` returns HTTP 207 (multi-status) every day because the news-poll subtask returns `ok=false` while schedule + odds succeed. Our cron-run-log treats 207 as `'failure'`. The actual data ingestion (schedule + odds) IS working — confirmed by manual probe yesterday. Could be fixed by changing the cron-runs status mapping, but it's been failing this way for ≥4 days without operational impact. Low priority.
 
