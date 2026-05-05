@@ -28,8 +28,11 @@ from __future__ import annotations
 from typing import Mapping
 
 # LG_HR_PER_FB by season — league-average HR/FB rate (homers per flyball).
-# Sources: FanGraphs HR/FB% per season (cross-referenced tangotiger.com).
-# Transcribed 2026-05-04 from FG end-of-season values.
+# Source: FanGraphs pitching leaders (HR/FB%, BIS-classified). Hand-transcribed 2026-05-04.
+# 2026-05-05 audit (docs/research/xfip-constants-audit-2026-05-05.md) could NOT confirm
+# to 4-decimal precision because FG leaderboard is Cloudflare-protected; Statcast-derived
+# estimates differ by ~0.005–0.009 per year (consistent with the known BIS/Statcast gap).
+# TODO: hand-verify from a real browser session against FG pitching leaders HR/FB column.
 LG_HR_PER_FB: Mapping[int, float] = {
     2022: 0.111,
     2023: 0.121,
@@ -37,12 +40,16 @@ LG_HR_PER_FB: Mapping[int, float] = {
 }
 
 # XFIP_CONST by season — additive constant such that league-avg xFIP equals league-avg ERA.
-# Sources: FanGraphs guts page (cn type) per season.
-# Transcribed 2026-05-04.
+# Source: FanGraphs guts (https://www.fangraphs.com/guts.aspx?type=cn), cFIP column.
+# Per FG documentation, cFIP and the xFIP additive constant are the same value.
+# Re-verified 2026-05-05 against FG primary source (audit memo:
+# docs/research/xfip-constants-audit-2026-05-05.md). The 2026-05-04 transcription
+# was off by 0.036–0.068 across all three years; corrected here.
 XFIP_CONST: Mapping[int, float] = {
-    2022: 3.18,
-    2023: 3.20,
-    2024: 3.13,
+    2021: 3.170,  # FG guts: 3.170 (added 2026-05-05; pgl has no 2021 rows yet)
+    2022: 3.112,  # FG guts: 3.112 (was 3.18 — error +0.068)
+    2023: 3.255,  # FG guts: 3.255 (was 3.20 — error −0.055)
+    2024: 3.166,  # FG guts: 3.166 (was 3.13 — error −0.036)
 }
 
 # TODO: add 2025 constants before any 2025-data retrain.
