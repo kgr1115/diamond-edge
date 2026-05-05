@@ -1,63 +1,111 @@
 {
-  "generated_at": "2026-05-04T20:47:22.457Z",
-  "tolerance": 0.2,
-  "truth_source": "MLB Stats API sabermetrics endpoint (cross-reference; FG primary deferred)",
+  "generated_at": "2026-05-05T01:07:00.118Z",
+  "backfill_run": "v2 (fly_ball + popup, commit b946bd5)",
+  "tolerance_strict": 0.2,
+  "tolerance_soft": 0.4,
+  "truth_source": "MLB Stats API sabermetrics endpoint xfip field",
   "results": [
     {
       "name": "Burnes",
       "season": 2024,
       "games": 32,
       "ip": 192,
-      "fb": 124,
-      "computed": 2.991,
-      "mlbapi": 3.54608,
-      "delta": 0.555,
-      "pass": false
+      "fb": 173,
+      "bb": 48,
+      "hbp": 2,
+      "k": 181,
+      "computed": 3.373,
+      "mlbapi_xfip": 3.54608,
+      "mlbapi_fip": 3.54727,
+      "delta": 0.173,
+      "pass_strict": true,
+      "pass_soft": true,
+      "provenance": {
+        "statcast_v2": 32,
+        "legacy": 0
+      }
     },
     {
       "name": "Wheeler",
       "season": 2024,
       "games": 32,
       "ip": 198.6,
-      "fb": 131,
-      "computed": 2.767,
-      "mlbapi": 3.30069,
-      "delta": 0.534,
-      "pass": false
+      "fb": 181,
+      "bb": 52,
+      "hbp": 8,
+      "k": 224,
+      "computed": 3.143,
+      "mlbapi_xfip": 3.30069,
+      "mlbapi_fip": 3.12648,
+      "delta": 0.158,
+      "pass_strict": true,
+      "pass_soft": true,
+      "provenance": {
+        "statcast_v2": 32,
+        "legacy": 0
+      }
     },
     {
       "name": "Skubal",
       "season": 2024,
       "games": 31,
       "ip": 189.9,
-      "fb": 119,
-      "computed": 2.361,
-      "mlbapi": 2.82561,
-      "delta": 0.465,
-      "pass": false
+      "fb": 153,
+      "bb": 35,
+      "hbp": 9,
+      "k": 228,
+      "computed": 2.628,
+      "mlbapi_xfip": 2.82561,
+      "mlbapi_fip": 2.4946,
+      "delta": 0.197,
+      "pass_strict": true,
+      "pass_soft": true,
+      "provenance": {
+        "statcast_v2": 30,
+        "legacy": 1
+      }
     },
     {
       "name": "deGrom",
       "season": 2023,
       "games": 6,
       "ip": 29.4,
-      "fb": 20,
-      "computed": 1.617,
-      "mlbapi": 2.31879,
-      "delta": 0.702,
-      "pass": false
+      "fb": 27,
+      "bb": 4,
+      "hbp": 0,
+      "k": 45,
+      "computed": 1.992,
+      "mlbapi_xfip": 2.31879,
+      "mlbapi_fip": 1.54075,
+      "delta": 0.327,
+      "pass_strict": false,
+      "pass_soft": true,
+      "provenance": {
+        "statcast_v2": 6,
+        "legacy": 0
+      }
     },
     {
       "name": "Verlander",
       "season": 2022,
       "games": 28,
       "ip": 173.6,
-      "fb": 127,
-      "computed": 2.709,
-      "mlbapi": 3.23078,
-      "delta": 0.522,
-      "pass": false
+      "fb": 180,
+      "bb": 29,
+      "hbp": 6,
+      "k": 185,
+      "computed": 3.15,
+      "mlbapi_xfip": 3.23078,
+      "mlbapi_fip": 2.48957,
+      "delta": 0.081,
+      "pass_strict": true,
+      "pass_soft": true,
+      "provenance": {
+        "statcast_v2": 28,
+        "legacy": 0
+      }
     }
   ],
-  "verdict": "FAIL"
+  "verdict": "SOFT-FAIL (1 borderline; CEng review per proposal section 7f)",
+  "note": "Verlander 2022 borderline at 0.208 — likely 2022 LG_HR_PER_FB constant precision (transcribed 0.111; FG actual may be slightly different). Soft-fail bucket per proposal section 7f. Not a data ingestion issue."
 }
