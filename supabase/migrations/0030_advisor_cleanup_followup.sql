@@ -1,0 +1,34 @@
+-- Migration 0030 — follow-up security-advisor cleanup (2026-05-06).
+--
+-- Addresses three Supabase security-advisor warnings left open after 0022:
+--
+--   (1) FIXED HERE:
+--       {anon,authenticated}_security_definer_function_executable on handle_new_user.
+--       0022 revoked EXECUTE from anon + authenticated, but Postgres grants EXECUTE
+--       to PUBLIC by default, and PUBLIC is a superset of those roles — so the
+--       advisor kept flagging. Revoking from PUBLIC clears the flag entirely.
+--
+--   (2) TODO — NOT APPLIED HERE (see PR description for rationale):
+--       extension_in_public: pg_net lives in the public schema. ALTER EXTENSION
+--       pg_net SET SCHEMA extensions would move all pg_net objects out of the net
+--       schema and into extensions, changing every function from net.http_get() to
+--       extensions.http_get(). All seven active cron jobs (registered in 0009,
+--       0015, 0017, 0018, 0019) call net.http_get() with an explicit net. schema
+--       qualifier; they would break immediately. A coordinated fix requires both the
+--       ALTER EXTENSION and a migration that re-registers every cron job with
+--       extensions.http_get(). That coordinated migration is filed as a TODO in the
+--       PR rather than shipped here to avoid a half-fix.
+--
+--   (3) MANUAL STEP — no SQL:
+--       auth_leaked_password_protection: enable in Supabase dashboard under
+--       Authentication → Policies → leaked password protection (HaveIBeenPwned).
+
+-- ---------------------------------------------------------------------------
+-- Item (1): revoke EXECUTE on handle_new_user from PUBLIC.
+--
+-- handle_new_user is a SECURITY DEFINER trigger function fired by auth.users.
+-- It is not intended to be callable as /rest/v1/rpc/handle_new_user.
+-- Revoking from PUBLIC supersedes the anon + authenticated revokes in 0022 and
+-- eliminates both advisor flags.
+-- ---------------------------------------------------------------------------
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC;
